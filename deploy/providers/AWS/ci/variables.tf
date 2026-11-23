@@ -230,6 +230,24 @@ variable "ui_publish_role_name" {
   default     = "AICentre-FLIPUiPublishRole"
 }
 
+variable "demo_bucket_name" {
+  description = "Name of the public demo's bucket (FLIP#2012). Setting it creates the demo-publish role (TF_DEMO_PUBLISH_ROLE_ARN); empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "demo_publish_workflow_file" {
+  description = "Reusable workflow permitted to assume the demo-publish role."
+  type        = string
+  default     = "publish_demo.yml"
+}
+
+variable "demo_publish_role_name" {
+  description = "Name of the demo-publish role."
+  type        = string
+  default     = "AICentre-FLIPDemoPublishRole"
+}
+
 variable "manage_state_bucket" {
   description = "Create and harden the state bucket. Set false only if something else already manages it."
   type        = bool

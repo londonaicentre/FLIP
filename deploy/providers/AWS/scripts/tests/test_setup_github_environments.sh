@@ -105,8 +105,12 @@ case "$1 $2" in
             *":job_workflow_ref"*)
                 # The UI-publish role trusts publish_ui.yml at the apply role's branch,
                 # unless STUB_UI_REF says otherwise.
-                if [[ "${name}" == *Apply* ]]; then echo "${STUB_APPLY_REF}"
+                # The apply role also trusts STUB_LIFECYCLE_REF, as staging's does.
+                if [[ "${name}" == *Apply* ]]; then
+                    echo "${STUB_APPLY_REF}"
+                    [[ -z "${STUB_LIFECYCLE_REF:-}" ]] || echo "${STUB_LIFECYCLE_REF}"
                 elif [[ "${name}" == *UiPublish* ]]; then echo "${STUB_UI_REF:-${STUB_APPLY_REF/terraform_apply.yml/publish_ui.yml}}"
+                elif [[ "${name}" == *DemoPublish* ]]; then echo "${STUB_DEMO_REF:-${STUB_APPLY_REF/terraform_apply.yml/publish_demo.yml}}"
                 else echo "None"; fi ;;
             *) echo "unexpected get-role query" >&2; exit 98 ;;
         esac ;;
@@ -138,6 +142,7 @@ ENVFILE
 
 STAG_SUB="repo:acme/flip:environment:aws-stag"
 STAG_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/develop"
+STAG_LIFECYCLE_REF="acme/flip/.github/workflows/staging_lifecycle.yml@refs/heads/develop"
 
 # run_case <title> [VAR=value …] -- <script args…>
 # The account defaults to a correctly bootstrapped staging one; a case overrides
@@ -164,6 +169,7 @@ run_case() {
         STUB_BUCKET="flip-terraform-state-stag" \
         STUB_SUB="${STAG_SUB}" \
         STUB_APPLY_REF="${STAG_REF}" \
+        STUB_LIFECYCLE_REF="${STAG_LIFECYCLE_REF}" \
         ${overrides[@]+"${overrides[@]}"} \
         bash "${SCRIPT}" "$@" 2>"${TEST_ROOT}/err")"
     RC=$?
@@ -265,6 +271,7 @@ fi
 # 5. Prod is held to main.
 run_case "prod states its branch policy" \
     STUB_SUB="repo:acme/flip:environment:aws-prod" \
+    STUB_LIFECYCLE_REF="" \
     STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
     --hub prod --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
@@ -349,8 +356,34 @@ expect_mentions "- AWS_COGNITO_USER_POOL_ID" "and so are the Cognito ids"
 expect_mentions "BLACKLISTED_MODEL_FILES" "an optional UI input is listed as absent"
 expect_silent_about "- BLACKLISTED_MODEL_FILES" "but not as required"
 
-run_case "without the UI-publish role the UI inputs are not asked for" \
-    STUB_MISSING_ROLES="AICentre-FLIPUiPublishRole" -- \
+# FLIP#2012: the demo-publish role, read from IAM the same way.
+run_case "the demo-publish role is wired" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
+expect_rc 0 "succeeds"
+expect_mentions "the demo-publish role and its trust policy check out" "the role is checked"
+expect_mentions "- DEMO_SITE_URL" "its inputs are required"
+if grep -A1 '^gh variable set TF_DEMO_PUBLISH_ROLE_ARN ' "${CALLS}" | grep -qF 'role/AICentre-FLIPDemoPublishRole-ARNMARKER'; then
+    ok "its ARN is set from IAM, not from the env file"
+else
+    no "its ARN is set from IAM, not from the env file" "$(grep -A1 'TF_DEMO_PUBLISH_ROLE_ARN' "${CALLS}")"
+fi
+
+run_case "a demo-publish role that trusts the UI's workflow is refused" \
+    STUB_DEMO_REF="acme/flip/.github/workflows/publish_ui.yml@refs/heads/develop" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 1 "fails"
+expect_mentions "publish_demo.yml" "naming the workflow it must trust"
+
+run_case "without the demo-publish role the run still succeeds" \
+    STUB_MISSING_ROLES="AICentre-FLIPDemoPublishRole" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 0 "dry run succeeds"
+expect_mentions "CI will not publish the demo" "the missing role is reported, not fatal"
+expect_silent_about "TF_DEMO_PUBLISH_ROLE_ARN" "no role ARN is set"
+expect_silent_about "- FLIP_DEMO_BUCKET_NAME" "and the demo inputs are not required"
+
+run_case "without either publish role the UI inputs are not asked for" \
+    STUB_MISSING_ROLES="AICentre-FLIPUiPublishRole AICentre-FLIPDemoPublishRole" -- \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "CI will not publish the UI" "the missing role is reported, not fatal"
@@ -419,6 +452,17 @@ run_case "an apply role pinned to the other branch is refused" \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_refused_before_gh "refused" "@refs/heads/develop" "naming the ref stag needs"
 expect_mentions "job_workflow_ref" "and the claim that disagrees"
+
+run_case "a stag apply role without the power workflow is refused" STUB_LIFECYCLE_REF="" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
+expect_refused_before_gh "refused" "staging_lifecycle.yml@refs/heads/develop" "naming the ref stag also needs"
+
+run_case "a prod apply role that also trusts the power workflow is refused" \
+    STUB_SUB="repo:acme/flip:environment:aws-prod" \
+    STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" \
+    STUB_LIFECYCLE_REF="acme/flip/.github/workflows/staging_lifecycle.yml@refs/heads/main" -- \
+    --hub prod --env-file "${ENV_FILE}" --repo acme/flip
+expect_refused_before_gh "refused" "staging_lifecycle.yml" "only staging's apply role trusts it"
 
 run_case "roles trusting the other environment are refused" STUB_SUB="repo:acme/flip:environment:aws-prod" -- \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip

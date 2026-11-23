@@ -58,6 +58,24 @@ Two rules hold in both states:
   GitHub". A Trust cannot be upgraded past a hub that has not moved yet.
 - **A running training job is never interrupted.** The agent only starts when no job that involves this Trust is
   running. If the Trust is busy it waits and tries again on the next hourly check.
+- **Only forward, only to a stable release.** The target is a stable ``vX.Y.Z``, never a release candidate, and
+  the agent refuses a target older than what the Trust already runs, so rolling the hub back does not walk the
+  Trusts back with it.
+
+Choosing the target
+===================
+
+By default the target is the release the hub itself runs. The hub operator can name a different one with
+``AUTO_UPGRADE_TARGET_RELEASE`` (a stable ``vX.Y.Z``) in the hub's environment, or, on AWS, the GitHub
+environment variable of the same name, which Terraform passes to flip-api. Use it to:
+
+- **Test on staging first.** A staging hub runs ``sha-`` builds, which name no release, so without this setting
+  automatic upgrades never act there. Set it to the release under test so staging Trusts exercise the upgrade
+  before it reaches production.
+- **Hold a release back.** On production, pin the target to the current release while a new hub release beds in,
+  then clear it.
+
+A value that is not a stable release tag stops flip-api from starting, rather than being ignored.
 
 ***********************
 How the three parts fit
@@ -195,6 +213,50 @@ Admin can change it any time in My Trust. A Trust that is driven remotely (``DOC
 The agent runs ``make upgrade-onprem-trust`` itself, after moving its own checkout to the release tag, so what it
 does is exactly what ``admin-upgrading-sites`` describes for an operator.
 
+Installing it on a Kubernetes Trust
+===================================
+
+A cluster has no host to put a timer on, so the same agent runs as a CronJob in the Trust's own namespace. It is off
+by default: enabling it hands a ServiceAccount the ability to rewrite every workload in that namespace, so it is an
+opt-in rather than something a chart update turns on.
+
+.. code-block:: bash
+
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1
+
+or set ``K8S_AUTO_UPGRADE=true`` in the kit file so every later deploy keeps it. This records the release in
+ConfigMaps, applies the Trust's Secret outside the release (so no password is stored where the agent can read it),
+and switches the agent on. The deploy refuses to run when the release is recorded the other way, because it would
+install a second copy; a Trust deployed before this setting existed needs its release record moved first (see the
+chart's README).
+
+What differs from the host:
+
+- **The current release comes from the Helm record**, not a checkout. There is also nothing to be dirty, so the
+  "local modifications" check has no cluster equivalent and never blocks here.
+- **The upgrade is Helm's**: the agent pulls the published chart at the target release and runs ``helm upgrade
+  --reset-then-reuse-values``, so the new release's defaults apply, the live per-Trust values are kept on top,
+  and only the image tag moves. It never passes
+  ``--install``: a release it cannot see fails the check instead of being installed a second time underneath the
+  running one.
+- **It stops in time to report.** The agent runs on its own clock, five minutes inside the Job's deadline, so a
+  slow upgrade is reported as **Failed** rather than leaving the hub waiting on a lease nobody holds.
+- **The identity is narrow on purpose.** It holds no ``secrets`` permission at all — its API key arrives as a
+  projected volume carrying that one key — and its Role covers only the kinds the chart renders, in that one
+  namespace. Helm's own record of the release lives in ConfigMaps rather than Secrets, because finding a release in
+  Secrets means *listing* them, and a list returns their contents. That write access reaches the Trust's
+  governance document too, so before reporting an upgrade as done the agent compares the live document with the
+  one the release carries and reports **Failed** if they differ, leaving the release as it is.
+
+Everything the Trust Admin sees is the same: the switch, the window, the pending-since date, the blocker and the
+failure in My Trust. The questions below apply to both.
+
+.. warning::
+
+   A Kubernetes Trust whose release is still recorded the old way (Helm's Secret driver) cannot be upgraded by the
+   agent; it will report **Failed** instead. Moving such a Trust across is a deliberate one-off migration, not
+   something a chart upgrade does to a live site.
+
 Off
 ===
 
@@ -274,8 +336,7 @@ When it fails
 *************
 
 .. mermaid::
-   :caption: The agent puts the Trust back on the release it came from, reports, and does not retry that release by
-      itself.
+   :caption: The agent stops on a failure, reports where the Trust is, and does not retry that release by itself.
 
    stateDiagram-v2
        [*] --> Checking
@@ -283,33 +344,27 @@ When it fails
        Waiting --> Checking: next hourly check
        Checking --> Upgrading: allowed and idle
        Upgrading --> Succeeded: services healthy
-       Upgrading --> RollingBack: a step fails,<br/>or the Trust does not come up
-       RollingBack --> Failed: back on the previous release
-       RollingBack --> Failed: the rollback did not take
+       Upgrading --> Failed: a step fails,<br/>or the Trust does not come up
        Succeeded --> [*]
        Failed --> Blocked: stop
-       Blocked --> Checking: operator clears the failure<br/>in the portal
+       Blocked --> Checking: operator restores the Trust<br/>and clears the failure in the portal
 
-An upgrade recreates database-backed services and runs XNAT's in-place schema upgrade, so a half-applied upgrade
-leaves a Trust that is neither on the old release nor on the new one. The agent therefore puts it back on the
-release it was on before the attempt — once, immediately, inside the same lease — and then stops:
+An upgrade recreates database-backed services and runs XNAT's in-place schema upgrade. Once an attempt has got that
+far, the previous release's images may no longer match the data, and the agent cannot tell from outside whether a
+failed attempt reached a migration. So it does not move the Trust back by itself. It stops:
 
-- it rolls back to the release the Trust was running, and checks the Trust comes up again on it. A release that
-  already worked on this site is judged on a shorter leash (five minutes) than a forward upgrade (ten);
-- it reports **Failed** with the tail of the log and what the rollback did, both shown on My Trust. *Failed, back
-  on v0.13.0* and *Failed, still on the release that broke it* are different things to have to fix, so the card
-  says which one it is;
-- it refuses to try that release again until an operator has looked at the Trust and **cleared the failure** in the
+- it leaves the Trust as the attempt left it, which may be partly on the new release;
+- it reports **Failed** with the tail of the log and the release the Trust was on before the attempt, both shown on
+  My Trust;
+- it refuses to try that release again until an operator has restored the Trust and **cleared the failure** in the
   portal — the *Try this release again* button on the card;
-- it does not retry the rollback. One attempt, reported either way: a rollback loop would be worse than a Trust
-  sitting still and saying where it is;
 - it treats every failure the same way, including one that never got as far as recreating anything: the upgrade is a
-  single `make` run, so a pull that fails, a compose error and a container that dies on start all end as **Failed**
-  on that release, after the same rollback attempt. The hub blocks that one release; other releases are unaffected.
+  single `make` run (a single ``helm upgrade`` on Kubernetes), so a pull that fails, a compose error and a container
+  that dies on start all end as **Failed** on that release. The hub blocks that one release; other releases are
+  unaffected.
 
-The rollback is a redeploy of the previous release, not a schema downgrade: XNAT's schema upgrade and any database
-migration stay applied. A Trust that was running fine before the attempt is what you get back; a Trust whose data
-a migration made unreadable by the old release still needs a person.
+The way back is the operator's, because only a person can check whether the data was migrated: see
+:ref:`upgrade-rolling-back`.
 
 .. figure:: ../assets/flip/trust-auto-upgrade/failed.png
    :align: center

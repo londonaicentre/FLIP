@@ -65,7 +65,7 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
-- [Python 3.12 or 3.13](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/) **>= 0.10.0** —
+- [Python 3.13](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/) **>= 0.10.0** —
   earlier uv cannot parse the `exclude-newer = "3 days"` cooldown (see
   [Dependency cooldown](#dependency-cooldown-supply-chain-protection)); it warns, ignores the setting and
   re-resolves `uv.lock` without any cooldown. `scripts/check-uv-version.sh` checks this at the two entry
@@ -361,6 +361,13 @@ automatically once the hub is up.
 rewrites the same kit file. The trust keeps its id, its code and its FL kit slot. The hub refuses
 the old key as soon as the rotation commits, so the trust is offline until its containers are
 recreated from the new kit.
+
+A trust added with **Add Trust** in the UI has no keys until its kit is first downloaded from its
+card, by its Trust Admin or a hub admin (FLIP#1852). On a stag/prod Docker Compose trust host,
+`make -C trust install-kit FILE=<downloaded file> [HUB=stag] [KIT=<CODE>] [DELETE=1]` decrypts the
+download (it prompts for the passphrase), creates or updates `trust/.env.<CODE>.<env>` and stages
+the FL files under its `FL_KIT_DIR`. flip-api finds the FL kits through `FL_KITS_URI`; the dev
+compose sets it to the mounted `FL_PROVISIONED_DIR`.
 
 For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
 that `up-onprem-trust` and `upgrade-onprem-trust` use: `trust/.env.<CODE>.<env>`, resolved by
@@ -669,7 +676,7 @@ The project-wide ruff rules are:
 ```toml
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 preview = true
@@ -791,6 +798,11 @@ make -C trust/deploy/helm smoke-cstore
 # flClient.kit.source=secret, and layer values-aks.yaml with PLATFORM_VALUES= (or the kit
 # file's K8S_PLATFORM_VALUES, which every deploy and upgrade of that KIT then applies)
 make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+
+# Automatic upgrades (FLIP#1644): ConfigMap release records, the trust Secret applied outside the
+# release (apply-trust-secret, run by deploy-release), the agent on. Or K8S_AUTO_UPGRADE=true in the
+# kit. Refused while the release is still recorded in Secrets (release_driver.py --deploy-driver).
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1
 
 # The trust self-test against the deployed release (FLIP#1390): release ready, FL kit, API
 # health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion, FL client

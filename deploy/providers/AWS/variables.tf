@@ -56,6 +56,12 @@ variable "lza_web_edge_distribution_arn" {
   default     = ""
 }
 
+variable "lza_web_demo_distribution_arn" {
+  description = "ARN of the networking account's CloudFront distribution for the public demo's own host (FLIP#2012), granted s3:GetObject on the demo bucket via cross-account OAC. Empty until that distribution exists: the grant then matches no distribution."
+  type        = string
+  default     = ""
+}
+
 # POSTGRES_USER / POSTGRES_DB are configuration, not credentials, and are treated
 # as such consistently (FLIP#962): NOT `sensitive` here, and stored as GitHub
 # environment *variables* rather than environment secrets.
@@ -224,6 +230,15 @@ variable "flower_kit_date" {
   default     = ""
 }
 
+# The port trusts dial for FL, where the edge remaps it (LZA staging listens on
+# :8003 and forwards to FL_SERVER_PORT). It only reaches the trust kits flip-api
+# issues (FLIP#1852); no resource here listens on it.
+variable "fl_edge_port" {
+  description = "Port trusts dial for FL when it differs from FL_SERVER_PORT; empty means FL_SERVER_PORT"
+  type        = string
+  default     = ""
+}
+
 # The GPUs the fl-api writes into a FLARE job's meta when the job declares
 # none (mirrors JOB_RESOURCE_SPEC_NUM_GPUS in compose.prod.nvflare.yml).
 # A job declares its own in its meta.json (the Ark+ tutorials do), and a
@@ -285,6 +300,12 @@ variable "AICENTRE_BUCKET_NAME" {
 variable "FLIP_UI_BUCKET_NAME" {
   description = "S3 bucket name for flip-ui static assets served by CloudFront. Must be globally unique."
   type        = string
+}
+
+variable "FLIP_DEMO_BUCKET_NAME" {
+  description = "S3 bucket for the public demo, served from its own host (FLIP#2012, module.flip_demo_bucket). Empty (the default) creates none; clearing it where the bucket exists fails the apply (prevent_destroy)."
+  type        = string
+  default     = ""
 }
 
 variable "flip_user_pool_name" {
@@ -381,6 +402,22 @@ variable "FL_ADMIN_DIRECTORY" {
   default     = "/app/admin"
 }
 
+variable "AUTO_UPGRADE_TARGET_RELEASE" {
+  description = <<-EOT
+    The release trusts with automatic upgrades switched on are moved to (FLIP#1644), as a
+    stable `vX.Y.Z`. Leave unset to target the release the hub itself runs. Staging sets it,
+    since its hub runs `sha-` builds; production sets it only to hold a release back. Empty
+    is treated as unset and the variable is omitted from the flip-api task env.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.AUTO_UPGRADE_TARGET_RELEASE == "" || can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.AUTO_UPGRADE_TARGET_RELEASE))
+    error_message = "AUTO_UPGRADE_TARGET_RELEASE must be empty or a stable release tag (vX.Y.Z)."
+  }
+}
+
 variable "ENFORCE_MFA" {
   description = <<-EOT
     Gate authenticated routes on TOTP enrolment. Leave unset for the secure
@@ -399,4 +436,3 @@ variable "ecs_exec_enabled" {
   type        = bool
   default     = false
 }
-

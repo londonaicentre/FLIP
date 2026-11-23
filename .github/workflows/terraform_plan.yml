@@ -128,8 +128,10 @@ jobs:
           FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
           FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+          FLIP_DEMO_BUCKET_NAME: ${{ vars.FLIP_DEMO_BUCKET_NAME }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
+          AUTO_UPGRADE_TARGET_RELEASE: ${{ vars.AUTO_UPGRADE_TARGET_RELEASE }}
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
           SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
@@ -142,6 +144,7 @@ jobs:
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+          FL_EDGE_PORT: ${{ vars.FL_EDGE_PORT }}
           # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into
           # the env file as raw exports. The two web-edge values are optional on
@@ -154,6 +157,7 @@ jobs:
           NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
           LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
+          LZA_WEB_DEMO_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_DEMO_DISTRIBUTION_ARN }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           FL_API_KEY: ${{ secrets.FL_API_KEY }}

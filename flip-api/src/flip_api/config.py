@@ -13,6 +13,7 @@
 import json
 import logging
 import os
+import re
 from typing import Annotated, Literal
 
 from pydantic import EmailStr, Field, SecretStr, ValidationInfo, field_validator, model_validator
@@ -96,6 +97,11 @@ class Settings(BaseSettings):
     SCANNED_MODEL_FILES_BUCKET: str
     UPLOADED_FEDERATED_DATA_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
+
+    # Where the pre-provisioned FL participant kits live, for building a trust's downloadable kit
+    # (FLIP#1852): the directory or ``s3://bucket/prefix`` that holds ``net-N/``. Unset, no kit can
+    # be downloaded from the UI.
+    FL_KITS_URI: str | None = None
 
     # The dev object store (FLIP#1291): development runs an S3-compatible
     # RustFS container in the dev compose instead of AWS S3, reached through
@@ -219,6 +225,12 @@ class Settings(BaseSettings):
     # it on locally to verify MFA end-to-end without pretending to be prod.
     ENFORCE_MFA: bool = True
 
+    # The release trusts with automatic upgrades switched on are moved to (FLIP#1644). Unset is the
+    # normal case: the target is the release this hub itself runs. Set it to hold a release back, to
+    # offer one to a few trusts first, or on staging, whose hub runs `sha-` builds and so names no
+    # release by itself. Only a stable `vX.Y.Z` is accepted; empty means unset.
+    AUTO_UPGRADE_TARGET_RELEASE: str | None = None
+
     # Which email backend send_templated_email (utils/email_sender.py) uses.
     # "ses" sends through AWS SESv2; "console" logs the would-be email
     # instead, so development needs no SES identity, templates or verified
@@ -242,6 +254,21 @@ class Settings(BaseSettings):
         if v is None or v == "":
             return "development"
         return v
+
+    @field_validator("AUTO_UPGRADE_TARGET_RELEASE", mode="before")
+    @classmethod
+    def parse_auto_upgrade_target(cls, v: str | None) -> str | None:
+        """Empty is unset (CI injects empty strings); anything else must be a stable ``vX.Y.Z``.
+
+        A malformed value fails the boot rather than being ignored: falling back to the hub's own
+        release would silently move every opted-in trust somewhere the operator did not choose.
+        """
+        normalised = "" if v is None else str(v).strip()
+        if not normalised:
+            return None
+        if not re.fullmatch(r"v\d+\.\d+\.\d+", normalised):
+            raise ValueError(f"AUTO_UPGRADE_TARGET_RELEASE={v!r} is not a stable release tag (vX.Y.Z)")
+        return normalised
 
     @field_validator("ENFORCE_MFA", mode="before")
     @classmethod

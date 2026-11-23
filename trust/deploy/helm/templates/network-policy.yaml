@@ -191,4 +191,66 @@ spec:
 {{- end }}
   policyTypes:
     - Egress
+{{- if .Values.autoUpgrade.enabled }}
+---
+# The upgrade agent drives helm against the Kubernetes API (FLIP#1644). Policies are matched after the
+# `kubernetes` Service's DNAT, so this names the API server's real port: 443 on AKS/EKS/GKE, 6443 on
+# kubeadm, k3s, RKE2 and kind. Without it a tick cannot upgrade. Selects the agent
+# alone: no other trust pod gets a path to the API server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-upgrade-agent-apiserver
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: upgrade-agent
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+      ports:
+{{- range .Values.autoUpgrade.apiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+{{- end }}
+  policyTypes:
+    - Egress
+{{- end }}
+{{- end }}
+{{- if and .Values.networkPolicies.enabled .Values.networkPolicies.apiServer.cidrs .Values.xnat.enabled .Values.xnat.web.enabled }}
+---
+# XNAT's Container Service starts its jobs (dcm2niix) through the Kubernetes API, from xnat-web. NetworkPolicy
+# matches the API server's real endpoint, so where it does not listen on 443 the egress above misses it and
+# xnat-init fails with "Container Service cannot reach its kubernetes backend" (FLIP#1958). xnat-web only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-web-api-server
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: xnat-web
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{- range .Values.networkPolicies.apiServer.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicies.apiServer.port }}
+          protocol: TCP
 {{- end }}

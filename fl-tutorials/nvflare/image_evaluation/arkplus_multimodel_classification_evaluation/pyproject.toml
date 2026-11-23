@@ -2,7 +2,7 @@
 name = "arkplus-multimodel-evaluation-tutorial"
 version = "0.1.0"
 description = "Local uv environment for the Ark+ multimodel evaluation tutorial preprocessing utilities."
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 
 # See the original requirements at https://github.com/jlianglab/Ark/blob/main/Ark_Plus/Finetuning/requirements.txt
 dependencies = [
@@ -12,7 +12,7 @@ dependencies = [
     "scikit-learn>=1.6.1",
     "scipy>=1.15.2",
     "timm>=1.0.15",
-    "torch>=2.13.0,<2.14",
+    "torch>=2.15.0,<2.16",
 ]
 
 [tool.uv]

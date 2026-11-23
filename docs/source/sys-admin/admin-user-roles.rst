@@ -36,7 +36,7 @@ Roles
      - Read-only access to the projects they have been added to.
    * - ``trust admin``
      - Everything a ``researcher`` can do, plus approving or declining projects for **one trust**, chosen when the
-       role is assigned (see :ref:`assigning-a-trust-admin`).
+       role is assigned (see :ref:`assigning-a-trust-admin`), and downloading that trust's kit.
 
 Researchers
 ===========
@@ -75,6 +75,9 @@ Trust Admins
 - **Where their authority stops.** The approval right applies at their one trust only. They see nothing of projects
   staged only at other trusts and have no say over them.
 - **Where they decide.** On the **My Trust** page (see :ref:`trust-admin-guide`).
+- **Their trust's kit.** A Trust Admin can download their trust's kit and issue it new keys, from the **Trust kit**
+  section of the same page (see :ref:`onboarding-kit-from-ui`). An ``admin`` can do the same for any trust, from its
+  card on the Connection Status page. Each download and each key change is written to the trust's audit log.
 
 Every change to who is a trust's Trust Admin is written to that trust's audit log.
 
@@ -106,6 +109,11 @@ Permissions
      - No
      - No
      - Yes
+   * - Download a trust's kit and issue it new keys
+     - Yes
+     - No
+     - No
+     - For their own trust
    * - Unstage projects
      - Yes
      - No
@@ -153,6 +161,47 @@ only read. Editing, staging or deleting the project itself stays with the owner 
    them creating new projects, writing to projects they do not own, and adding members to their own projects.
 
    To fully remove a former owner's access, transfer the project to another user or delete it.
+
+.. _disable-or-delete-a-user:
+
+***************************
+Disabling or deleting users
+***************************
+
+Both are in the user's **Danger Zone** in the Admin Area and need the *Manage users* permission.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 39 39
+
+   * -
+     - Disable
+     - Delete
+   * - When
+     - Any time. Use it to suspend access.
+     - Once the account is disabled (the button is greyed out until then). Use it when someone leaves or asks to be
+       erased.
+   * - Sign-in
+     - Refused until the account is re-enabled.
+     - The account is removed from the identity provider.
+   * - Roles and project memberships
+     - Kept.
+     - Removed.
+   * - Name, email, organisation
+     - Kept.
+     - The email and organisation are removed. The name is kept so that history can still say who did what.
+   * - History (projects, models, approvals)
+     - Shows the user's name.
+     - Shows "Former user (*name*)".
+   * - Undo
+     - Re-enable the account.
+     - Not possible. Register the person again as a new user.
+
+The hub refuses a delete while the user still owns a project that is not deleted, or is a Trust Admin. The refusal
+names the projects and trusts. Transfer or delete those projects, or move the Trust Admin to another role, then delete
+the user.
+
+Each delete is written to the users audit trail, with the admin who made it and the user's name at the time.
 
 *************************
 Who can see whose profile

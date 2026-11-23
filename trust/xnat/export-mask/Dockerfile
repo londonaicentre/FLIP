@@ -21,9 +21,9 @@
 # trust/xnat/tests/test_export_mask_image_pin.py). Bump all three with any change here.
 # The package must be **public**: the Container Service pulls with no credentials.
 
-FROM python:3.12-slim-bookworm
+FROM python:3.13-slim-bookworm
 
-ARG EXPORT_MASK_VERSION=1.0.0
+ARG EXPORT_MASK_VERSION=1.0.1
 
 LABEL org.opencontainers.image.source="https://github.com/londonaicentre/FLIP" \
       org.opencontainers.image.description="FLIP XNAT Container Service command: OHIF DICOM-SEG to NIfTI \

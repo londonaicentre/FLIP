@@ -143,3 +143,5 @@ How are a Trust's keys rotated?
    One command per Trust reissues its API key and internal service key in place; the Trust keeps its id, code and FL
    kit slot. The refreshed kit then goes to the Trust's operator, whose upgrade command restarts every trust-internal
    container together. XNAT's credentials do not rotate with it. See :ref:`deploy-central-hub-rotate-trust-keys`.
+   For a site on a Docker Compose host, **Issue new keys** on the Trust's card in the FLIP UI does the same and
+   downloads the new kit.

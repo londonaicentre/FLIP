@@ -18,7 +18,7 @@ readme = "README.md"
 authors = [
     { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
 ]
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "cryptography>=46.0.7",
     "fastapi[standard]>=0.115.11",
@@ -27,8 +27,13 @@ dependencies = [
     "psycopg2-binary>=2.9.10",
     "pydantic-settings>=2.9.1",
     "python-multipart>=0.0.26",
-    "snowflake-connector-python>=3.12.0",
-    "snowflake-sqlalchemy>=1.7.0",
+    # Connector 4.x caps filelock<4; 5.x drops filelock entirely, which is what clears
+    # GHSA-v4x8-3wr5-3wq8, GHSA-567q-5qvw-pf92, GHSA-9vhv-jxww-xfm5, GHSA-fq56-3cx3-fjxp,
+    # GHSA-m462-7rxw-wvpg, GHSA-j8f7-rjxc-mr56, GHSA-69hj-f68j-2879, GHSA-9j6q-wvj5-jgjg,
+    # GHSA-rfpc-qcw5-3pc4, GHSA-cwqr-hh33-gh44, GHSA-8mx5-7m5m-r77g, GHSA-9c4x-gm8v-wgc4,
+    # GHSA-6627-m3xw-93mp. snowflake-sqlalchemy 2.x is the line that accepts connector 5.x.
+    "snowflake-connector-python>=5.2.0",
+    "snowflake-sqlalchemy>=2.1.0",
     "sqlalchemy>=2.0.39",
     "sqlglot>=26.33.0",
     "starlette>=1.2.1",
@@ -53,7 +58,7 @@ exclude-newer = "3 days"
 constraint-dependencies = [
     "anyio>=4.14.2",  # CVE-2026-63374, CVE-2026-64847; transitive via httpx, starlette, watchfiles
     "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
-    "dnspython>=2.9.0",  # GHSA-45c3-73f7-pv4m
+    "dnspython>=2.9.2",  # GHSA-45c3-73f7-pv4m, GHSA-vvf4-9x63-8xvv
     "python-dotenv>=1.2.2",  # GHSA: symlink-following file overwrite; transitive via pydantic-settings
     "urllib3>=2.8.0",  # GHSA-8988-9cw3-xx77, GHSA-gh4c-6fx4-qh6g, GHSA-vxq7-64xx-v4gw, GHSA-qccp-gfcp-xxvc, GHSA-mf9v-mfxr-j63j; transitive via requests
 ]
@@ -71,7 +76,7 @@ omit = ["*.venv/*", "*/tests/*", "*/__init__.py"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 preview = true

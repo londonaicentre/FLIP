@@ -39,6 +39,16 @@ class XnatFetchError(Exception):
     pass
 
 
+class NotInProjectArchiveError(Exception):
+    """Exception raised when a study's files are not all in its project's own directory of XNAT's archive (FLIP#1857).
+
+    A session shared into the project from another one keeps its files under that project's directory, which a job
+    pod mounting this project's directory cannot read. Not an XNAT failure: the study can still be streamed.
+    """
+
+    pass
+
+
 class CohortBelowThresholdError(Exception):
     """Exception raised when data-access-api refuses to release a cohort's accession IDs.
 

@@ -10,12 +10,13 @@
 # limitations under the License.
 #
 
-from datetime import datetime
+from collections.abc import Collection
+from datetime import datetime, timedelta
 from typing import cast
 from uuid import UUID
 
 import httpx
-from sqlalchemy import Column, exists
+from sqlalchemy import Column, exists, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, col, select
 
@@ -48,6 +49,7 @@ from flip_api.fl_services.services.fl_service import (
     _raise_if_job_aborted,
     bundle_flower_application,
     bundle_nvflare_application,
+    fl_api_is_serving,
     get_bundle_urls,
     start_training,
     unavailable_clients,
@@ -91,6 +93,37 @@ def remove_job(job_id: UUID, session: Session) -> None:
         session.rollback()
         logger.error(f"Error reverting job pickup: {e}")
         raise DatabaseError("Error reverting job pickup") from e
+
+
+def requeue_job(job_id: UUID, session: Session) -> bool:
+    """
+    Put a job that is still being prepared back in the queue, at its old place (FLIP#1962).
+
+    Its ``created`` time is kept, so it is the next job picked up. The UPDATE is conditional on ``IN_PROGRESS``: a job a
+    user aborted (DELETED) or the watchdog completed in the meantime stays as it is.
+
+    Args:
+        job_id (UUID): The ID of the job.
+        session (Session): SQLModel session.
+
+    Returns:
+        bool: True when the job is queued again; False when it was no longer being prepared.
+
+    Raises:
+        DatabaseError: If the update fails at the DB layer.
+    """
+    try:
+        result = session.execute(
+            update(FLJob)
+            .where(col(FLJob.id) == job_id, col(FLJob.status) == JobStatus.IN_PROGRESS)
+            .values(status=JobStatus.QUEUED, started=None)
+        )
+        session.commit()
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.error(f"Error putting job {job_id} back in the queue: {e}")
+        raise DatabaseError("Error putting the job back in the queue") from e
+    return result.rowcount == 1  # type: ignore[attr-defined]
 
 
 def remove_job_from_queue(model_id: UUID, session: Session) -> None:
@@ -385,6 +418,34 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
         raise DatabaseError("Database error while getting net by name") from e
 
 
+def get_net_by_id(net_id: UUID, session: Session) -> INetDetails | None:
+    """
+    Get information for a net by its id.
+
+    Args:
+        net_id (UUID): The id of the net.
+        session (Session): SQLModel session.
+
+    Returns:
+        INetDetails | None: Details of the net, or None if there is no such net.
+
+    Raises:
+        DatabaseError: If the query fails at the DB layer.
+    """
+    try:
+        statement = select(FLNets.endpoint, FLNets.name, FLNets.fl_backend).where(FLNets.id == net_id)
+        result = session.exec(statement).first()
+    except SQLAlchemyError as e:
+        logger.error(f"Database error while getting net by id: {e}")
+        raise DatabaseError("Database error while getting net by id") from e
+
+    if not result:
+        logger.error(f"Net {net_id} could not be found")
+        return None
+    endpoint, net_name, fl_backend = result
+    return INetDetails(endpoint=endpoint, name=net_name, fl_backend=cast("FLBackend", fl_backend))
+
+
 def get_slot_names_by_trust_ids(trust_ids: list[UUID], session: Session) -> dict[UUID, str]:
     """Map each trust id to the slot_name of its bound FL kit slot.
 
@@ -477,12 +538,13 @@ def resolve_backend(session: Session, net: INetDetails | None = None) -> FLBacke
     )
 
 
-def check_for_available_net(session: Session) -> ISchedulerResponse | None:
+def check_for_available_net(session: Session, exclude_net_ids: Collection[UUID] = ()) -> ISchedulerResponse | None:
     """
     Checks for any available nets and marks one as busy if found.
 
     Args:
         session (Session): The database session.
+        exclude_net_ids (Collection[UUID]): Nets not to pick, e.g. ones already found not serving this pass.
 
     Returns:
         ISchedulerResponse | None: The scheduler response if an available net is found, otherwise None.
@@ -494,12 +556,10 @@ def check_for_available_net(session: Session) -> ISchedulerResponse | None:
 
     try:
         # Select one available scheduler
-        scheduler_stmt = (
-            select(FLScheduler)
-            .where(FLScheduler.status == NetStatus.AVAILABLE)
-            .limit(1)
-            .with_for_update(skip_locked=True)
-        )
+        scheduler_stmt = select(FLScheduler).where(FLScheduler.status == NetStatus.AVAILABLE)
+        if exclude_net_ids:
+            scheduler_stmt = scheduler_stmt.where(col(FLScheduler.net_id).not_in(exclude_net_ids))
+        scheduler_stmt = scheduler_stmt.limit(1).with_for_update(skip_locked=True)
 
         scheduler = session.exec(scheduler_stmt).first()
 
@@ -515,6 +575,84 @@ def check_for_available_net(session: Session) -> ISchedulerResponse | None:
         session.rollback()
         logger.error(f"Error checking for available net: {e}")
         raise DatabaseError("Error checking for available net") from e
+
+
+FL_API_OUTAGE_ALERT_AFTER = timedelta(minutes=10)
+# When each net's FL API was first found not answering, while jobs wait on it. Process memory is enough: the hub runs
+# one flip-api replica (see log_queue_positions), and a restart only resets the clock.
+_fl_api_quiet_since: dict[UUID, datetime] = {}
+_fl_api_outage_alerted: set[UUID] = set()
+
+
+def _any_job_queued(session: Session) -> bool:
+    try:
+        return session.exec(select(FLJob.id).where(FLJob.status == JobStatus.QUEUED).limit(1)).first() is not None
+    except SQLAlchemyError as e:
+        logger.error(f"Error checking for queued jobs: {e}")
+        raise DatabaseError("Error checking for queued jobs") from e
+
+
+def _note_fl_api_answer(net_id: UUID, net_name: str, serving: bool) -> None:
+    """Log a net's FL API going quiet, once at ERROR when that outlasts FL_API_OUTAGE_ALERT_AFTER, and its return."""
+    now = datetime.utcnow()
+    since = _fl_api_quiet_since.get(net_id)
+    if since is None:
+        if not serving:
+            _fl_api_quiet_since[net_id] = now
+            logger.warning(f"{net_name}'s FL API is not answering; queued jobs wait for a pass that finds it serving")
+        return
+    minutes = int((now - since).total_seconds() // 60)
+    if serving:
+        del _fl_api_quiet_since[net_id]
+        _fl_api_outage_alerted.discard(net_id)
+        logger.info(f"{net_name}'s FL API answers again after {minutes} min")
+    elif now - since >= FL_API_OUTAGE_ALERT_AFTER and net_id not in _fl_api_outage_alerted:
+        _fl_api_outage_alerted.add(net_id)
+        logger.error(
+            f"{net_name}'s FL API has not answered for {minutes} min, and queued jobs are waiting on it: check the FL "
+            "API and its FL server (FLIP#1962)"
+        )
+
+
+def check_for_serving_net(session: Session) -> ISchedulerResponse | None:
+    """
+    Pick an available net whose FL API answers, marking it busy (FLIP#1962).
+
+    A net whose FL API is starting or restarting (a staging start, a deploy, ECS replacing the task) would fail any
+    job handed to it before the job reached it, so it is released for this pass and the next available net is tried.
+    No job has been picked up yet, so a queued job simply waits for a pass that finds a serving net. An outage that
+    outlasts ``FL_API_OUTAGE_ALERT_AFTER`` is logged once at ERROR, since the jobs behind it wait without an error.
+
+    A net is only probed when a job is waiting: with an empty queue the net is returned as is, and the job pickup
+    releases it. A net that cannot be probed (no such net, no endpoint) is also returned as is: that is a
+    misconfiguration, and preparing the job reports it as before.
+
+    Args:
+        session (Session): The database session.
+
+    Returns:
+        ISchedulerResponse | None: The scheduler of a serving net, or None when no available net is serving.
+
+    Raises:
+        DatabaseError: If a lookup or update fails at the DB layer.
+    """
+    if not _any_job_queued(session):
+        # Nothing waits on an outage now, so a later one starts its own clock.
+        _fl_api_quiet_since.clear()
+        _fl_api_outage_alerted.clear()
+        return check_for_available_net(session)
+    not_serving: list[UUID] = []
+    while (scheduler := check_for_available_net(session, exclude_net_ids=not_serving)) is not None:
+        net = get_net_by_id(scheduler.netId, session)
+        if net is None or not net.endpoint:
+            return scheduler
+        serving = fl_api_is_serving(net.endpoint, resolve_backend(session, net))
+        _note_fl_api_answer(scheduler.netId, net.name, serving)
+        if serving:
+            return scheduler
+        revert_scheduler_pickup(scheduler.id, session)
+        not_serving.append(scheduler.netId)
+    return None
 
 
 def _retire_job_with_unapproved_trusts(job: FLJob, scheduler_id: UUID, session: Session) -> None:
@@ -700,10 +838,11 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         session (Session): The database session.
 
     Returns:
-        bool: True when the job was submitted to the fl-server; False when a concurrent abort
-            (#787) deleted the job before or during prepare — an abort gate at the top of the
-            function catches aborts landed since the pickup commit — in which case submission
-            was skipped and the net released.
+        bool: True when the job was submitted to the fl-server. False when it was not, and the net
+            is released: a concurrent abort (#787) deleted the job before or during prepare (an
+            abort gate at the top of the function catches aborts landed since the pickup commit),
+            or a request to the FL API could not connect (#1962) — it never reached the FL API, so
+            nothing started, and the job goes back in the queue for the next pass.
 
     Raises:
         Exception: If the FL backend is unsupported, the net endpoint cannot be resolved, or
@@ -789,6 +928,25 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         # free (the abort usually released it already; this is an idempotent belt-and-braces).
         logger.info(f"Job {fl_job_id} for model {model_id} was aborted mid-prepare; skipping submission.")
         release_scheduler_for_model(model_id, session)
+        return False
+
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        # The FL API stopped answering after check_for_serving_net found it serving (FLIP#1962). A request that could
+        # not connect never reached it, so nothing was started and nothing needs undoing; a retry re-mints the job
+        # credential and re-uploads the app, which both FL APIs overwrite. A read timeout is not caught here: that
+        # request was sent and may have been acted on.
+        requeued = requeue_job(fl_job_id, session)
+        if requeued:
+            logger.warning(
+                f"The FL API could not be reached ({e!r}); job {fl_job_id} for model {model_id} is back in the queue "
+                "for the next pass"
+            )
+        else:
+            logger.info(f"Job {fl_job_id} for model {model_id} is no longer being prepared; skipping submission.")
+        release_scheduler_for_model(model_id, session)
+        if requeued:
+            # The pickup moved every queued model up one place; the requeue moves them back.
+            log_queue_positions(session)
         return False
 
     except Exception as e:

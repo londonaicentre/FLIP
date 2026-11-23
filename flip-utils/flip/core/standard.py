@@ -28,7 +28,7 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import ExitStack
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, override
 
 import pandas as pd
@@ -36,7 +36,7 @@ import requests
 from pydantic import ValidationError
 from requests import HTTPError
 
-from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
+from flip.constants.flip_constants import XNAT_ARCHIVE_DIR, FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
 from flip.exceptions import ResultsUploadError
 from flip.schemas import DEFAULT_X_AXIS_LABEL, FLLogEvent, TrainingLog, TrainingMetrics
@@ -129,6 +129,8 @@ def _hub_internal_headers(model_id: str) -> dict[str, str]:
 
 # (connect, read) bound on the PUT of one results part to the object store.
 _PART_PUT_TIMEOUT_SECONDS: tuple[int, int] = (5, 600)
+# imaging-api's layout of a study: three XNAT reads of up to 30 s each, and the approved-cohort check.
+_LAYOUT_TIMEOUT_SECONDS: tuple[int, int] = (5, 150)
 _PART_PUT_ATTEMPTS = 3
 
 
@@ -217,11 +219,19 @@ def _resource_params(resource: ResourceType) -> dict[str, str]:
     return {"assessor_type": assessor_type, "resource_type": resource.value}
 
 
+def _under(root: Path, relative: str) -> Path:
+    """A path imaging-api named, which must stay inside ``root``."""
+    path = PurePosixPath(relative)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"{relative!r} leaves {root}")
+    return root / path
+
+
 _study_dir_path: Path | None = None
 
 
 def _study_dir() -> Path:
-    """This process's directory for streamed studies: created on first use, removed at exit."""
+    """This process's directory for streamed or linked studies: created on first use, removed at exit."""
     global _study_dir_path
     if _study_dir_path is None:
         _study_dir_path = Path(tempfile.mkdtemp(prefix="flip-studies-"))
@@ -327,6 +337,8 @@ class FLIPStandardProd(FLIPBase):
 
         if FlipConstants.IMAGES_TRANSPORT == "stream":
             return self._stream_study(payload, resources, accession_id)
+        if FlipConstants.IMAGES_TRANSPORT == "archive":
+            return self._link_study(payload, resources, accession_id)
 
         endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"download/images/{FlipConstants.NET_ID}")
 
@@ -367,6 +379,48 @@ class FLIPStandardProd(FLIPBase):
             with tarfile.open(fileobj=response.raw, mode="r|") as tar:
                 tar.extractall(_study_dir(), filter="data")
             self.logger.info(f"Streamed {resource} images for {accession_id}")
+        return _study_dir() / accession_id
+
+    def _link_study(self, payload: dict[str, str], resources: list[ResourceType], accession_id: str) -> Path:
+        """Lay the study out, in this process's own study directory, as links into XNAT's archive.
+
+        For a job pod that mounts its project's directory of XNAT's archive read-only (FLIP#1857): imaging-api
+        names each file's place in the archive and in the layout a download has, and nothing is copied. XNAT keeps
+        assessor resources elsewhere, and a session shared in from another project under that project's directory,
+        so those are streamed.
+        """
+        endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"download/images/{FlipConstants.NET_ID}/layout")
+        streamed = [r for r in resources if _resource_params(r)["assessor_type"] == "assessor"]
+        for resource in resources:
+            if resource in streamed:
+                continue
+            response = requests.post(
+                endpoint,
+                json=payload,
+                params={"resource_type": resource.value},
+                headers=_trust_internal_headers(),
+                timeout=_LAYOUT_TIMEOUT_SECONDS,
+            )
+            if response.status_code == 409:  # not all in this project's directory of the archive
+                self.logger.warning(f"Streaming {resource} images for {accession_id}: {response.text[:200]}")
+                streamed.append(resource)
+                continue
+            if not response.ok:
+                raise HTTPError(
+                    f"imaging-api could not lay out {accession_id}: {response.status_code} {response.text[:200]}",
+                    response=response,
+                )
+            for file in response.json()["files"]:
+                link = _under(_study_dir(), file["path"])
+                target = _under(Path(XNAT_ARCHIVE_DIR), file["archive"])
+                if not target.is_file():
+                    raise FileNotFoundError(f"{target} is not in the mounted XNAT archive, or its group cannot read it")
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.unlink(missing_ok=True)  # a later round links the study again
+                link.symlink_to(target)
+            self.logger.info(f"Linked {resource} images for {accession_id}")
+        if streamed:
+            self._stream_study(payload, streamed, accession_id)
         return _study_dir() / accession_id
 
     @override

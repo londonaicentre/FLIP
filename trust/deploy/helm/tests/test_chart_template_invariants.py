@@ -308,7 +308,8 @@ IMAGE_PINS = (
     ("xnat.image.pin", ".Values.xnat.web.image.tag", ("xnat-web.yaml", "xnat-init-job.yaml")),
     ("xnat.image.pin", ".Values.xnat.db.image.tag", ("xnat-db.yaml",)),
     ("xnat.image.pin", ".Values.xnat.nginx.image.tag", ("xnat-nginx.yaml",)),
-    ("flClient.image.pin", ".Values.flClient.image.tag", ("_helpers.tpl", "trust-api.yaml")),
+    # _helpers.tpl: the fl-client image and trust-api's FL_CLIENT_IMAGE_TAG (flip-trust.trustApiConfigData).
+    ("flClient.image.pin", ".Values.flClient.image.tag", ("_helpers.tpl",)),
 )
 
 

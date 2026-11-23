@@ -110,7 +110,17 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert "--kit-file" in gate, gate
         assert ".env.SCR.prod" in gate, gate
         assert "_upgrade-trust-apply" in out, out
+        # XNAT's port guard runs before the plan rewrites the kit's tag: nothing changes on a refusal.
+        assert out.index("must differ") < out.index("site_upgrade.py plan"), out
         assert_data_safe(out, "upgrade-onprem-trust")
+
+    def test_a_relative_kit_file_reaches_the_xnat_sub_make_as_a_full_path(self):
+        """A command-line KIT_FILE is passed on as typed, and trust/xnat would look for it in its own directory."""
+        out = dry_run("upgrade-trust", "KIT_FILE=.env.SCR.prod", "YES=1")
+        assert '[ "8198" = "8199" ]' in out, f"the port guard did not read the kit's ports:\n{out}"
+        for line in out.splitlines():
+            if "-C xnat " in line and "KIT=SCR" in line:
+                assert "KIT_FILE='/" in line, line
 
 
 class HostDirsArePreparedNotEscalated(unittest.TestCase):
