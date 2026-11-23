@@ -138,7 +138,7 @@ class TestView:
         v = self._view(_trust(auto_upgrade_enabled=True, upgrade_agent_seen_at=datetime.utcnow() - timedelta(hours=9)))
         assert "AGENT_OFFLINE" in v.blockers
 
-    @pytest.mark.parametrize("code", ["LOCAL_MODIFICATIONS", "UNSUPPORTED_MODE", "UNKNOWN_CHECKOUT", "SITE_UNHEALTHY"])
+    @pytest.mark.parametrize("code", ["SITE_UNHEALTHY"])
     def test_every_reportable_blocker_reaches_the_admin(self, code: str):
         """Storing a blocker the view never reads would leave the admin with a silent PENDING."""
         v = self._view(
@@ -278,10 +278,10 @@ class TestClaim:
         db.exec.return_value.one.return_value = t
         svc.record_status(
             t.id,
-            UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", blocker="LOCAL_MODIFICATIONS"),
+            UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", blocker="SITE_UNHEALTHY"),
             db,
         )
-        assert t.upgrade_blocker == "LOCAL_MODIFICATIONS"
+        assert t.upgrade_blocker == "SITE_UNHEALTHY"
         svc.record_status(
             t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", blocker="<script>"), db
         )
@@ -312,10 +312,10 @@ class TestClaim:
         db = MagicMock()
         db.exec.return_value.one.return_value = t
         svc.record_status(
-            t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", detail="UNSUPPORTED_MODE"), db
+            t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", detail="SITE_UNHEALTHY"), db
         )
         assert t.upgrade_blocker is None
-        assert t.upgrade_blocker_detail == "UNSUPPORTED_MODE"
+        assert t.upgrade_blocker_detail == "SITE_UNHEALTHY"
 
     def test_a_stale_terminal_report_does_not_free_another_releases_lease(self):
         """A late FAILED from the agent that lost its lease must not unlock the upgrade now running."""
@@ -360,17 +360,28 @@ class TestRoutes:
         app.dependency_overrides[verify_token] = lambda: uuid.uuid4()
         return TestClient(app), app
 
-    def test_trust_key_can_set_the_switch_only(self):
-        t = _trust(auto_upgrade_enabled=False, auto_upgrade_window_start="01:00", auto_upgrade_window_end="05:00")
+    def test_a_trust_key_cannot_switch_its_own_upgrades(self):
+        """Only a Trust Admin or hub admin sets the switch: the host installer's trust-key route is gone."""
+        t = _trust(auto_upgrade_enabled=False)
         client, app = self._client(t, MagicMock())
         try:
-            with patch(f"{SVC}.is_busy", return_value=False):
-                r = client.put("/api/trust/upgrade-policy", json={"enabled": True})
+            r = client.put("/api/trust/upgrade-policy", json={"enabled": True})
         finally:
             app.dependency_overrides.clear()
-        assert r.status_code == 200
-        assert t.auto_upgrade_enabled is True
-        assert t.auto_upgrade_window_start == "01:00"
+        assert r.status_code == 405
+        assert t.auto_upgrade_enabled is False
+
+    def test_the_host_only_blockers_are_gone(self):
+        """Auto-upgrade is Kubernetes-only: a cluster has no checkout to dirty and no remote host mode."""
+        from flip_api.domain.schemas.trusts import REPORTABLE_BLOCKERS, UpgradeBlocker
+
+        assert {b.value for b in UpgradeBlocker} == {
+            "JOBS_RUNNING",
+            "OUTSIDE_WINDOW",
+            "AGENT_OFFLINE",
+            "SITE_UNHEALTHY",
+        }
+        assert REPORTABLE_BLOCKERS == {UpgradeBlocker.SITE_UNHEALTHY}
 
     def test_admin_routes_refuse_a_user_without_the_permission(self):
         t = _trust()
@@ -629,7 +640,7 @@ class TestManualMove:
 
 
 class TestAgentRoutesThroughTheApp:
-    """The two routes the host agent uses, driven through the app rather than called as functions.
+    """The two routes the upgrade agent uses, driven through the app rather than called as functions.
 
     They were only ever exercised as service calls, so nothing checked the wire shape the agent
     actually parses (snake_case, the lease object, which HTTP status a refusal gives).

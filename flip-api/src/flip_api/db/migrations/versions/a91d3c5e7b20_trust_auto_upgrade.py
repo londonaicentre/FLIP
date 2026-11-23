@@ -12,7 +12,7 @@
 
 """trust auto-upgrade
 
-The Trust Admin's automatic-upgrade switch and maintenance window, the lease a trust's host agent holds while it
+The Trust Admin's automatic-upgrade switch and maintenance window, the lease a trust's upgrade agent holds while it
 upgrades, and the outcome of the last attempt. Every existing trust starts OFF (grandfathered): the column defaults
 to false and nothing is backfilled, so no live site is upgraded until its own admin opts in.
 

@@ -1057,8 +1057,8 @@ autoscaling:
 # ---------------------------------------------------------------------------
 # Automatic upgrade agent (#1644) — the Kubernetes half of the auto-upgrade epic
 # ---------------------------------------------------------------------------
-# On a host the agent is a systemd timer (`make setup-auto-upgrade`). Here there is no host, so the
-# same tick runs as a CronJob in this namespace, against the same hub protocol and the same lease.
+# Automatic upgrades are for Kubernetes trusts only: the tick runs as a CronJob in this namespace,
+# against the hub's policy, lease and report endpoints. Compose trusts upgrade by hand.
 #
 # OFF by default, and deliberately so: enabling it hands a ServiceAccount the ability to rewrite
 # every workload in this namespace. Read README.md "Automatic upgrades" before switching it on.

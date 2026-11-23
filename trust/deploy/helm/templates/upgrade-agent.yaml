@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# The in-cluster auto-upgrade agent (#1644): the host's systemd timer, for a cluster with no host.
+# The in-cluster auto-upgrade agent (#1644): the only agent shape; Compose trusts upgrade by hand.
 #
 # The identity is deliberately narrow, and the narrowness is the design:
 #   - no `secrets` verbs. The one credential the agent needs arrives as a projected Secret volume
@@ -158,8 +158,6 @@ spec:
               imagePullPolicy: {{ .Values.autoUpgrade.image.pullPolicy }}
               args:
                 - tick
-                - --mode
-                - cluster
                 - --namespace
                 - {{ $ns }}
                 - --release
@@ -180,7 +178,7 @@ spec:
                   value: {{ .Values.trustApi.env.CENTRAL_HUB_API_URL | quote }}
                 - name: TRUST_API_KEY_HEADER
                   value: {{ .Values.trustApi.env.TRUST_API_KEY_HEADER | quote }}
-                # trust-api's Service: the pod's own loopback has nothing on it (the host agent's default).
+                # trust-api's Service: the pod's own loopback has nothing on it.
                 - name: TRUST_API_URL
                   value: "http://trust-api.{{ $ns }}.svc:{{ .Values.trustApi.service.port }}"
                 # Helm records, in ConfigMaps rather than Secrets (see the header comment).

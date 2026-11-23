@@ -322,7 +322,7 @@ class Trust(SQLModel, table=True):
     auto_upgrade_window_start: str | None = Field(default=None)
     auto_upgrade_window_end: str | None = Field(default=None)
     auto_upgrade_timezone: str | None = Field(default=None)
-    # The lease the host agent claims before it recreates anything: while `upgrade_lease_expires_at` is in the
+    # The lease the upgrade agent claims before it recreates anything: while `upgrade_lease_expires_at` is in the
     # future the scheduler assigns no job to this trust. It expires by itself so a dead agent cannot wedge a trust.
     upgrade_lease_expires_at: datetime | None = Field(default=None)
     upgrade_lease_release: str | None = Field(default=None)
@@ -331,8 +331,8 @@ class Trust(SQLModel, table=True):
     last_upgrade_release: str | None = Field(default=None)
     last_upgrade_at: datetime | None = Field(default=None)
     last_upgrade_detail: str | None = Field(default=None, sa_column=Column("last_upgrade_detail", Text, nullable=True))
-    # Last time the host agent asked for its policy, and the reason it last reported for not acting (e.g. a dirty
-    # checkout). Both are advisory and age out: the hub only shows them while fresh.
+    # Last time the upgrade agent asked for its policy, and the reason it last reported for not acting (e.g. an
+    # unhealthy site). Both are advisory and age out: the hub only shows them while fresh.
     upgrade_agent_seen_at: datetime | None = Field(default=None)
     upgrade_blocker: str | None = Field(default=None)
     # Why, in the agent's words (which AES key, which dead task): the code alone cannot say.

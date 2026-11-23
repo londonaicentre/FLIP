@@ -480,7 +480,7 @@ describe("My Trust", () => {
         });
 
         it("names the failing check beside the blocker the agent sent it for", async () => {
-            // "not healthy" alone sends the admin to the host operator to ask which check failed.
+            // "not healthy" alone sends the admin to the site operator to ask which check failed.
             autoUpgradeRef.value = autoUpgrade({
                 blockers: ["SITE_UNHEALTHY"],
                 blockerDetail: "trust-api reported dead_tasks=3"
