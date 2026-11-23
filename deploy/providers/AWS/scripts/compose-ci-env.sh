@@ -205,6 +205,7 @@ REQUIRED_KEYS=(
 # variables.tf already has a defined fallback.
 OPTIONAL_KEYS=(
     JOB_RESOURCE_SPEC_NUM_GPUS
+    FL_EDGE_PORT
 
     # Not stored in either GitHub environment and not normally in an env file:
     # CI's resolve-image-tags.sh emits it into $GITHUB_ENV, and the Makefile
@@ -214,6 +215,11 @@ OPTIONAL_KEYS=(
     # same for Flower's fleet proxy (TF_VAR_fl_fleet_proxy_image_tag, FLIP#1517).
     DOCKER_FL_API_TAG
     DOCKER_FL_PROXY_TAG
+
+    # The public demo's own bucket (FLIP#2012). Empty means no demo on this
+    # estate, a real answer; clearing it where the bucket exists plans a destroy
+    # that prevent_destroy turns into a failed apply.
+    FLIP_DEMO_BUCKET_NAME
 
     # ENFORCE_MFA is optional because *empty is the intended production value*,
     # not an oversight: locals.tf omits the variable from the flip-api task env
@@ -248,8 +254,8 @@ OPTIONAL_KEYS=(
 #                                 the internal FL NLB from; empty deletes every
 #                                 rule they feed, so it is not defaultable
 #
-# The two web-edge values are the exception in the other direction: the edge is
-# built *from* this stack's outputs, so on a first apply the domain and ARN are
+# The web-edge values are the exception in the other direction: the edge is
+# built *from* this stack's outputs, so on a first apply the domain and ARNs are
 # legitimately empty (variables.tf documents the two-phase wiring). Optional, so
 # they compose as omitted rather than as an empty string.
 LZA_REQUIRED_KEYS=(
@@ -262,6 +268,7 @@ LZA_REQUIRED_KEYS=(
 LZA_OPTIONAL_KEYS=(
     LZA_WEB_EDGE_DOMAIN
     LZA_WEB_EDGE_DISTRIBUTION_ARN
+    LZA_WEB_DEMO_DISTRIBUTION_ARN
 )
 
 REQUIRED_KEYS+=("${LZA_REQUIRED_KEYS[@]}")
@@ -277,6 +284,7 @@ LZA_RAW_TF_VARS=(
     "NETWORKING_INGRESS_CIDRS:networking_ingress_cidrs"
     "LZA_WEB_EDGE_DOMAIN:lza_web_edge_domain"
     "LZA_WEB_EDGE_DISTRIBUTION_ARN:lza_web_edge_distribution_arn"
+    "LZA_WEB_DEMO_DISTRIBUTION_ARN:lza_web_demo_distribution_arn"
 )
 
 # Those keys are emitted through the raw loop instead of the plain `KEY=value`

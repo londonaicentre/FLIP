@@ -248,6 +248,27 @@ How the trust runs an FL job, reported by trust-api in its heartbeat (FLIP#1739)
 {{- end }}
 
 {{/*
+trust-api's ConfigMap data, a helper so the pod template can hash it (checksum/config in trust-api.yaml).
+*/}}
+{{- define "flip-trust.trustApiConfigData" -}}
+CENTRAL_HUB_API_URL: {{ .Values.trustApi.env.CENTRAL_HUB_API_URL | quote }}
+DATA_ACCESS_API_URL: {{ .Values.trustApi.env.dataAccessApiUrl | default "http://data-access-api:8000" | quote }}
+IMAGING_API_URL: {{ .Values.trustApi.env.imagingApiUrl | default "http://imaging-api:8000" | quote }}
+POLL_INTERVAL_SECONDS: {{ .Values.trustApi.env.POLL_INTERVAL_SECONDS | quote }}
+TRUST_API_KEY_HEADER: {{ .Values.trustApi.env.TRUST_API_KEY_HEADER | quote }}
+TRUST_NAME: {{ .Values.trustName | quote }}
+ENV: {{ .Values.environment | quote }}
+LOG_LEVEL: {{ .Values.logLevel | quote }}
+TRUST_NUMBER: {{ .Values.trustNumber | quote }}
+# The fl-client has no health endpoint; the health collector reports the image tag this
+# release pins for it, so the hub's Connection Status names the FL build (FLIP#1204).
+# Must stay in step with the tag flip-trust.flClientImage renders.
+FL_CLIENT_IMAGE_TAG: {{ include "flip-trust.imageTag" (dict "pin" .Values.flClient.image.pin "global" .Values.global.image.tag "own" .Values.flClient.image.tag) | quote }}
+# Reported beside the tag: whether each FL job runs in a pod of its own (FLIP#1739).
+FL_CLIENT_JOB_MODE: {{ include "flip-trust.flClientJobMode" . | quote }}
+{{- end }}
+
+{{/*
 The NVFLARE site privacy policy (FLIP#851): fl-client-init renders it and the fl-client checks that render
 at start (FLIP#1570). In the pod template rather than only the ConfigMap, so a Helm value change rolls the
 Deployment.

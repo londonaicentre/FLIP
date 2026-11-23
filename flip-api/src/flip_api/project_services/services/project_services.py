@@ -63,6 +63,7 @@ from flip_api.model_services.services.model_service import delete_models
 from flip_api.project_services.utils.audit_helper import audit_project_action
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
+from flip_api.utils.user_roles import profile_display_name
 
 
 def _classify_responded_trust_ids(
@@ -474,7 +475,7 @@ def get_trusts_approval_status_for_projects(
             Trust.code,
             ProjectTrustIntersect.status,
             ProjectTrustIntersect.decided_by,
-            UserProfile.name,
+            profile_display_name(),
             ProjectTrustIntersect.decided_at,
             ProjectTrustIntersect.decided_as,
         )
@@ -1005,7 +1006,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
     # (same UserProfile LEFT JOIN pattern used in the list endpoint's batch
     # loader). created_by_name is null when the runner has no UserProfile row.
     query_row = session.exec(
-        select(Queries, UserProfile.name)  # type: ignore[call-overload]
+        select(Queries, profile_display_name())  # type: ignore[call-overload]
         .outerjoin(UserProfile, UserProfile.user_id == Queries.created_by)  # type: ignore[arg-type]
         .where(Queries.project_id == project.id)
         .order_by(col(Queries.created).desc())

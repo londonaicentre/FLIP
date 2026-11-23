@@ -703,6 +703,7 @@ class MainCheck(unittest.TestCase):
         assert "fl_quiesced" in body
         assert "`:v0.13.0` on every image the fourteen builds publish" in body
         assert "deploy-ui" not in body  # the apply publishes the UI (#1186)
+        assert "open the live demo host" in body  # published by the same run, to its own host (#2012)
         assert "- [ ] Delete JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" in body
 
 

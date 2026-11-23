@@ -268,6 +268,10 @@ def test_delete_user_removes_the_keycloak_user_and_drops_role_grants(client: Tes
     session.add(UserRole(user_id=sub, role_id=RoleRef.RESEARCHER.value))
     session.commit()
 
+    # Delete is the step after Disable (FLIP#1996): refused while Keycloak still has the user enabled.
+    assert client.delete(f"/api/users/{sub}").status_code == 409
+    provider.set_enabled(email, False)
+
     response = client.delete(f"/api/users/{sub}")
     assert response.status_code == 200, response.text
 

@@ -67,7 +67,7 @@ The shifted ports let a prod-pointed trust run on a developer laptop next to `ma
 ## Prerequisites
 
 1. **Operator workstation** — The machine where you run the commands (typically your laptop). It needs:
-   - Python 3.12+ and [UV](https://docs.astral.sh/uv/guides/install-python/)
+   - Python 3.13+ and [UV](https://docs.astral.sh/uv/guides/install-python/)
    - Ansible (installed via `uv sync` in `deploy/providers/AWS/`)
    - Terraform outputs available (you must have run `make init` + `make apply` in `deploy/providers/AWS/` first)
    - SSH access to the trust host (if provisioning remotely)
@@ -220,7 +220,7 @@ Any machine with the correct credentials can act as a trust: the hub identifies 
 
 **Hub-side prerequisites** (before the trust can connect):
 
-1. The trust must be registered on the hub — run `make register-trusts`, or use the Add-Trust button on the Connection status page. Registration inserts the `trust` row with its `api_key_hash` and claims an FL kit slot. No hub redeploy is needed.
+1. The trust must be registered on the hub — run `make register-trusts`, or use the Add-Trust button on the Connection status page. Registration inserts the `trust` row and claims an FL kit slot; `make register-trusts` also sets its `api_key_hash`, while a trust added with the button has no keys until its kit is first downloaded from its card. No hub redeploy is needed.
 
 `provision-local-trust` does not register the trust: it must already be registered.
 

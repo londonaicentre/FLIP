@@ -27,7 +27,7 @@ KIT_DEST ?= /opt/flip/fl-kit
 # uid 1000 and leave the SuperNode unable to read its own certs, with nothing
 # saying so until the pod logs. FL_BACKEND=<backend> on the command line still
 # overrides the shape, and so does an explicit KIT_UID=. Resolved at parse time,
-# scoped to the stage-kit goal, so `make -n stage-kit` shows the real chown and an
+# scoped to the stage-kit goal, so `make -n stage-kit` shows the resolved owner uid and an
 # unrecognisable kit fails before anything is copied.
 KIT_SHAPE_NVFLARE := $(if $(wildcard $(KIT_SRC)/startup/),nvflare,)
 KIT_SHAPE_FLOWER := $(if $(wildcard $(KIT_SRC)/certificates/ $(KIT_SRC)/keys/),flower,)
@@ -262,26 +262,24 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## for Flower certificates/ and keys/ holding THIS slot's credential only. That
 	## shape is also how the owning uid is chosen (KIT_UID above) — no FL_BACKEND
 	## needed; a kit with neither or both shapes is refused before anything is copied.
-	## On a real cluster the operator places it by whatever means the site allows; this
-	## target implements the kind case, which is what dev and stag use.
+	## scripts/stage-to-node.sh does the copy (FLIP#1958): on a kind node with docker exec/cp, on
+	## any other node (k3s, a VM) through a short-lived root pod pinned to it, with KIT_DEST as a
+	## hostPath and kubectl cp. A namespace under Pod Security "baseline" refuses that pod and the
+	## chart's own kit hostPath alike: use the kit Secret route there (flClient.kit.source=secret,
+	## `make kit-secret`).
 	##
-	## KIT_DEST is emptied before the copy, for the same reason the EC2 play wipes before
-	## its sync: `docker cp` merges into whatever is already there, so re-staging after a
-	## kit-date bump, a backend switch, or a corrected over-broad sync would leave the
-	## previous kit's files in place beside the new ones — including credentials that
-	## should no longer be on the node. `find -mindepth 1 -delete` clears the contents
-	## without removing the directory the chart mounts, and fails the recipe if it cannot,
-	## rather than staging on top of a stale kit.
+	## KIT_DEST's previous contents are replaced, not merged, for the same reason the EC2 play
+	## wipes before its sync: re-staging after a kit-date bump, a backend switch, or a corrected
+	## over-broad sync would otherwise leave credentials that should no longer be on the node.
+	## The mounted subdirectories are created and the whole kit is made private to KIT_UID.
+	##
+	## With several nodes, NODE=<name> is required: the node the FL client runs on, which is
+	## imaging-api's unless flClient.affinity says otherwise. One node needs no NODE.
 	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem, and defaulting to kubectl's current context ($$(kubectl config current-context 2>/dev/null || echo none)) would stage into whichever cluster that happens to be. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
-	@node=$$(kubectl --context $(KUBE_CONTEXT) get nodes -o jsonpath='{.items[0].metadata.name}') && \
-	  [ -n "$$node" ] || { echo "❌  no node found in context $(KUBE_CONTEXT) — is the cluster reachable?"; exit 1; }; \
-	  echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $$node:$(KIT_DEST)"; \
-	  docker exec "$$node" mkdir -p "$(KIT_DEST)" && \
-	  docker exec "$$node" find "$(KIT_DEST)" -mindepth 1 -delete && \
-	  docker cp "$(KIT_SRC)/." "$$node:$(KIT_DEST)/" && \
-	  docker exec "$$node" mkdir -p $(addprefix "$(KIT_DEST)"/,$(KIT_SUBDIRS)) && \
-	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \
-	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
+	@echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $(KIT_DEST)"
+	NAMESPACE=$(NAMESPACE) $(CHART_DIR)/scripts/stage-to-node.sh --context "$(KUBE_CONTEXT)" \
+	  --src "$(KIT_SRC)" --dest "$(KIT_DEST)" --subdirs "$(KIT_SUBDIRS)" --owner $(KIT_UID) $(if $(NODE),--node "$(NODE)")
+	@echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
 
 download-vocab: ## Download the OMOP core vocabulary from the AI Centre bucket to this host (your AWS CLI profile)
 	## For operators with access to the bucket (FLIP#923); everyone else exports the same
@@ -291,25 +289,21 @@ download-vocab: ## Download the OMOP core vocabulary from the AI Centre bucket t
 	@echo "✅ Next: make stage-vocab VOCAB_DIR=$(REPO_ROOT)/trust/omop-db/data/$(VOCAB_BUNDLE) KUBE_CONTEXT=<ctx>"
 
 stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vocabLoad.hostPath; run BEFORE deploy)
-	## Like stage-kit, the kind case:
+	## Like stage-kit, through scripts/stage-to-node.sh (kind: docker cp; any other node: a pod):
 	##
-	##   make stage-vocab VOCAB_DIR=<folder with CONCEPT.csv, ...> KUBE_CONTEXT=kind-flip-kch
+	##   make stage-vocab VOCAB_DIR=<folder with CONCEPT.csv, ...> KUBE_CONTEXT=<context>
 	##
-	## On any other cluster copy the folder to VOCAB_DEST on the node yourself (with several
-	## nodes, pin the Job there: omopDb.vocabLoad.nodeSelector). It is read only for the first
-	## load. World-readable, as the loader runs as the image user.
+	## With several nodes, name one with NODE=<name> and pin the load Job there
+	## (omopDb.vocabLoad.nodeSelector). It is read only for the first load. World-readable, as
+	## the loader runs as the image user.
 	##
-	## VOCAB_DEST is emptied first: `docker cp` merges, so a narrower re-stage would otherwise
-	## leave the previous bundle's table files beside the new ones for the loader to read.
+	## VOCAB_DEST is emptied first: a copy merges, so a narrower re-stage would otherwise leave
+	## the previous bundle's table files beside the new ones for the loader to read.
 	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
-	@node=$$(kubectl --context $(KUBE_CONTEXT) get nodes -o jsonpath='{.items[0].metadata.name}') && \
-	  [ -n "$$node" ] || { echo "❌  no node found in context $(KUBE_CONTEXT) — is the cluster reachable?"; exit 1; }; \
-	  echo "📦 Staging $(VOCAB_DIR) → [$(KUBE_CONTEXT)] $$node:$(VOCAB_DEST)"; \
-	  docker exec "$$node" mkdir -p "$(VOCAB_DEST)" && \
-	  docker exec "$$node" find "$(VOCAB_DEST)" -mindepth 1 -delete && \
-	  docker cp "$(VOCAB_DIR)/." "$$node:$(VOCAB_DEST)/" && \
-	  docker exec "$$node" chmod -R a+rX "$(VOCAB_DEST)" && \
-	  echo "✅ Vocabulary staged. Deploy with --set omopDb.vocabLoad.hostPath=$(VOCAB_DEST) (or OMOP_VOCAB_DIR=$(VOCAB_DEST) in the kit)"
+	@echo "📦 Staging $(VOCAB_DIR) → [$(KUBE_CONTEXT)] $(VOCAB_DEST)"
+	NAMESPACE=$(NAMESPACE) $(CHART_DIR)/scripts/stage-to-node.sh --context "$(KUBE_CONTEXT)" \
+	  --src "$(VOCAB_DIR)" --dest "$(VOCAB_DEST)" --world-readable $(if $(NODE),--node "$(NODE)")
+	@echo "✅ Vocabulary staged. Deploy with --set omopDb.vocabLoad.hostPath=$(VOCAB_DEST) (or OMOP_VOCAB_DIR=$(VOCAB_DEST) in the kit)"
 
 # Deliberately NO --force-conflicts here. Helm 4 applies the release server-side, and
 # `patch-kit-secrets` writes the kit's per-trust keys into the same Secret with field
@@ -594,6 +588,8 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	@# all (templates/xnat-init-job.yaml is guarded on both). `kubectl apply --selector` is then
 	@# handed zero objects and fails with "no objects passed to apply", which turned a deploy of a
 	@# trust that has no XNAT to configure into exit 3.
+	@# The wait ends on Complete or Failed, whichever comes first: a Job past its backoffLimit never
+	@# completes. Only a Failed condition fails it; a Failed-waiter that errors is dropped.
 	@echo "▶  Rendering XNAT init job from chart templates..."
 	@tmp=$$(mktemp); \
 	trap 'rm -f "$$tmp"' EXIT; \
@@ -611,16 +607,27 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	$(KUBECTL) apply -n $(NAMESPACE) -f $$tmp \
 		--selector app.kubernetes.io/component=xnat-init || exit 1; \
 	echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."; \
-	$(KUBECTL) wait job \
-		--selector app.kubernetes.io/component=xnat-init \
-		--for=condition=complete \
-		--namespace $(NAMESPACE) \
-		--timeout=$(HELM_TIMEOUT) && \
-	echo "✅  XNAT init complete." || { \
-		echo "❌  XNAT init failed — check logs:"; \
+	init="--selector app.kubernetes.io/component=xnat-init --namespace $(NAMESPACE) --timeout=$(HELM_TIMEOUT)"; \
+	$(KUBECTL) wait job $$init --for=condition=complete > /dev/null & complete=$$!; \
+	$(KUBECTL) wait job $$init --for=condition=failed > /dev/null 2>&1 & failed=$$!; \
+	job_failed=; \
+	while kill -0 $$complete 2>/dev/null; do \
+		if [ -n "$$failed" ] && ! kill -0 $$failed 2>/dev/null; then \
+			if wait $$failed; then job_failed=1; break; fi; \
+			failed=; \
+		fi; \
+		sleep 2; \
+	done; \
+	if [ -z "$$job_failed" ] && wait $$complete; then \
+		[ -z "$$failed" ] || kill $$failed 2>/dev/null; \
+		echo "✅  XNAT init complete."; \
+	else \
+		kill $$complete $$failed 2>/dev/null; \
+		if [ -n "$$job_failed" ]; then reason="the Job failed"; else reason="it did not complete in $(HELM_TIMEOUT)"; fi; \
+		echo "❌  XNAT init failed ($$reason) — check logs:"; \
 		$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
 		exit 1; \
-	}
+	fi
 
 sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s HUB=stag"; exit 1)

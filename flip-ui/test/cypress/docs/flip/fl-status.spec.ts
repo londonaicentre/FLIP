@@ -27,7 +27,7 @@ describe("docs: connection status", () => {
         // A healthy per-container snapshot as trust-api's collector reports it.
         // Both fields are nullable: the collector's _entry("down") reports no
         // version and no latency, so the type has to admit what the platform emits.
-        type ServiceProbe = { status: string; version: string | null; response_ms: number | null };
+        type ServiceProbe = { status: string; version: string | null; response_ms: number | null; job_mode?: string };
         const healthyServices = (): Record<string, ServiceProbe> => ({
             "trust-api": {
                 status: "healthy",
@@ -58,6 +58,13 @@ describe("docs: connection status", () => {
                 status: "healthy",
                 version: "0.3.0",
                 response_ms: 15
+            },
+            // Not a probed container: trust-api reports the FL client's version and how it runs a job.
+            "fl-client": {
+                status: "unknown",
+                version: "0.3.0",
+                response_ms: null,
+                job_mode: "process"
             }
         });
 
@@ -86,6 +93,8 @@ describe("docs: connection status", () => {
                     region: "London",
                     last_heartbeat: now,
                     project_count: 3,
+                    jobs_in_progress: 1,
+                    jobs_queued: 1,
                     services: healthyServices(),
                     services_updated_at: now
                 },
@@ -101,6 +110,23 @@ describe("docs: connection status", () => {
                 }
             ]);
         }).as("getTrusts");
+
+        // The drawer's Trust kit section, shown to the admin this spec signs in as (FLIP#1852).
+        cy.intercept("GET", "**/trust/*/kit", {
+            statusCode: 200,
+            body: {
+                keys_issued: true,
+                fl_backend: "nvflare",
+                fl_kit_slot: "Trust_2",
+                download_count: 1,
+                last_download: {
+                    at: "2026-11-10T16:37:02Z",
+                    kind: "full",
+                    by: "site.admin@example.com"
+                },
+                update_available: false
+            }
+        });
 
         // FL nets card: one healthy net whose two clients are both online, so the
         // card renders "The FL nets are Healthy" with green client check marks.

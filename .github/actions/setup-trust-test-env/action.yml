@@ -22,9 +22,9 @@ inputs:
     description: |
       Python toolchain version. This default is the single source of truth for
       every trust test job — none of the callers override it — and must stay in
-      step with trust/*/.python-version and requires-python (all 3.12).
+      step with trust/*/.python-version and requires-python (all 3.13).
     required: false
-    default: "3.12"
+    default: "3.13"
   # The three values below are test-only and never read from secrets, so a fork PR's run
   # (which is given no secrets) behaves like any other. Left empty, each is generated for
   # the run; a caller passes one only to match a stack that pins it (compose.test.yml).

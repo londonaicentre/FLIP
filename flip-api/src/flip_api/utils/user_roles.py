@@ -24,6 +24,7 @@ from collections import defaultdict
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import ColumnElement, case, literal
 from sqlmodel import Session, col, select
 
 from flip_api.db.models.main_models import Trust
@@ -31,6 +32,23 @@ from flip_api.db.models.user_models import Role, RoleRef, UserProfile, UserRole
 from flip_api.domain.schemas.users import CognitoUser, IRole, ITrustAdminOf, IUser
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import PagingInfo
+
+FORMER_USER = "Former user"
+
+
+def profile_display_name() -> ColumnElement[str | None]:
+    """``UserProfile.name`` for a select, reading "Former user (<name>)" once the user is deleted (FLIP#1996).
+
+    Projects, models, queries and decisions keep the id of whoever made them, so a deleted user's
+    profile row stays and this is what history shows for them. Null when there is no profile row.
+    """
+    name = col(UserProfile.name)
+    deleted = col(UserProfile.deleted_at).is_not(None)
+    return case(
+        (deleted & (name == ""), literal(FORMER_USER)),
+        (deleted, literal(f"{FORMER_USER} (") + name + literal(")")),
+        else_=name,
+    )
 
 
 def apply_user_profile(user: CognitoUser, session: Session) -> CognitoUser:

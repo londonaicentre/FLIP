@@ -26,5 +26,5 @@ docker.io/grafana/loki:3.4.0  sha256:74b8ccbd6e4b4932874742cf3997389592389ea721b
 docker.io/grafana/alloy:v1.9.0  sha256:32bc0ba6bad75ca24bdf4a6d2dd793a564dff06b6446927699c08d9f9c749c6e
 docker.io/grafana/grafana:11.5.0  sha256:0a2874cf39c6487093c682215f7c7903ed8646d78ae5f911af945d2dfcc0a447
 docker.io/tecnativa/docker-socket-proxy:v0.4.2  sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
-ghcr.io/astral-sh/uv:python3.12-bookworm-slim  sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
+ghcr.io/astral-sh/uv:python3.13-bookworm-slim  sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca
 docker.io/library/busybox:1.36  sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662

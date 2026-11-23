@@ -85,6 +85,9 @@ describe("makeDemoServer route coverage", () => {
         // the signed-in identity — MainLayout resolves permissions from it.
         const resPermissions = await client.get("/users/demo-researcher/permissions");
         expect(resPermissions.status).toBe(200);
+        // Neither an admin nor a Trust Admin, so the trust card's kit section stays hidden and its
+        // routes, which this server does not serve, are never called (FLIP#1852).
+        expect(resPermissions.data).toEqual({ permissions: [] });
     });
 
     it("lists every registered project, in registry order", async () => {

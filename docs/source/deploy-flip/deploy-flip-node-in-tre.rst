@@ -244,7 +244,7 @@ with the Ansible playbook:
 
 - Docker Engine (>= 24.0) in swarm mode with overlay networking, and Docker Compose (>= 2.40)
 - NVIDIA driver (>= 580) and the NVIDIA Container Toolkit, for GPU work
-- Python 3.12 or 3.13
+- Python 3.13
 - PostgreSQL client libraries (``postgresql-client``)
 - Make
 

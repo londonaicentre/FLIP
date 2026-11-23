@@ -11,12 +11,14 @@
 #
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from flip_api.domain.schemas.private import ServiceHealthEntry
 from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TrustApprovalStatus
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.domain.schemas.users import CognitoUser
 
 # Interfaces
@@ -43,6 +45,10 @@ class ITrustStatus(BaseModel):
     # we just need to tag it on the wire.
     last_heartbeat: str | None = None
     project_count: int = 0
+    # FL jobs this trust takes part in that are waiting or running (FLIP#1739). They count every
+    # project's jobs, so only a hub admin gets them: None for every other caller of this list.
+    jobs_queued: int | None = None
+    jobs_in_progress: int | None = None
     # Latest per-service health snapshot from the trust's health collector (issue
     # #901). None for trusts on pre-collector trust-api builds. The entries reuse
     # the same ServiceHealthEntry model the heartbeat validated them with on the
@@ -66,9 +72,7 @@ class ICreateTrust(BaseModel):
 class ICreatedTrust(BaseModel):
     """Response for POST /admin/trusts.
 
-    `trust_api_key` and `trust_internal_service_key` are plaintext and are returned
-    exactly once. The hub only stores the SHA-256 of the api key; the internal
-    service key is not persisted (only used by trust-internal services).
+    Carries no keys: they are minted when the trust's kit is first downloaded (FLIP#1852).
 
     `fl_kit_slot` is the pre-provisioned FL participant identity assigned to this
     trust from the shared pool. The operator's containers mount the matching
@@ -81,10 +85,42 @@ class ICreatedTrust(BaseModel):
     code: str | None = None
     region: str | None = None
     created_at: datetime | None = None
-    trust_api_key: str
-    trust_internal_service_key: str
     fl_kit_slot: str
     fl_kit_slot_number: int
+
+
+class ITrustKitLastDownload(BaseModel):
+    """The most recent download of a trust's kit from the UI."""
+
+    at: datetime
+    kind: Literal["full", "update"]
+    by: str | None = None  # the downloader's profile name, when they have one
+
+
+class ITrustKitStatus(BaseModel):
+    """Response for GET /trust/{trust_id}/kit: the state of a trust's kit, with no secrets."""
+
+    keys_issued: bool  # False: the next download mints the trust's keys and carries them
+    fl_backend: FLBackend
+    fl_kit_slot: str | None = None
+    download_count: int
+    last_download: ITrustKitLastDownload | None = None
+    update_available: bool  # the hub-shared values or FL kits moved since the last download
+
+
+class IRotateTrustKit(BaseModel):
+    """Body of POST /trust/{trust_id}/kit/rotate: the trust's code, typed back to confirm."""
+
+    confirm_code: str
+
+
+class ITrustKitDownload(BaseModel):
+    """An encrypted kit and the one copy of its passphrase. Neither is stored on the hub."""
+
+    file_name: str
+    kind: Literal["full", "update"]
+    passphrase: str
+    content_base64: str
 
 
 class ITrustHealth(BaseModel):

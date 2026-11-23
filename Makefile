@@ -448,7 +448,7 @@ mirror-images:
 # Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
 # (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
-# so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
+# so it otherwise runs the identical render in a throwaway python:3.13-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across
 # runs), and a host `dot` of another graphviz version produces a different file for an unchanged
 # diagram, so don't commit a re-render that only differs by graphviz. Runs the script directly
@@ -458,7 +458,7 @@ aws-diagram:
 ifneq ($(shell command -v dot 2>/dev/null),)
 	cd deploy/providers/AWS && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
 else
-	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/providers/AWS python:3.12-slim sh -c \
+	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/providers/AWS python:3.13-slim sh -c \
 	  "apt-get update -qq >/dev/null && apt-get install -y -qq graphviz >/dev/null && \
 	   pip -q install --root-user-action=ignore diagrams >/dev/null && \
 	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
