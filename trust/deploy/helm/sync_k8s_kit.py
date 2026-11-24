@@ -26,7 +26,7 @@ Helm chart. It does NOT register anything with the hub — registration is done
 once, centrally, by the DB-backed `register_trust` CLI:
 
     make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."
-    make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
+    make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>
     make sync-trust-kit KIT=<CODE> HUB=<env>       # fills the Hub-shared block
 
 …which mints the per-trust credentials and writes them, together with the
@@ -956,7 +956,7 @@ def main(
         print(f"❌ Kit file not found: {kit_path}")
         print("   Register the trust first:")
         print(f'     make new-trust TRUST_CODE={code} TRUST_NAME="..."')
-        print(f"     make -C deploy/providers/AWS register-trusts KIT={code}{hub}")
+        print(f"     make -C deploy/aws register-trusts KIT={code}{hub}")
         print(f"     make sync-trust-kit KIT={code}{hub}")
         sys.exit(1)
 
@@ -966,7 +966,7 @@ def main(
     if missing:
         print(f"❌ Kit {kit_path.name} is missing real values for: {', '.join(missing)}")
         print("   These come from registration + the Hub-shared block. Run:")
-        print(f"     make -C deploy/providers/AWS register-trusts KIT={code}{hub}")
+        print(f"     make -C deploy/aws register-trusts KIT={code}{hub}")
         print(f"     make sync-trust-kit KIT={code}{hub}")
         sys.exit(1)
 

@@ -19,7 +19,7 @@ Sphinx source for the FLIP documentation published on Read the Docs. The Python 
 
 - [uv](https://docs.astral.sh/uv/) — installs the pinned Sphinx toolchain from `pyproject.toml` / `uv.lock`.
 - graphviz (`dot` on PATH, e.g. `apt-get install graphviz`). At build time `source/conf.py` renders the Central Hub
-  AWS diagrams from `../deploy/providers/AWS/architecture/central_hub.py`, and the build fails without graphviz.
+  AWS diagrams from `../deploy/aws/architecture/central_hub.py`, and the build fails without graphviz.
   Read the Docs installs it through `build.apt_packages`.
 - Network access to `huggingface.co` and `*.hf.co`. The user-guide GIFs are not tracked in git (FLIP#1236).
   `source/conf.py` fetches them from the public dataset `aicentreflip/docs-gifs` into the gitignored

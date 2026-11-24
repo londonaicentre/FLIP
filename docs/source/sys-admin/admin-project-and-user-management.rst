@@ -268,7 +268,7 @@ Before any planned hub redeploy, including one while training is running:
 3. Redeploy the hub.
 4. Turn deployment mode off.
 
-The hub deploy command (``make -C deploy/providers/AWS deploy-centralhub``) prints a reminder of these steps.
+The hub deploy command (``make -C deploy/aws deploy-centralhub``) prints a reminder of these steps.
 
 .. tip::
 

@@ -631,7 +631,7 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 
 # Registration is done ONCE on the hub, not here:
 #   make new-trust TRUST_CODE=<KIT> TRUST_NAME="..."
-#   make -C deploy/providers/AWS register-trusts KIT=<KIT> HUB=<env>
+#   make -C deploy/aws register-trusts KIT=<KIT> HUB=<env>
 #   make sync-trust-kit KIT=<KIT> HUB=<env>           # fills the Hub-shared block
 # This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with

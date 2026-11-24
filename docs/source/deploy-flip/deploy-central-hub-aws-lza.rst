@@ -242,6 +242,12 @@ Create ``.env.prod`` (or ``.env.stag``) from the shipped example env file, then 
    export TF_VAR_lza_web_edge_domain=
    export TF_VAR_lza_web_edge_distribution_arn=
 
+   # Optional: the public demo's own bucket and host. Its distribution ARN stays empty
+   # until the platform team creates the demo's distribution (see the edge handoff)
+   FLIP_DEMO_BUCKET_NAME=<demo bucket name>
+   DEMO_SITE_URL=https://<demo host>
+   export TF_VAR_lza_web_demo_distribution_arn=
+
    # Optional on HUB=prod, required on HUB=stag
    LZA_VPC_NAME=<Name tag of the accelerator VPC>
 
@@ -311,7 +317,9 @@ The edge is built from the workload stack's outputs, so the two are always appli
 
    Set ``TF_VAR_lza_web_edge_domain`` to ``ALB_SUBDOMAIN``, the name the API answers on, and
    ``TF_VAR_lza_web_edge_distribution_arn`` to the edge distribution's ARN, then apply again. This grants the edge
-   read access to the UI bucket and points bucket CORS and the Cognito callback URLs at the edge.
+   read access to the UI bucket and points bucket CORS and the Cognito callback URLs at the edge. Where the estate
+   serves the public demo, set ``TF_VAR_lza_web_demo_distribution_arn`` to the demo's distribution in the same
+   apply: it grants that distribution read access to the demo bucket.
 
 Later changes to the workload load balancer follow the same order, networking stack first.
 
@@ -321,13 +329,13 @@ Deploying
 
 **CI applies this estate**, authenticated by GitHub OIDC with no long-lived AWS keys:
 
-- every pull request into ``main`` or ``develop`` that touches ``deploy/providers/AWS/**`` plans LZA staging;
+- every pull request into ``main`` or ``develop`` that touches ``deploy/aws/**`` plans LZA staging;
 - a push to ``develop`` applies LZA staging;
 - a merge to ``main`` applies **LZA production**;
 - a nightly plan reports drift.
 
 To point a GitHub environment at another account, change its values (the ``TF_HUB`` variable and the two role ARNs);
-see "Repointing CI at the LZA accounts" in :gh:`deploy/providers/AWS/README.md`.
+see "Repointing CI at the LZA accounts" in :gh:`deploy/aws/README.md`.
 
 .. list-table::
    :header-rows: 1
@@ -356,7 +364,7 @@ Break-glass deploy from a laptop
 
 .. code-block:: shell
 
-   cd deploy/providers/AWS
+   cd deploy/aws
    export AWS_PROFILE=stag   # or: prod
    export HUB=stag           # or: prod
 
@@ -401,7 +409,7 @@ The Makefile refuses to run when ``AWS_PROFILE`` does not match ``HUB``, and nee
 Further reading
 ***************
 
-- :gh:`deploy/providers/AWS/README.md` — maintainer notes: how the stack is built, the Terraform CI pipeline and
+- :gh:`deploy/aws/README.md` — maintainer notes: how the stack is built, the Terraform CI pipeline and
   the design rationale.
 - :ref:`security` — the "Cloud infrastructure" controls, including the estate-level ones the accelerator adds.
 - The AI Centre's estate configuration (``londonaicentre/lza``) and its edge stack

@@ -1,0 +1,158 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Publish the public demo to its own bucket and host (FLIP#2012). Called by
+# terraform_apply.yml beside publish_ui.yml, after the same successful apply.
+#
+# Two jobs, as in publish_ui.yml: the build holds no credentials, and the
+# publish assumes the demo-publish role (modules/terraform_ci_bootstrap), which
+# trusts this file at the environment's branch and can write the demo bucket and
+# nothing else. Being its own file is what keeps the two roles apart: a job's
+# OIDC token names the workflow file, not the job.
+
+name: Publish the public demo
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment to publish into (aws-stag or aws-prod).
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    # For the environment's variables; this job requests no token.
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    outputs:
+      configured: ${{ steps.role.outputs.set }}
+    steps:
+      # Until the role exists the publish is skipped rather than failed.
+      - name: Check for the demo-publish role
+        id: role
+        env:
+          ROLE_ARN: ${{ vars.TF_DEMO_PUBLISH_ROLE_ARN }}
+          FLIP_DEMO_BUCKET_NAME: ${{ vars.FLIP_DEMO_BUCKET_NAME }}
+          DEMO_SITE_URL: ${{ vars.DEMO_SITE_URL }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "::warning title=Public demo not published::${ENVIRONMENT} has no TF_DEMO_PUBLISH_ROLE_ARN, so the demo was not published. Run make deploy-demo, or create the role (modules/terraform_ci_bootstrap, demo_bucket_name) and set the variable."
+            echo "set=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          missing=""
+          for key in FLIP_DEMO_BUCKET_NAME DEMO_SITE_URL; do
+            [[ -n "${!key}" ]] || missing="${missing} ${key}"
+          done
+          [[ -z "${missing}" ]] ||
+            { echo "::error::${ENVIRONMENT} is missing the variable(s):${missing}."; exit 1; }
+          [[ "${DEMO_SITE_URL}" =~ ^https://[^/]+$ ]] ||
+            { echo "::error::${ENVIRONMENT}'s DEMO_SITE_URL must be https://<demo host> with no path, got '${DEMO_SITE_URL}'."; exit 1; }
+          echo "set=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        if: steps.role.outputs.set == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        if: steps.role.outputs.set == 'true'
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: flip-ui/package-lock.json
+
+      # The demo reads no environment: postbuild:demo writes dist-demo/js/window.js
+      # from the commit and its fixtures.
+      - name: Build
+        if: steps.role.outputs.set == 'true'
+        working-directory: flip-ui
+        run: npm ci && npm run build:demo
+
+      # A public repository's artifacts are public downloads; this one holds only
+      # what the demo serves.
+      - name: Upload the build
+        if: steps.role.outputs.set == 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: flip-ui-demo
+          path: flip-ui/dist-demo/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish
+    needs: build
+    if: needs.build.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write # assume the demo-publish role
+    steps:
+      - name: Checkout the publish script
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: deploy/aws/scripts/publish-ui.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download the build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: flip-ui-demo
+          path: dist-demo
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.TF_DEMO_PUBLISH_ROLE_ARN }}
+          role-session-name: flip-demo-publish-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # The demo's layout is the app's, so the same script publishes it.
+      - name: Publish
+        env:
+          FLIP_DEMO_BUCKET_NAME: ${{ vars.FLIP_DEMO_BUCKET_NAME }}
+        run: deploy/aws/scripts/publish-ui.sh dist-demo "${FLIP_DEMO_BUCKET_NAME}"
+
+      # As publish_ui.yml reads the app's back. The host's CSP (connect-src
+      # 'none') is defence in depth behind the origin boundary, so it only warns.
+      - name: Check the served window.js
+        env:
+          DEMO_SITE_URL: ${{ vars.DEMO_SITE_URL }}
+        run: |
+          set -euo pipefail
+          expected="$(grep -o 'window.RELEASE_VERSION *= *"[^"]*"' dist-demo/js/window.js)"
+          url="${DEMO_SITE_URL}/js/window.js"
+          served=false
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if curl -fsS "${url}" | grep -Fq "${expected}"; then served=true; break; fi
+            sleep 15
+          done
+          if [[ "${served}" != true ]]; then
+            echo "::error::${url} does not serve ${expected} after two minutes. The objects are in the bucket; check the demo distribution and its caching."
+            exit 1
+          fi
+          echo "${url} serves ${expected}."
+          curl -sSI "${DEMO_SITE_URL}/" | grep -i '^content-security-policy:' | grep -Fq "connect-src 'none'" ||
+            echo "::warning::${DEMO_SITE_URL}/ is served without connect-src 'none'. Check the demo distribution's response-headers policy."

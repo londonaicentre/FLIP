@@ -26,7 +26,7 @@ make up
 ```
 
 This starts the API (and the PostgreSQL database) via Docker Compose. To start only the database first, use
-`make central-hub` from the repo root or `docker compose -f deploy/compose.development.yml up flip-db -d`.
+`make central-hub` from the repo root or `docker compose --project-directory deploy -f deploy/compose/compose.development.yml up flip-db -d`.
 
 ### Running tests
 
@@ -62,7 +62,7 @@ ssh -L 5050:localhost:5050 <your-server>
 2. Click **Register Server** and configure:
    - **General > Name**: `centralhub` (or any label)
    - **Connection > Host**: value of `DB_HOST` from
-     [compose.development.yml](../deploy/compose.development.yml) (e.g. `flip-db`)
+     [compose.development.yml](../deploy/compose/compose.development.yml) (e.g. `flip-db`)
    - **Connection > Port**: `5432`
    - **Connection > Username**: `POSTGRES_USER` from compose.development.yml
    - **Connection > Password**: `POSTGRES_PASSWORD` from compose.development.yml

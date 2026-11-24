@@ -43,7 +43,7 @@ The commands, from the repo root:
 ```bash
 # Hub side, once (FLIP admin) — produces trust/.env.<CODE>.<env>
 make new-trust TRUST_CODE=<CODE> TRUST_NAME="<Human Name>" HUB=<env>
-make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
+make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>
 make sync-trust-kit KIT=<CODE> HUB=<env>
 
 # Cluster side (trust operator)
@@ -64,6 +64,31 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   -f trust/deploy/helm/values-secrets.yaml \
   -f trust/deploy/helm/k8s-trust-<CODE>.yaml
 ```
+
+## The published chart
+
+Every platform release publishes this chart to GHCR as an OCI artifact, versioned with the
+release (FLIP#1646):
+
+```bash
+helm pull oci://ghcr.io/londonaicentre/charts/flip-trust --version 0.13.0
+```
+
+The chart version, `appVersion` and `global.image.tag` all carry that same release, so
+`flip-trust:0.13.0` deploys v0.13.0's images and nothing else. In-tree the chart is deliberately
+*un*versioned — `version: 0.0.0-dev` with a floating image tag — because a development checkout
+should deploy what you built, not the last release. `scripts/package_chart.py` publishes it: the
+chart version and `appVersion` go to `helm package --version/--app-version`, and only
+`global.image.tag` is stamped into `values.yaml`, since helm has no flag for a default value. It is
+runnable by hand for a dry run:
+
+```bash
+python3 trust/deploy/helm/scripts/package_chart.py --version v0.13.0 --no-push
+```
+
+Pushing requires `helm registry login ghcr.io`. The release workflow publishes the chart after the
+image builds go green and before the production apply, so a published chart always references
+images that exist.
 
 ## How the Make targets work
 

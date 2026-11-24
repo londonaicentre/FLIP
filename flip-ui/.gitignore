@@ -13,6 +13,7 @@
 .DS_Store
 node_modules
 /dist
+/dist-demo
 
 # Lighthouse CI reports (written by `lhci autorun`; uploaded as a CI artifact)
 /.lighthouseci

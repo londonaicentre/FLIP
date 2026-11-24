@@ -24,7 +24,7 @@
 # generate_creds.py's own default); each trust fetches keys/supernode_credentials_<slot>.
 # A re-run regenerates the CA and every key, invalidating every node's material, so
 # grow a deployed kit with `make provision-add-supernode` instead (on a stag/prod hub,
-# `make -C deploy/providers/AWS add-fl-kits`), never by re-running this.
+# `make -C deploy/aws add-fl-kits`), never by re-running this.
 set -euo pipefail
 
 NET="${1:?usage: generate-tls-certificates.sh <net-1|net-2>}"

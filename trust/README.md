@@ -218,7 +218,7 @@ The trust-api container authenticates with its `TRUST_API_KEY` and posts a heart
 
 ### Cleanup / lost kit
 
-The plaintext keys aren't recoverable — only the hash is on disk. If you didn't save the kit, issue the trust new keys: **Issue new keys** on its card in the FLIP UI, or `make rotate-trust-keys KIT=<CODE>`. Both keep the trust's id and its FL kit slot. Deleting the trust and registering it again is not a way to get new keys: it gives the trust a new id.
+The plaintext keys aren't recoverable — only the hash is on disk. If you didn't save the kit, issue the trust new keys: **Issue new keys** on its card in the FLIP UI (the old key stops working at once), or `make rotate-trust-keys KIT=<CODE>` (staged: a site still running keeps its old key until it first uses the new one). Both keep the trust's id and its FL kit slot. Deleting the trust and registering it again is not a way to get new keys: it gives the trust a new id.
 
 ## Data versions
 
@@ -512,7 +512,7 @@ own settings, sending the host's public egress IP to the hub team, and `make onb
 
 1. The hub admin scaffolds and registers your kit
    (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
-   then `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` and
+   then `make -C deploy/aws register-trusts KIT=<CODE> HUB=prod` and
    `make sync-trust-kit KIT=<CODE> HUB=prod`). The result is a complete
    kit file at `trust/.env.<CODE>.prod` containing credentials, the AES
    key, the hub URL, image tags, and a host-local profile.

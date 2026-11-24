@@ -16,7 +16,7 @@
 include common.mk
 
 BOOTSTRAP_LOCATION ?= uksouth
-# The pin deploy/providers/AWS/scripts/checkov_lint.sh asserts; tests/test_static_guards.py keeps them equal.
+# The pin deploy/aws/scripts/checkov_lint.sh asserts; tests/test_static_guards.py keeps them equal.
 CHECKOV_VERSION := 3.3.14
 CHECKOV ?= uvx checkov==$(CHECKOV_VERSION)
 

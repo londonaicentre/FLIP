@@ -53,7 +53,7 @@ def hub_only_networks() -> set[str]:
     names: dict[str, str] = {}
     section = entry = None
     in_networks = False
-    for line in (REPO / "deploy" / "compose.development.yml").read_text().splitlines():
+    for line in (REPO / "deploy" / "compose" / "compose.development.yml").read_text().splitlines():
         if top := re.match(r"^([\w-]+):", line):
             section, entry = top[1], None
         elif key := re.match(r"^  ([\w-]+):\s*$", line):
@@ -89,7 +89,7 @@ class BuildTrue(unittest.TestCase):
 
     def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
         services = {
-            **repo_built_services("deploy/compose.development.yml"),
+            **repo_built_services("deploy/compose/compose.development.yml"),
             **repo_built_services("trust/deploy/compose/compose_trust.development.yml"),
         }
         assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()
@@ -110,7 +110,17 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert "--kit-file" in gate, gate
         assert ".env.SCR.prod" in gate, gate
         assert "_upgrade-trust-apply" in out, out
+        # XNAT's port guard runs before the plan rewrites the kit's tag: nothing changes on a refusal.
+        assert out.index("must differ") < out.index("site_upgrade.py plan"), out
         assert_data_safe(out, "upgrade-onprem-trust")
+
+    def test_a_relative_kit_file_reaches_the_xnat_sub_make_as_a_full_path(self):
+        """A command-line KIT_FILE is passed on as typed, and trust/xnat would look for it in its own directory."""
+        out = dry_run("upgrade-trust", "KIT_FILE=.env.SCR.prod", "YES=1")
+        assert '[ "8198" = "8199" ]' in out, f"the port guard did not read the kit's ports:\n{out}"
+        for line in out.splitlines():
+            if "-C xnat " in line and "KIT=SCR" in line:
+                assert "KIT_FILE='/" in line, line
 
 
 class HostDirsArePreparedNotEscalated(unittest.TestCase):
@@ -261,7 +271,7 @@ AWS_STUB_ENV = {
     "FL_API_KEY": "probe",  # pragma: allowlist secret
     "MANAGE_DNS": "false",
 }
-AWS = "deploy/providers/AWS"
+AWS = "deploy/aws"
 KIT = (
     "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
     "FL_KIT_SLOT=Trust_9\n"
@@ -281,7 +291,7 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
-            "deploy/providers/AWS/Makefile",
+            "deploy/aws/Makefile",
             "deploy/portable.mk",
             "flip-api/Makefile",  # register-trusts recurses into it to mint the XNAT credentials
             "trust/Makefile",
@@ -427,7 +437,7 @@ class MakeKitSelection(unittest.TestCase):
         env_file.write_text("".join(f"{key}={value}\n" for key, value in AWS_STUB_ENV.items()))
         kit = f"{self.root}/trust/.env.SITE.lza-prod"
         for target, subdir, expected in (
-            ("register-trusts", "deploy/providers/AWS", f'KIT_FILES="{kit}"'),
+            ("register-trusts", "deploy/aws", f'KIT_FILES="{kit}"'),
             ("sync-kit", "trust/deploy/helm", f"--kit-file {kit}"),
             ("upgrade-trust-k8s", "trust/deploy/helm", f"plan --kit-file {kit}"),
         ):
@@ -745,6 +755,33 @@ class RotateTrustKeys(unittest.TestCase):
         assert "--name" in line, line
         assert "--code" not in line, line
 
+    def test_it_stages_by_default_and_revokes_only_on_request(self):
+        """FLIP#1714: the old key keeps working unless REVOKE_OLD=1 asks for the immediate cutover."""
+        assert "--revoke-old" not in self.recipe()
+        out = dry_run("rotate-trust-keys", "REVOKE_OLD=1", subdir=".")
+        line = next((ln for ln in out.splitlines() if "flip_api.scripts.register_trust" in ln), "")
+        assert "--revoke-old" in line, out
+
+    def test_a_revoke_old_value_other_than_0_or_1_is_refused_before_anything_runs(self):
+        """`REVOKE_OLD=true` must not quietly stage and leave a leaked key valid (FLIP#1714)."""
+        for value in ("true", "yes", "2"):
+            with self.subTest(value=value):
+                result = run_target("rotate-trust-keys", f"REVOKE_OLD={value}", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+                assert result.returncode != 0, result.stdout
+                assert "REVOKE_OLD must be empty, 0 or 1" in result.stdout, result.stdout
+                assert "flip_api.scripts.register_trust" not in result.stdout, result.stdout
+                assert "Waiting for the hub" not in result.stdout, result.stdout
+        for value in ("", "0", "1"):
+            with self.subTest(value=value):
+                out = dry_run("rotate-trust-keys", f"REVOKE_OLD={value}", subdir=".")
+                assert "flip_api.scripts.register_trust" in out
+
+    def test_it_reports_which_mode_ran_from_the_kit(self):
+        """The closing line comes from the kit's `staged_until`, not from the flag the operator typed."""
+        out = dry_run("rotate-trust-keys", subdir=".")
+        assert "staged_until" in out, out
+        assert "Old key refused from now on" in out, out
+
     def test_it_does_not_call_a_separate_rotation_module(self):
         """Rotation is a flag on the registration CLI; there is no rotate_trust_keys module."""
         assert "rotate_trust_keys" not in dry_run("rotate-trust-keys", subdir=".")
@@ -776,8 +813,15 @@ class LocalRegistrationRefusesADeployedHub(unittest.TestCase):
                 # ALLOW_FOREIGN_PROJECT: a dev stack on this host belongs to another checkout than the scratch copy.
                 result = run_target(target, "HUB=stag", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
                 assert result.returncode != 0, result.stdout
-                assert f"make -C deploy/providers/AWS {aws_target} KIT=SCR HUB=stag" in result.stdout, result.stdout
+                assert f"make -C deploy/aws {aws_target} KIT=SCR HUB=stag" in result.stdout, result.stdout
                 assert "Waiting for the hub" not in result.stdout, result.stdout
+
+    def test_the_deployed_hub_hint_keeps_revoke_old(self):
+        """An operator who copies the hint for a leaked key must get the cutover, not a staged rotation."""
+        result = run_target("rotate-trust-keys", "HUB=stag", "REVOKE_OLD=1", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+        assert result.returncode != 0, result.stdout
+        hint = "make -C deploy/aws rotate-trust-keys KIT=SCR HUB=stag REVOKE_OLD=1"
+        assert hint in result.stdout, result.stdout
 
     def test_development_still_registers_on_the_local_hub(self):
         for target in self.TARGETS:

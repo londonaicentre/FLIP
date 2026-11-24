@@ -14,7 +14,7 @@
 
 """Drift guard between the Azure node diagrams and the Terraform they depict.
 
-The counterpart of ``deploy/providers/AWS/tests/test_architecture_diagram.py``, over this tree's three roots and two
+The counterpart of ``deploy/aws/tests/test_architecture_diagram.py``, over this tree's three roots and two
 modules. ``architecture/trust_azure.py`` maps each drawn label to ``<directory>/<address>``; this suite checks every
 address exists, that every resource of a load-bearing type in any directory is drawn, and that every ``module``
 block is drawn or exempted. The ``.tf`` files are read as text: no ``terraform`` binary, no state, no credentials.

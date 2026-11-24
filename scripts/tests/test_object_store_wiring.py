@@ -19,7 +19,7 @@ must be exactly the origin every fl-api admits (``BUNDLE_URL_ALLOWED_ORIGINS``, 
 change to one file alone 400s every bundle download, which only a live training run would show. No
 fl-server holds store credentials or a bucket name: it runs job code, and uploads through URLs flip-api
 presigns. The Terraform side has the same guard in
-``deploy/providers/AWS/tests/test_fl_api_bundle_allow_list.py``. Last, the store's image must stay a pinned
+``deploy/aws/tests/test_fl_api_bundle_allow_list.py``. Last, the store's image must stay a pinned
 RustFS release no older than the first one whose presigned-POST uploads work (FLIP#1534).
 
 Standard library only and run as a plain script (``python <file>``), like every test in this directory.
@@ -150,13 +150,13 @@ def _compose_env(path: Path, service: str, key: str) -> list[str]:
 
 def test_dev_presign_origin_matches_every_fl_api() -> None:
     print("test_dev_presign_origin_matches_every_fl_api")
-    hub = _compose_env(REPO_ROOT / "deploy/compose.development.yml", "flip-api", "AWS_ENDPOINT_URL_S3")
+    hub = _compose_env(REPO_ROOT / "deploy/compose/compose.development.yml", "flip-api", "AWS_ENDPOINT_URL_S3")
     _assert(
         len(hub) == 1, "flip-api sets AWS_ENDPOINT_URL_S3 exactly once (a second line silently wins)", detail=str(hub)
     )
     origin = hub[0]
     for backend in ("nvflare", "flower"):
-        path = REPO_ROOT / f"deploy/compose.development.{backend}.yml"
+        path = REPO_ROOT / f"deploy/compose/compose.development.{backend}.yml"
         for net in ("1", "2"):
             allowed = _compose_env(path, f"fl-api-net-{net}", "BUNDLE_URL_ALLOWED_ORIGINS")
             _assert(
@@ -168,7 +168,7 @@ def test_dev_presign_origin_matches_every_fl_api() -> None:
 
 def test_no_fl_server_holds_object_store_access() -> None:
     print("test_no_fl_server_holds_object_store_access")
-    for path in sorted((REPO_ROOT / "deploy").glob("compose.*.yml")):
+    for path in sorted((REPO_ROOT / "deploy" / "compose").glob("compose.*.yml")):
         for service in re.findall(r"^  (fl-server-net-\d+):\n", path.read_text(), re.M):
             names = re.findall(r"^\s+- (\w+)=", _service_block(path, service), re.M)
             held = [name for name in names if name.startswith(("AWS_", "OBJECT_STORE_")) or "BUCKET" in name]
@@ -177,11 +177,11 @@ def test_no_fl_server_holds_object_store_access() -> None:
 
 def test_prod_presign_origin_matches_every_fl_api() -> None:
     print("test_prod_presign_origin_matches_every_fl_api")
-    hub = _compose_env(REPO_ROOT / "deploy/compose.prod.yml", "flip-api", "AWS_ENDPOINT_URL_S3")
+    hub = _compose_env(REPO_ROOT / "deploy/compose/compose.prod.yml", "flip-api", "AWS_ENDPOINT_URL_S3")
     _assert(len(hub) == 1, "prod flip-api sets AWS_ENDPOINT_URL_S3 exactly once", detail=str(hub))
     for backend in ("nvflare", "flower"):
         allowed = _compose_env(
-            REPO_ROOT / f"deploy/compose.prod.{backend}.yml", "fl-api-net-1", "BUNDLE_URL_ALLOWED_ORIGINS"
+            REPO_ROOT / f"deploy/compose/compose.prod.{backend}.yml", "fl-api-net-1", "BUNDLE_URL_ALLOWED_ORIGINS"
         )
         _assert(allowed == hub, f"prod {backend} fl-api-net-1 admits exactly the presign origin", detail=str(allowed))
 
@@ -195,9 +195,9 @@ FIRST_GOOD_RUSTFS = (1, 0, 1)
 
 def test_object_store_image_is_a_fixed_rustfs_release() -> None:
     print("test_object_store_image_is_a_fixed_rustfs_release")
-    text = (REPO_ROOT / "deploy/compose.development.yml").read_text()
+    text = (REPO_ROOT / "deploy/compose/compose.development.yml").read_text()
     block = re.search(r"^  object-store:\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|^[a-z]|\Z)", text, re.M | re.S)
-    assert block, "no object-store service in deploy/compose.development.yml"
+    assert block, "no object-store service in deploy/compose/compose.development.yml"
     images = re.findall(r"^    image:\s*(\S+)", block.group(1), re.M)
     _assert(len(images) == 1, "object-store names exactly one image", detail=str(images))
     pin = re.fullmatch(r"rustfs/rustfs:(\d+)\.(\d+)\.(\d+)", images[0]) if images else None

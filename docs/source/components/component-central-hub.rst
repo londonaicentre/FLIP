@@ -408,7 +408,7 @@ Before turning it on (phase 2)
 ==============================
 
 The feature ships off. Terraform creates its AWS side only when ``cohort_draft_enabled = true`` (default ``false``,
-``deploy/providers/AWS/bedrock_cohort_draft.tf``): with it off the plan shows no change. Enabled, it creates a
+``deploy/aws/bedrock_cohort_draft.tf``): with it off the plan shows no change. Enabled, it creates a
 Bedrock Guardrail and a published version that block NHS numbers (the entity and a ten-digit regex), names,
 addresses, emails and phone numbers in the description; an inline policy on ``ecs-flip-api-task-role`` for the
 configured model and that guardrail only (``bedrock:InvokeModel*`` and ``bedrock:ApplyGuardrail``); and the ``COHORT_DRAFT_*`` variables in the ``flip-api`` task, guardrail
@@ -461,5 +461,5 @@ Further reading
 ***************
 
 - :gh:`flip-api/README.md` and :gh:`flip-ui/README.md`
-- :gh:`deploy/providers/AWS/README.md` — the Terraform, deploy and rollback runbook behind the deployment pages
+- :gh:`deploy/aws/README.md` — the Terraform, deploy and rollback runbook behind the deployment pages
 - :ref:`deploy-central-hub` and :ref:`security`

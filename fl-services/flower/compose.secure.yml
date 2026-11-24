@@ -15,7 +15,7 @@
 # Run after provisioning certs: `make -C fl-services/flower up-secure` (which checks
 # fl-services/flower/provision/creds/net-1 exists first). Cert/key dirs default to net-1's
 # provisioned output; override FLOWER_TLS_CERTS_DIR / FLOWER_SUPERNODE_KEYS_DIR for
-# another net. The central-hub multi-net Flower topology is deploy/compose.development.flower.yml.
+# another net. The central-hub multi-net Flower topology is deploy/compose/compose.development.flower.yml.
 #
 # Two networks, the hub's shape in miniature (FLIP#1517): the SuperLink, fl-api and the key
 # registration sit on flwr-dev-net, the SuperNodes on flwr-trust-net, and the only thing on
@@ -45,7 +45,7 @@ services:
       - FL_API_KEY=${FL_API_KEY}
       # No BUNDLE_URL_ALLOWED_ORIGINS here on purpose: this harness has no hub, so nothing presigns
       # bundle URLs for it (jobs are submitted by folder name) and the fl-api logs the documented
-      # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.
+      # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose/compose.*.yml.
     volumes:
       - ../../fl-tutorials/flower:/app/src
       - ../../fl-services/flower/fl-api-flower/fl_api:/app/fl_api

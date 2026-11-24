@@ -114,7 +114,7 @@ Step 2 — Register the trust on the hub
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod
+   make -C deploy/aws register-trusts KIT=<CODE> HUB=prod
 
 This registers the trust with the hub and writes the trust's **credentials** into its kit file (API key, internal
 service key, FL slot and expected trust id), and mints the trust's XNAT database and message-broker passwords.
@@ -166,11 +166,11 @@ checks out that release before installing.
 
        .. code-block:: shell
 
-          make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
+          make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=prod
 
        It ships the kit as ``.env.<CODE>.prod`` with the FL kit share of its ``FL_KIT_SLOT``, and refuses to run if
        any placeholder is still unfilled. It fetches the FL kit share from S3 and writes the
-       tarball under ``deploy/providers/AWS/build/trust-kits/``. It does not modify the kit file.
+       tarball under ``deploy/aws/build/trust-kits/``. It does not modify the kit file.
    * - Kubernetes
      - The kit file ``trust/.env.<CODE>.prod`` and this trust's share of the FL participant kit. The operator
        stages the FL kit onto the node with ``stage-kit``.

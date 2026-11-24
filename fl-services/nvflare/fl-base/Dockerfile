@@ -42,7 +42,7 @@ WORKDIR /app
 # The args are kept, rather than hardcoded below, so the values still appear once
 # at the top and an out-of-tree build can still override them; nothing in-tree does.
 # 1000 also matches the ubuntu uid that EC2/on-prem trust hosts stage kits as, which
-# is why it was chosen — see deploy/providers/AWS/efs.tf.
+# is why it was chosen — see deploy/aws/efs.tf.
 # USER is NOT set here — derived images (fl-server, fl-client) switch after their
 # own COPY/RUN so the user owns the files those instructions create. Created
 # before the uv sync below so the final chown lands in the same layer as the

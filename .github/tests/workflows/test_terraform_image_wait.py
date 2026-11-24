@@ -32,10 +32,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from image_workflows import GITHUB_DIR, WORKFLOWS, code_text, step_block  # noqa: E402
+from image_workflows import (  # noqa: E402
+    GITHUB_DIR,
+    WORKFLOWS,
+    code_text,
+    covered,
+    push_block,
+    push_paths,
+    step_block,
+)
 
 REPO = GITHUB_DIR.parent
-SCRIPTS = REPO / "deploy" / "providers" / "AWS" / "scripts"
+SCRIPTS = REPO / "deploy" / "aws" / "scripts"
 BUDGETS = SCRIPTS / "image-wait-budgets.sh"
 RESOLVER = SCRIPTS / "resolve-image-tags.sh"
 BACKENDS = ("nvflare", "flower")
@@ -51,22 +59,6 @@ else
     echo '{"workflow_runs":[]}'
 fi
 """
-
-
-def push_block(text: str) -> str:
-    block = re.search(r"^  push:\n((?:    .*\n)+)", text, re.M)
-    assert block, "no push trigger"
-    return block[1]
-
-
-def push_paths(text: str) -> list[str]:
-    paths = re.search(r"^    paths:\n((?:      - .*\n)+)", push_block(text), re.M)
-    assert paths, "the push trigger has no paths filter"
-    return [p.strip().strip("\"'") for p in re.findall(r"- (.*)", paths[1])]
-
-
-def covered(path: str, patterns: list[str]) -> bool:
-    return any(p == path or (p.endswith("/**") and f"{path}/".startswith(p[:-2])) for p in patterns)
 
 
 def copy_sources(dockerfile: Path) -> set[str]:
@@ -223,7 +215,7 @@ class TerraformApplyUsesTheBudgets(unittest.TestCase):
 
     def test_the_wait_step_asks_the_script_not_a_diff(self) -> None:
         step = step_block(self.text, "Decide how long to wait for this commit's images")
-        assert 'run: deploy/providers/AWS/scripts/image-wait-budgets.sh >> "$GITHUB_OUTPUT"' in step
+        assert 'run: deploy/aws/scripts/image-wait-budgets.sh >> "$GITHUB_OUTPUT"' in step
         assert "FL_BACKEND: ${{ vars.FL_BACKEND }}" in step
         assert "GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}" in step
         # A release's images come from tag-dispatched builds; the script does not ask about it.

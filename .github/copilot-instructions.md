@@ -27,7 +27,7 @@ The main folders are:
 - `trust/data-access-api`: Contains the data access API code, which handles data access operations and APIs. It is called by the trust-api, the imaging-api and the trust's FL clients, authenticated with the trust-internal service key.
 - `flip-utils`: The `flip` Python package that FL training code calls; it is baked into the FL client and server images.
 - `fl-services`, `fl-apps`, `fl-tutorials`: The FL Docker services, app templates and tutorials, for both NVIDIA FLARE and Flower.
-- `deploy`, `docs`: Central Hub deployment (Docker Compose, and Terraform under `deploy/providers/AWS`) and the Sphinx documentation.
+- `deploy`, `docs`: Central Hub deployment (Docker Compose, and Terraform under `deploy/aws`) and the Sphinx documentation.
 
 All APIs are created using FastAPI, and the project uses the SQLModel library for database interactions. The project is designed to be modular, with each component handling specific functionalities related to federated learning and trust management.
 

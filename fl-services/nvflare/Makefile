@@ -67,7 +67,7 @@ build:
 # FLARE writes every private key 0600. The FL server and clients run as the host uid in
 # dev and read theirs as owner, but the FL API runs as the image's user, so its admin key
 # is opened to the provisioning user's group and the container joins that group (group_add
-# in deploy/compose.development.nvflare.yml) — the 640 + group_add Flower's dev SuperNodes
+# in deploy/compose/compose.development.nvflare.yml) — the 640 + group_add Flower's dev SuperNodes
 # use (FLIP#1384). The root `make up` checks the key still matches.
 FL_API_ADMIN_KEY = $(DEV_WORKSPACE_DIR)/net-$(NET_NUMBER)/services/flip-fl-api-net-$(NET_NUMBER)/startup/client.key
 provision:
@@ -116,7 +116,7 @@ provision-add-client-prod:
 	$(SCRIPTS)/add-client.sh $(NET_NUMBER) $(CLIENT_NAME) $(PROVISION)/net-$(NET_NUMBER)_project_prod.yml $(PROD_WORKSPACE_DIR)
 
 # Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
-# the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
+# the deploy flow pulls from (deploy/aws Makefile `provision-local-trust`,
 # which reads s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/
 # net-N/services/<slot>/). Run with HUB=stag|prod so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
 # load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real. The

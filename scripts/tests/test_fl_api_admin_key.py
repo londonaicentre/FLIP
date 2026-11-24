@@ -29,7 +29,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-COMPOSE = REPO / "deploy" / "compose.development.nvflare.yml"
+COMPOSE = REPO / "deploy" / "compose" / "compose.development.nvflare.yml"
 GUARD = REPO / "scripts" / "check-fl-provisioned.sh"
 
 
