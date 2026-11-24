@@ -330,6 +330,8 @@ TRUST_VARS = \
 	TRUST_NETWORK_NAME=$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	COHORT_SNAPSHOT_STORAGE_DIR="$(COHORT_SNAPSHOT_DIR_HOST)" \
+	OMOP_DATA_DIR="$(OMOP_DATA_ABS)" \
+	ORTHANC_STORAGE_DIR="$(ORTHANC_STORAGE_ABS)" \
 	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
 # Non-KIT targets such as `make build` do not load a trust kit, but Docker
@@ -476,7 +478,7 @@ endef
 XNAT_AETITLE_SET_EMPTY := $(if $(filter undefined,$(origin XNAT_AETITLE)),,$(if $(strip $(XNAT_AETITLE)),,yes))
 XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(KIT_FILE_LABEL),the $(origin XNAT_AETITLE))
 require-xnat-aetitle:
-	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'XNAT'),:)
+	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'FLIP_XNAT'),:)
 
 # Guard: refuse to act on the compose project this kit resolves to when it is already held
 # by a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
@@ -885,7 +887,8 @@ _upgrade-trust-apply:
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
 	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
-	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
+	@echo "⬆️  $(KIT): kit pinned to $(DOCKER_TAG), images pulled, containers recreated and XNAT upgraded. The trust containers were not checked."
+	@echo "   Verify: every container is up (docker compose -p $(TRUST_PROJECT) ps) and trust-api /health reports the new version and hub_key_match=true."
 
 # EC2 variant — no host-port override, --pull always. Networks and the trust's
 # data are provisioned on the instance by trust/deploy/ansible/aws-ec2.yml, so the
@@ -1001,8 +1004,13 @@ down-fl-clients-kit:
 # The seed markers sit BESIDE each store (the store itself is owned by the container uid):
 # volumes/Trust_<N>/.seeded next to db_data, and orthanc/.orthanc-storage-trust<N>.seeded
 # next to the storage dir (the default storage dirs share a parent, hence the name).
-OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
-ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-trust$(TRUST_NUM)))
+# ONE resolved value each, handed to compose in TRUST_VARS so the directory prepared, owned and
+# seed-marked here is the one compose mounts (FLIP#2047). The deployed defaults are the prod
+# compose's own fallbacks, which a site that never set the line already mounts: never move them.
+# They are not per slot, so two trusts on one host must each set the line (the onboarding
+# checklist fails a kit that leaves it unset).
+OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),$(if $(IS_DEPLOYED),/opt/flip/omop/db_data,./omop-db/volumes/Trust_$(TRUST_NUM)/db_data)))
+ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),$(if $(IS_DEPLOYED),/opt/flip/orthanc/orthanc-storage,./orthanc/orthanc-storage-trust$(TRUST_NUM))))
 OMOP_SEED_MARKER = $(dir $(OMOP_DATA_ABS)).seeded
 ORTHANC_SEED_MARKER = $(dir $(ORTHANC_STORAGE_ABS)).$(notdir $(ORTHANC_STORAGE_ABS)).seeded
 # The data version everything is seeded at: the pin, or HF_TRUST_DATA_REVISION to override

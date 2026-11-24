@@ -33,6 +33,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 
 from make_dry_run import KIT, assert_data_safe, dry_run, kit_with, main, run_target  # noqa: E402
 
+# The scratch kit as a site that never set the two data dirs.
+DATA_DIRS_UNSET = kit_with("ORTHANC_STORAGE_DIR=/nonexistent/orthanc\nOMOP_DATA_DIR=/nonexistent/omop\n", "")
+
 
 class UpgradeTrust(unittest.TestCase):
     def test_upgrade_trust_pulls_recreates_and_upgrades_xnat_without_reset(self):
@@ -50,6 +53,19 @@ class UpgradeTrust(unittest.TestCase):
         assert "upgrade-xnat" in out, out
         assert "sha-badcff1" in out, out  # printed from the kit, not from TAG=
         assert_data_safe(out, "_upgrade-trust-apply")
+
+    def test_apply_phase_claims_only_what_it_did(self):
+        """`up -d` returns before any container is healthy, so the last line names the checks still owed."""
+        last = dry_run("_upgrade-trust-apply").split("upgrade-xnat", 1)[1]
+        for overclaim in ("is on sha-badcff1", "✅"):
+            assert overclaim not in last, last
+        for needle in (
+            "kit pinned to sha-badcff1",
+            "were not checked",
+            "docker compose -p trust9 ps",
+            "hub_key_match=true",
+        ):
+            assert needle in last, (needle, last)
 
     def test_apply_phase_honours_a_cpu_only_override(self):
         """The EC2 root's upgrade passes NUM_AVAILABLE_GPUS=0: it must beat a template kit's 1 (FLIP#1204).
@@ -79,6 +95,32 @@ class UpgradeTrust(unittest.TestCase):
         assert 'dir="/srv/flip/members"' in out, out
         assert 'COHORT_SNAPSHOT_STORAGE_DIR="/srv/flip/members"' in out, out
 
+    def test_omop_and_orthanc_dirs_have_one_default_and_compose_is_handed_it(self):
+        """An unset OMOP_DATA_DIR / ORTHANC_STORAGE_DIR on a deployed kit is the prod compose's own fallback, which
+        a running site already mounts, and compose is handed the path the Makefile prepared (FLIP#2047)."""
+        omop, pacs = "/opt/flip/omop/db_data", "/opt/flip/orthanc/orthanc-storage"
+        compose = (Path(__file__).resolve().parents[1] / "deploy" / "compose" / "compose_trust.prod.yml").read_text()
+        assert f"${{OMOP_DATA_DIR:-{omop}}}:" in compose, "the prod compose's OMOP fallback moved"
+        assert f"${{ORTHANC_STORAGE_DIR:-{pacs}}}:" in compose, "the prod compose's Orthanc fallback moved"
+        out = dry_run("up-trust", kit=DATA_DIRS_UNSET)
+        assert f'omop="{omop}"; pacs="{pacs}"' in out, out
+        up = next(line for line in out.splitlines() if "docker compose" in line and " up -d" in line)
+        assert f'OMOP_DATA_DIR="{omop}"' in up, up
+        assert f'ORTHANC_STORAGE_DIR="{pacs}"' in up, up
+        assert "/opt/flip/omop/.seeded" in out, out  # the seed marker sits beside the store compose mounts
+        up = next(line for line in dry_run("up-trust").splitlines() if "docker compose" in line and " up -d" in line)
+        assert 'OMOP_DATA_DIR="/nonexistent/omop"' in up, up
+        assert 'ORTHANC_STORAGE_DIR="/nonexistent/orthanc"' in up, up
+
+    def test_development_keeps_its_per_slot_dirs_inside_the_checkout(self):
+        result = run_target("up-trust", kit=DATA_DIRS_UNSET, dry=True, hub="")
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+        assert '/trust/omop-db/volumes/Trust_9/db_data"; pacs="' in out, out
+        assert '/trust/orthanc/orthanc-storage-trust9"' in out, out
+        assert "/opt/flip/omop" not in out, out
+        assert "/opt/flip/orthanc" not in out, out
+
     def test_the_prepared_store_image_is_pinned(self):
         """A tag is a moving target, and a docker.io pull fails on a host that reaches only GHCR (FLIP#1784)."""
         out = dry_run("_upgrade-trust-apply")
@@ -105,13 +147,14 @@ class UpgradeTrust(unittest.TestCase):
         (FLIP#1731): all three under FLIP_UID, and the Orthanc dir (999 on the image-uid route) either way."""
         out = dry_run("_upgrade-trust-apply", kit=KIT + "FLIP_UID=4242\nFLIP_GID=4243\n")
         assert '[ "$owner" = "4242" ]' in out, out
-        assert '"/nonexistent/omop"' in out, out
+        assert 'for d in "/nonexistent/omop" ' in out, out
         assert out.index("FLIP_UID is a first-install choice") < out.index(" pull"), out
         assert out.index("which writes the XNAT backup") < out.index(" pull"), "the backup dir is checked first too"
         assert out.index("could not create the XNAT data dirs") < out.index(" pull"), "and XNAT's mount sources made"
         unset = dry_run("_upgrade-trust-apply")
         assert '[ "$owner" = "999" ]' in unset, unset
-        assert '"/nonexistent/omop"' not in unset, unset
+        # The OMOP dir only has a fixed owner under FLIP_UID.
+        assert 'for d in  "/nonexistent/orthanc" ;' in unset, unset
         with tempfile.TemporaryDirectory() as td:
             for d in ("omop", "pacs", "images/net-1"):
                 Path(td, d).mkdir(parents=True)
