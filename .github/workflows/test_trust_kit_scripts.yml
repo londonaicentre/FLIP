@@ -86,6 +86,13 @@ on:
       - "trust/Makefile"
       - "trust/xnat/Makefile"
       - "deploy/portable.mk"
+      # test_kit_key_coverage.py holds every key of the kit template to each node shape's
+      # kit readers (FLIP#2047).
+      - "trust/.env.example"
+      - "trust/deploy/helm/Makefile"
+      - "trust/deploy/helm/sync_k8s_kit.py"
+      - "trust/deploy/helm/scripts/generate_values.py"
+      - "trust/deploy/snowflake/*.py"
   pull_request:
     branches: [develop]
 
