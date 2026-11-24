@@ -473,7 +473,7 @@ they would only ever fail trying to reach `londonaicentre`-owned resources — s
 pushes. These are:
 
 - **Image publishing** — `Build and Push FLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
-  and `trust-*` GHCR build-and-push workflows.
+  and `trust-*` GHCR build-and-push workflows, and `Publish the TotalSegmentator weights image`.
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
 Everything that **validates** your change still runs, and a red result is a real failure to fix: lint,

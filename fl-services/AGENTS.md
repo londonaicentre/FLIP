@@ -7,6 +7,7 @@ Docker services and network provisioning for both FL backends. Each backend's
 | Path | Purpose |
 |------|---------|
 | `nvflare/{fl-base,fl-server,fl-client,fl-api-base}` | FLARE images |
+| `nvflare/totalseg-weights` | TotalSegmentator's weights as a `FROM scratch` image, published by hand with `publish_totalseg_weights.yml` (FLIP#1945) |
 | `nvflare/provision/` | `net-*_project_*.yml`, `scripts/`, gitignored `workspace-{dev,stag,prod}/` |
 | `flower/{fl-base,superlink,supernode,fl-api-flower,fleet-proxy}` | Flower images; `fleet-proxy` is the SuperLink's only trust-facing listener, passing the Fleet API alone (FLIP#1517, see `flower/README.md`) |
 | `flower/provision/` | `scripts/`, gitignored `creds/` |

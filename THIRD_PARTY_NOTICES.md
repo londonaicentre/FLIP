@@ -63,6 +63,19 @@ Copyright (c) NVIDIA Corporation
 
 Licensed under the Apache License, Version 2.0.
 
+## TotalSegmentator (weights image)
+
+The image `ghcr.io/londonaicentre/totalsegmentator-weights`, built from
+`fl-services/nvflare/totalseg-weights/Dockerfile`, redistributes the pretrained weights of
+TotalSegmentator's `total` task (https://github.com/wasserth/TotalSegmentator), described in
+"TotalSegmentator: Robust Segmentation of 104 Anatomic Structures in CT Images" by Wasserthal J.
+et al. (2023). The image carries TotalSegmentator's licence file. Weights of other tasks have
+their own terms and are not included.
+
+Copyright (c) Jakob Wasserthal and contributors
+
+Licensed under the Apache License, Version 2.0.
+
 ## Spleen OMOP mock-data generation chain
 
 The spleen OMOP mock-data generation chain under `fl-tutorials/datasets/spleen/` and

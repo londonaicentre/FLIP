@@ -1,0 +1,118 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Publish the TotalSegmentator weights image
+
+# Run by hand only (FLIP#1945): when TOTALSEG_VERSION or TOTALSEG_TASKS change in the Dockerfile.
+# The weights come from GitHub release assets, which now and then answer with a server error, so
+# the download is here and not in the FL image build: a failure fails nothing else. The FLARE
+# client image copies the published image by digest.
+# Keep this file's name clear of the docker_build_ and fl-docker-build- prefixes: those put a
+# workflow on the release roster (.github/tests/image_workflows.py), which builds at every tag.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    if: github.repository == 'londonaicentre/FLIP'
+    runs-on: ubuntu-latest
+    permissions: # override top-level read-only default to allow GHCR push
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: ./fl-services/nvflare/totalseg-weights
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: londonaicentre/totalsegmentator-weights
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Determine tags
+        id: tags
+        env:
+          GH_SHA: ${{ github.sha }}
+        run: |
+          # An empty sha would silently publish a mutable literal `sha-` tag — refuse.
+          [[ -n "$GH_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+          # The version tag is read from the Dockerfile, so the pin has a single source of truth.
+          VERSION=$(sed -n 's/^ARG TOTALSEG_VERSION=//p' Dockerfile)
+          [[ -n "$VERSION" ]] || { echo "::error::could not read ARG TOTALSEG_VERSION from Dockerfile"; exit 1; }
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tags=${REGISTRY}/${IMAGE_NAME}:${VERSION},${REGISTRY}/${IMAGE_NAME}:sha-${GH_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
+
+      # The Dockerfile checks the digest of the downloaded directory, so a partial or changed
+      # download fails here and nothing is pushed.
+      - name: Build Docker image
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
+          TAG_FLAGS=()
+          for tag in "${TAG_ARRAY[@]}"; do
+            TAG_FLAGS+=("-t" "$tag")
+          done
+          docker build "${TAG_FLAGS[@]}" .
+
+      # The digest in the summary is what fl-services/nvflare/fl-client/Dockerfile pins.
+      - name: Push Docker image
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
+          for tag in "${TAG_ARRAY[@]}"; do
+            docker push "$tag"
+          done
+          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:${VERSION}" | awk '/^Digest:/ {print $2; exit}')
+          [[ -n "$DIGEST" ]] || { echo "::error::could not read the pushed image's digest"; exit 1; }
+          echo "Published \`${REGISTRY}/${IMAGE_NAME}:${VERSION}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # `make build-fl` on a developer's machine pulls this image with no credentials. New org
+      # packages default to private and GITHUB_TOKEN cannot change that, so making it public is an
+      # operator action; this probe keeps the run red until it is done. Deliberately token-less,
+      # as in docker_build_xnat_dcm2niix.yml.
+      - name: Verify the published image is anonymously pullable
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          TOKEN_BODY=$(mktemp)
+          TOKEN_CODE=$(curl -sS -o "$TOKEN_BODY" -w '%{http_code}' \
+            "https://${REGISTRY}/token?scope=repository:${IMAGE_NAME}:pull&service=${REGISTRY}")
+          HTTP_CODE="no token (HTTP ${TOKEN_CODE})"
+          if [[ "$TOKEN_CODE" == "200" ]]; then
+            HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(jq -r '.token // empty' "$TOKEN_BODY")" \
+              -H "Accept: application/vnd.oci.image.index.v1+json" \
+              -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+              -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+              "https://${REGISTRY}/v2/${IMAGE_NAME}/manifests/${VERSION}")
+          fi
+          rm -f "$TOKEN_BODY"
+          if [[ "$HTTP_CODE" != "200" ]]; then
+            echo "Anonymous pull of ${IMAGE_NAME}:${VERSION} failed: ${HTTP_CODE}. The image is pushed; the package is private."
+            echo "Fix: github.com/orgs/londonaicentre/packages/container/totalsegmentator-weights/settings"
+            echo "     -> Danger Zone -> Change visibility -> Public, then re-run this job."
+            echo "::error::${IMAGE_NAME}:${VERSION} is not public: change the package visibility"
+            exit 1
+          fi
+          echo "${IMAGE_NAME}:${VERSION} is anonymously pullable."
