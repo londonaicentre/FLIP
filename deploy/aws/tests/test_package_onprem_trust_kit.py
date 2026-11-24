@@ -34,7 +34,7 @@ case "$1 $2" in
     touch "$4/startup.sh"
     case "$3" in
       */services/*) mkdir -p "$4/startup" && echo key > "$4/startup/client.key" && chmod 755 "$4/startup" ;;
-      */certificates/) echo cert > "$4/ca.crt" ;;
+      */certificates/) for f in ca.crt server.pem server.key; do echo "$f" > "$4/$f"; done ;;
     esac
     chmod -R a+rX "$4" ;;
   "s3 cp") echo key > "$4/${3##*/}" && chmod 644 "$4/${3##*/}" ;;
@@ -160,6 +160,18 @@ def test_the_kit_ships_private_to_whoever_extracts_it(tmp_path: Path, kit_lines:
     stage = next(tarball.parent.glob("Trust_3-*"))
     for path in [stage, *stage.rglob("*")]:
         assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0, f"{path} is left readable in the build dir"
+
+
+def test_a_flower_kit_carries_the_ca_certificate_and_its_own_credential_only(tmp_path: Path) -> None:
+    """The kit prefix also holds the SuperLink's TLS key and every other slot's credential: neither is this trust's."""
+    result, calls = _pack(tmp_path, ["TRUST_CODE=AZ1", *FLOWER_KIT_LINES])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    (tarball,) = _tarballs(tmp_path)
+    with tarfile.open(tarball) as tar:
+        files = sorted(m.name for m in tar.getmembers() if m.isfile() and m.name.startswith("fl-kit/"))
+    assert files == ["fl-kit/net-1/certificates/ca.crt", "fl-kit/net-1/keys/supernode_credentials_3"]
+    assert "s3 sync" not in calls.read_text(), "a prefix was synced, so whatever it holds was staged"
 
 
 def test_the_tarball_carries_no_mac_metadata(tmp_path: Path) -> None:
