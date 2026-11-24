@@ -37,7 +37,7 @@ CHART_DIR = Path(__file__).resolve().parent.parent
 
 pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make is not installed")
 
-API_DEPLOYMENTS = [f"trust-release-flip-trust-{svc}" for svc in ("trust-api", "data-access-api", "imaging-api")]
+APIS = [f"deployment/trust-release-flip-trust-{svc}" for svc in ("trust-api", "data-access-api", "imaging-api")]
 
 # sync_k8s_kit.py runs through `uv run`; the stub stands in for the Secret patch, leaving KEY_AFTER
 # as the Secret's trust-internal service key (no Secret at all with KEY_AFTER empty).
@@ -55,7 +55,7 @@ printf 'kubectl %s\\n' "$*" >> "$CALL_LOG"
 case "$1 $2" in
   "get secret") cat "$SECRET_FILE" 2>/dev/null || exit 1 ;;
   "get deployment") printf '%s' "$FL_CLIENTS"; exit "${GET_RC:-0}" ;;
-  "rollout status") [ "$3" != "deployment/$STATUS_FAILS" ] || exit 1 ;;
+  "rollout status") [ "$3" != "$STATUS_FAILS" ] || exit 1 ;;
 esac
 exit 0
 """
@@ -82,7 +82,6 @@ def _make(
     log = tmp_path / "calls.log"
     log.write_text("")
     secret = tmp_path / "secret-key"
-    secret.unlink(missing_ok=True)
     if key_before is not None:
         secret.write_text(key_before)
     env_overrides = {"SECRET_FILE": str(secret), "KEY_AFTER": "new-key", **env_overrides}
@@ -123,7 +122,7 @@ def test_a_changed_key_restarts_the_fl_clients_with_the_three_apis(tmp_path, key
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "internal service key changed: restarting the FL client" in result.stdout
-    expected = [f"deployment/{name}" for name in [*API_DEPLOYMENTS, "rel-fl-client-net-1", "rel-fl-client-net-2"]]
+    expected = [*APIS, "deployment/rel-fl-client-net-1", "deployment/rel-fl-client-net-2"]
     assert _restarted(calls) == expected
     assert _waited(calls) == expected
 
@@ -134,9 +133,8 @@ def test_an_unchanged_key_leaves_the_fl_clients_running(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "internal service key unchanged: FL client left running" in result.stdout
-    apis = [f"deployment/{name}" for name in API_DEPLOYMENTS]
-    assert _restarted(calls) == apis
-    assert _waited(calls) == apis
+    assert _restarted(calls) == APIS
+    assert _waited(calls) == APIS
 
 
 def test_the_key_is_compared_without_being_printed_or_passed_as_an_argument(tmp_path):
@@ -173,7 +171,7 @@ def test_an_fl_client_that_was_not_ready_is_restarted_but_not_waited_on(tmp_path
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "deployment/rel-fl-client-net-1" in _restarted(calls)
-    assert _waited(calls) == [f"deployment/{name}" for name in API_DEPLOYMENTS]
+    assert _waited(calls) == APIS
 
 
 def test_a_release_with_no_fl_client_restarts_the_three_apis_only(tmp_path):
@@ -181,7 +179,7 @@ def test_a_release_with_no_fl_client_restarts_the_three_apis_only(tmp_path):
     result, calls = _make(tmp_path, "patch-kit-secrets", FL_CLIENTS="")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert _restarted(calls) == [f"deployment/{name}" for name in API_DEPLOYMENTS]
+    assert _restarted(calls) == APIS
 
 
 # ---------------------------------------------------------------- what fails it
@@ -201,7 +199,7 @@ def test_an_unreadable_cluster_fails_before_any_restart(tmp_path):
     assert _restarted(calls) == []
 
 
-@pytest.mark.parametrize("name", [API_DEPLOYMENTS[0], "rel-fl-client-net-1"], ids=["api", "fl-client"])
+@pytest.mark.parametrize("name", [APIS[0], "deployment/rel-fl-client-net-1"], ids=["api", "fl-client"])
 def test_a_deployment_that_does_not_come_back_fails_the_target(tmp_path, name):
     """The loop's status used to be its last iteration's, so only imaging-api could fail it."""
     result, _ = _make(tmp_path, "patch-kit-secrets", FL_CLIENTS="rel-fl-client-net-1=1 ", STATUS_FAILS=name)

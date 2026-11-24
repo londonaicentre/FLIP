@@ -138,7 +138,7 @@ SUBMAKE := $(MAKE)
 # run bare, xnat-init renders the Job from the release's own (see the target). Only what selects
 # the release is repeated (RELEASE_ARGS), so the command works as printed.
 RELEASE_ARGS := $(strip $(if $(KUBE_CONTEXT),KUBE_CONTEXT=$(KUBE_CONTEXT)) $(foreach v,NAMESPACE RELEASE_NAME,$(if $(filter command environment,$(origin $(v))),$(v)=$($(v)))))
-XNAT_INIT_RERUN := make -C trust/deploy/helm xnat-init$(if $(RELEASE_ARGS), $(RELEASE_ARGS))
+XNAT_INIT_RERUN := $(strip make -C trust/deploy/helm xnat-init $(RELEASE_ARGS))
 XNAT_INIT_HELP := trust/deploy/helm/README.md, Running the XNAT init job by hand
 
 # Determine which values files to pass
@@ -356,7 +356,7 @@ ifdef KIT
 		echo "❌ the release did not land (helm or the rollout wait failed). Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then failing."; \
 	fi; \
 	$(MAKE) patch-kit-secrets KIT=$(KIT) || { rc=1; \
-		echo "❌ patch-kit-secrets failed: the trust may not be running on the kit's keys. Re-run: make -C trust/deploy/helm patch-kit-secrets KIT=$(KIT)$(if $(HUB), HUB=$(HUB))$(if $(RELEASE_ARGS), $(RELEASE_ARGS))"; }; \
+		echo "❌ patch-kit-secrets failed: the trust may not be running on the kit's keys. Re-run: $(strip make -C trust/deploy/helm patch-kit-secrets KIT=$(KIT) $(if $(HUB),HUB=$(HUB)) $(RELEASE_ARGS))"; }; \
 	exit $$rc
 else
 	@$(MAKE) deploy
@@ -638,16 +638,13 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 	@# One shell, so the Secret's trust-internal service key can be compared across the patch. The FL
 	@# clients read it from that Secret like the three APIs, but are restarted only when it changed
 	@# (FLIP#2047): this target runs on every deploy-trust-k8s, and a restart ends an in-flight FL job.
-	@# A Secret that was not there before counts as changed. The key is only ever piped into a hash.
+	@# A Secret that was not there before counts as changed. The key stays in shell variables.
 	@# Each client is listed as <name>=<ready replicas>, and one that was not ready is not waited on:
 	@# awaiting its kit or a free GPU it stays Pending, and the wait could only time out
 	@# (scripts/rollout_wait.py). A release with flClient.enabled=false has none.
-	@key_hash() { \
-		v=$$($(KUBECTL) get secret $(RELEASE_NAME)-flip-trust-secrets -n $(NAMESPACE) \
-			-o jsonpath='{.data.trust-internal-service-key}' 2>/dev/null) \
-		&& printf '%s' "$$v" | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'; \
-	}; \
-	before=$$(key_hash) || before=absent; \
+	@key() { $(KUBECTL) get secret $(RELEASE_NAME)-flip-trust-secrets -n $(NAMESPACE) \
+		-o jsonpath='{.data.trust-internal-service-key}' 2>/dev/null; }; \
+	before=$$(key) || before=absent; \
 	uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \
 		--kit $(KIT) \
 		--env $(ENV) \
@@ -659,8 +656,8 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		$(if $(NO_VOCAB_LOAD),--no-vocab-load) \
 		$(KUBE_CONTEXT_ARG) \
 		--no-write-override || exit 1; \
-	after=$$(key_hash) || { echo "❌  could not read $(RELEASE_NAME)-flip-trust-secrets after the patch — nothing restarted."; exit 1; }; \
-	fl=; \
+	after=$$(key) || { echo "❌  could not read $(RELEASE_NAME)-flip-trust-secrets after the patch — nothing restarted."; exit 1; }; \
+	restart="$(addprefix $(RELEASE_NAME)-flip-trust-,trust-api data-access-api imaging-api)"; wait=$$restart; \
 	if [ "$$before" = "$$after" ]; then \
 		echo "ⓘ  internal service key unchanged: FL client left running"; \
 	else \
@@ -668,14 +665,11 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		fl=$$($(KUBECTL) get deployment -n $(NAMESPACE) \
 			-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component=fl-client \
 			-o jsonpath='{range .items[*]}{.metadata.name}={.status.readyReplicas}{" "}{end}') || exit 1; \
+		for client in $$fl; do \
+			restart="$$restart $${client%%=*}"; \
+			case "$$client" in *=|*=0) ;; *) wait="$$wait $${client%%=*}" ;; esac; \
+		done; \
 	fi; \
-	restart=; \
-	for svc in trust-api data-access-api imaging-api; do restart="$$restart $(RELEASE_NAME)-flip-trust-$$svc"; done; \
-	wait=$$restart; \
-	for client in $$fl; do \
-		restart="$$restart $${client%%=*}"; \
-		case "$$client" in *=|*=0) ;; *) wait="$$wait $${client%%=*}" ;; esac; \
-	done; \
 	for name in $$restart; do \
 		$(KUBECTL) rollout restart deployment/$$name -n $(NAMESPACE) || exit 1; \
 	done; \
