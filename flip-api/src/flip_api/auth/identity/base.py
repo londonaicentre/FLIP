@@ -30,8 +30,8 @@ from flip_api.utils.logger import logger
 
 # Positive MFA state is cached briefly because ``verify_token`` asks on every
 # authenticated request. Negative state is never cached so a user finishing
-# enrolment is admitted on their very next call, and an admin reset drops the
-# entry so it takes effect immediately rather than after the TTL.
+# enrolment is admitted on their very next call, and an admin reset empties
+# the cache so it takes effect in this process at once rather than after the TTL.
 _MFA_STATE_TTL_SECONDS = 60.0
 
 
@@ -133,7 +133,10 @@ class IdentityProvider(ABC):
         self._reset_mfa(username)
         cache, lock = self._mfa_cache()
         with lock:
-            cache.pop(username, None)
+            # Everything, not this name's entry: the gate caches under the token's username claim,
+            # which is not always the directory name a reset is given. Each cached user costs one
+            # extra lookup.
+            cache.clear()
 
     # --- helpers shared by every backend --------------------------------------------------
 

@@ -78,6 +78,22 @@ def mock_validate_trust_ids():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def mock_is_model_live():
+    # A MagicMock session cannot answer the live-model lookup, so default it to live here; the
+    # deleted-model test below overrides the return value.
+    with patch("flip_api.fl_services.initiate_training.is_model_live", return_value=True) as mock:
+        yield mock
+
+
+@pytest.fixture(autouse=True)
+def mock_has_active_fl_job():
+    # A MagicMock session would report an active job for every model, so default to none here; the
+    # second-start test below overrides the return value.
+    with patch("flip_api.fl_services.initiate_training.has_active_fl_job", return_value=False) as mock:
+        yield mock
+
+
 @pytest.fixture
 def mock_can_modify_model():
     with patch("flip_api.fl_services.initiate_training.can_modify_model") as mock:
@@ -164,6 +180,34 @@ def test_initiate_training_forbidden(model_id, fake_request, mock_db, mock_can_m
     with pytest.raises(HTTPException) as exc_info:
         initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_initiate_training_refuses_a_deleted_model_or_project(
+    model_id, fake_request, mock_db, client1, mock_can_modify_model, mock_is_model_live, mock_add_fl_job
+):
+    """Deleting a project or model is how access to it is withdrawn, so neither may be queued again."""
+    mock_is_model_live.return_value = False
+    payload = IInitiateTrainingInputPayload(trust_ids=[client1.id])
+
+    with pytest.raises(HTTPException) as exc_info:
+        initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
+
+    assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+    mock_add_fl_job.assert_not_called()
+
+
+def test_initiate_training_refuses_a_model_that_already_has_a_job_queued_or_running(
+    model_id, fake_request, mock_db, client1, mock_can_modify_model, mock_has_active_fl_job, mock_add_fl_job
+):
+    """A second job for the same model leaves the first one in progress for ever and its net busy."""
+    mock_has_active_fl_job.return_value = True
+    payload = IInitiateTrainingInputPayload(trust_ids=[client1.id])
+
+    with pytest.raises(HTTPException) as exc_info:
+        initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
+
+    assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+    mock_add_fl_job.assert_not_called()
 
 
 def test_initiate_training_model_not_found(

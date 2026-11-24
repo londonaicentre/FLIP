@@ -37,6 +37,8 @@ from flip_api.domain.schemas.file import ModelFileDownload, UploadFileBody, vali
         "file\x00.bin",
         "file\x07.bin",
         "file\x7f.bin",
+        "weights.pt#x.txt",
+        "weights.pt?x.txt",
         "  leading-space.bin",
         "trailing-space.bin  ",
         "",
@@ -78,6 +80,8 @@ def test_upload_file_body_max_length_caps_at_255():
         "subdir\\file.bin",
         "file\x00.bin",
         "file\x7f.bin",
+        "weights.pt#x.txt",
+        "weights.pt?x.txt",
     ],
 )
 def test_model_file_download_rejects_unsafe_file_names(bad_name):
@@ -97,6 +101,8 @@ def test_model_file_download_rejects_unsafe_file_names(bad_name):
         "..",
         "file\x00.bin",
         "file\x7f.bin",
+        "weights.pt#x.txt",
+        "weights.pt?x.txt",
         "  leading-space.bin",
         "",
     ],
