@@ -152,6 +152,9 @@ app = FastAPI(
     openapi_url=f"{API_PREFIX}/openapi.json" if _docs_enabled else None,
     redoc_url=f"{API_PREFIX}/redoc" if _docs_enabled else None,
     swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect" if _docs_enabled else None,
+    # No route ends in a slash. Behind the edge flip-api does not know the viewer's scheme, so the
+    # default redirect for `/path/` would send the client to `http://`: answer 404 instead.
+    redirect_slashes=False,
 )
 
 # Rate limiter — keyed by a hash of the trust API key (falls back to client IP)

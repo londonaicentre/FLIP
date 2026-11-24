@@ -38,7 +38,7 @@ def create_new_project(client, project_data: ProjectDetails) -> Response | None:
     print(f"  🏗️ Creating new project: {project_data.name}")
     try:
         response = client.post(
-            f"{constants.BASE_URL}/projects/",
+            f"{constants.BASE_URL}/projects",
             json=project_data.model_dump(),
             headers=AUTH_TOKEN,
             timeout=30,
@@ -63,7 +63,7 @@ def add_project_query(client, query_info: dict) -> Response | None:
     print(f"  📝 Adding query to project: {query_info.get('name', 'Unnamed Query')}")
     try:
         response = client.post(
-            f"{constants.BASE_URL}/cohort/save/",
+            f"{constants.BASE_URL}/cohort/save",
             json=query_info,
             headers=AUTH_TOKEN,
             timeout=30,
@@ -88,7 +88,7 @@ def submit_query_to_trusts(client, query_info: dict) -> Response | None:
     print("  📤 Submitting query to trusts...")
     try:
         response = client.post(
-            f"{constants.BASE_URL}/cohort/submit/",
+            f"{constants.BASE_URL}/cohort/submit",
             json=query_info,
             headers=AUTH_TOKEN,
             timeout=30,  # 30 second timeout
@@ -118,7 +118,7 @@ def client_approve_project(client, project_id: str, trust_ids: list[str]) -> Res
     print(f"  ✅ Approving project {project_id} for {len(trust_ids)} trusts")
     try:
         response = client.post(
-            f"{constants.BASE_URL}/step/project/{project_id}/approve/",
+            f"{constants.BASE_URL}/step/project/{project_id}/approve",
             json={"trusts": trust_ids},
             headers=AUTH_TOKEN,
             timeout=30,
@@ -229,7 +229,7 @@ def create_staged_project(
 
     print("  🏥 Getting available trusts...")
     try:
-        trusts_response = client.get(f"{constants.BASE_URL}/trust/", headers=admin_authentication(), timeout=30)
+        trusts_response = client.get(f"{constants.BASE_URL}/trust", headers=admin_authentication(), timeout=30)
 
         if trusts_response.status_code < 300:
             trusts = trusts_response.json()
@@ -249,7 +249,7 @@ def create_staged_project(
     print("  📋 Staging project...")
     try:
         stage_response = client.post(
-            f"{constants.BASE_URL}/projects/{project_id}/stage/",
+            f"{constants.BASE_URL}/projects/{project_id}/stage",
             json={"trusts": [trust["id"] for trust in trusts]},
             headers=admin_authentication(),
             timeout=30,
@@ -284,7 +284,7 @@ def create_approved_project(
 
     print("  🏥 Getting available trusts for approval...")
     try:
-        trusts_response = client.get(f"{constants.BASE_URL}/trust/", headers=admin_authentication(), timeout=30)
+        trusts_response = client.get(f"{constants.BASE_URL}/trust", headers=admin_authentication(), timeout=30)
 
         if trusts_response.status_code < 300:
             trusts = trusts_response.json()
