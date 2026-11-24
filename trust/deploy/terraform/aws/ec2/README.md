@@ -33,7 +33,7 @@ The host is configured by [`../../../ansible/aws-ec2.yml`](../../../ansible/aws-
 
 ## Checks
 
-Run the credential-free checks locally (CI runs the same as `validate_terraform.yml` "AWS EC2 node checks"):
+Run the credential-free checks locally (CI runs the same as `validate_terraform_aws_node.yml` "AWS EC2 node checks"):
 
 ```bash
 make test lint

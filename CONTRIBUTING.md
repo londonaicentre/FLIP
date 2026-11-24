@@ -553,7 +553,7 @@ make -C trust/deploy/terraform/snowflake-platform apply    # prints a BREAK GLAS
 ```
 
 `lint` and `test` need nothing but `tofu` (or `terraform`), `tflint`, `uvx` and `uv`; they are what
-`validate_terraform.yml`'s `Snowflake <root> static checks` matrix runs. The guards pin the
+`validate_terraform_snowflake.yml`'s `Snowflake <root> static checks` matrix runs. The guards pin the
 invariants no plan can show without an account. In the workload root: no `snowflake_account_role`,
 no user, no integration, no network/password/session policy, no account parameter and no
 `on_account` grant (all of those belong to the platform root), plus no grant to `PUBLIC`,
@@ -588,7 +588,7 @@ against a canary fixture, and its guards are regression-tested by `scripts/tests
 runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
 `make -C trust/deploy/terraform/azure lint` runs `terraform fmt`, tflint with the azurerm ruleset, and checkov's full
 Azure check set (`make -C trust/deploy/terraform/azure checkov` alone, through `uvx` at the AWS lint's pinned version).
-CI runs both in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
+CI runs both in the "Azure node checks" job of `validate_terraform_azure.yml`. The static guards enforce the cost and safety
 rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
 subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
 always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS; a `checkov:skip` without
