@@ -81,6 +81,15 @@ def mock_decrypt():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def mock_recorded_for_another_project():
+    # The mock sessions below script their exec() results in order; keep this lookup out of that order.
+    with patch(
+        "flip_api.private_services.imaging_notifications._recorded_for_another_project", return_value=False
+    ) as mock:
+        yield mock
+
+
 @pytest.fixture
 def mock_insert_status():
     with patch("flip_api.private_services.imaging_notifications.insert_status") as mock:
@@ -134,6 +143,19 @@ def test_inserts_xnat_project_status(mock_send_email, mock_decrypt, mock_insert_
     assert call_kwargs["status"] == XNATImageStatus.CREATED
     assert call_kwargs["query_id"] == mock_query.id
     assert call_kwargs["db"] is mock_db
+
+
+def test_an_imaging_project_id_already_on_record_elsewhere_is_refused(
+    mock_send_email, mock_decrypt, mock_insert_status, mock_recorded_for_another_project
+):
+    """The id is the trust's to choose; a second row with it would break the status lookup of both projects."""
+    mock_recorded_for_another_project.return_value = True
+    task = _make_task(TWO_USERS)
+
+    handle_imaging_task_completed(task, _db(None))  # no status row yet for this trust and project
+
+    mock_insert_status.assert_not_called()
+    mock_send_email.assert_not_called()
 
 
 def test_inserts_status_with_no_query(mock_send_email, mock_decrypt, mock_insert_status):

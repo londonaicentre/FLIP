@@ -12,9 +12,10 @@
 
 import json
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, and_, col, desc, func, or_, select
 
 from flip_api.auth.auth_utils import has_permissions
@@ -32,7 +33,7 @@ from flip_api.db.models.main_models import (
 from flip_api.db.models.user_models import PermissionRef, UserProfile
 from flip_api.domain.interfaces.project import IProject, IProjectQuery
 from flip_api.domain.schemas.actions import ProjectAuditAction
-from flip_api.domain.schemas.status import TaskStatus
+from flip_api.domain.schemas.status import ProjectType, TaskStatus
 from flip_api.project_services.services.project_services import (
     _classify_responded_trust_ids,
     get_trusts_approval_status_for_projects,
@@ -43,9 +44,8 @@ from flip_api.utils.paging_utils import (
     IPagedData,
     IPagedResponse,
     PagingInfo,
-    get_filter_details,
-    get_paging_details,
     get_total_pages,
+    paging_params,
 )
 from flip_api.utils.user_roles import profile_display_name
 
@@ -356,7 +356,9 @@ def _load_user_counts(project_ids: list[UUID], session: Session) -> dict[UUID, i
     status_code=status.HTTP_200_OK,
 )
 def get_projects_endpoint(
-    request: Request,
+    owner: UUID | None = None,
+    project_type: Annotated[ProjectType | None, Query(alias="projectType")] = None,
+    paging_details: PagingInfo = Depends(paging_params),
     session: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ) -> IPagedData[IProject]:
@@ -364,7 +366,9 @@ def get_projects_endpoint(
     Get a paginated and filtered list of projects.
 
     Args:
-        request (Request): The HTTP request object, used to access query parameters.
+        owner (UUID | None): Only projects owned by this user.
+        project_type (ProjectType | None): Only imaging or only tabular projects (FLIP#1071); None = every type.
+        paging_details (PagingInfo): The page and search string.
         session (Session): The database session for querying.
         user_id (UUID): The ID of the user making the request.
 
@@ -376,8 +380,7 @@ def get_projects_endpoint(
     """
     logger.info("Requesting all projects")
 
-    paging_details = get_paging_details(query_string_parameters=dict(request.query_params))
-    filter_details = get_filter_details(query_string_parameters=dict(request.query_params))
+    filter_details = FilterInfo(owner=owner, project_type=project_type)
 
     # If user has manager permissions, remove their user-specific filter (equivalent to `user_id = null`)
     if has_permissions(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], session):

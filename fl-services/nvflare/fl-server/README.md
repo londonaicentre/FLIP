@@ -21,7 +21,7 @@ The FLARE server typically uses two ports. Both are configurable in the project 
 
 | Port | Purpose |
 |------|---------|
-| 8002 | Clients (training sites or edge devices) connect over gRPC to send and receive job data. |
+| 8002 | Clients (training sites or edge devices) connect over a WebSocket inside mutual TLS to send and receive job data. |
 | 8003 | Communication with the Admin API, which manages the system and job scheduling. |
 
 From FLARE 2.7 onwards, [one port can serve both controller and admin API traffic](https://nvflare.readthedocs.io/en/2.9.0/user_guide/admin_guide/configurations/server_port_consolidation.html).

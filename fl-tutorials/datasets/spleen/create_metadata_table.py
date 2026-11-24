@@ -59,22 +59,21 @@ def extract_dicom_metadata(base_dir: str) -> pd.DataFrame:
 
         try:
             ds = pydicom.dcmread(file_path, stop_before_pixels=True)  # Read DICOM without pixel data
-            metadata = {
-                "Subject": subject,
-                "FileName": os.path.basename(file_path),
-                "FilePath": file_path,
-            }
+        except pydicom.errors.InvalidDicomError as e:
+            raise pydicom.errors.InvalidDicomError(f"{file_path}: {e}") from e
+        metadata = {
+            "Subject": subject,
+            "FileName": os.path.basename(file_path),
+            "FilePath": file_path,
+        }
 
-            # Extract relevant metadata fields
-            for elem in ds:
-                if elem.VR != "SQ":  # Skip sequences for simplicity
-                    tag_name = elem.name.replace(" ", "").replace("'s", "").replace("s'", "")
-                    metadata[tag_name] = elem.value
+        # Extract relevant metadata fields
+        for elem in ds:
+            if elem.VR != "SQ":  # Skip sequences for simplicity
+                tag_name = elem.name.replace(" ", "").replace("'s", "").replace("s'", "")
+                metadata[tag_name] = elem.value
 
-            data.append(metadata)
-
-        except Exception as e:
-            print(f"Error reading {file_path}: {e}")
+        data.append(metadata)
 
     # Convert to a DataFrame
     df = pd.DataFrame(data)

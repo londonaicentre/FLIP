@@ -472,7 +472,7 @@ def check_fl_endpoint_reachable(kit_vars: dict[str, str], kit_present: bool) -> 
     if failure is None:
         return Check(label, Status.PASS, f"tcp {host}:{port} connects (from {source})")
     hints = [
-        "The FL client connects out to this host:port over mutual TLS; a connection that opens"
+        "The FL client connects out to this host:port over TLS; a connection that opens"
         " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
         f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
     ]

@@ -125,8 +125,8 @@ resource "aws_security_group" "ecs_fl_server" {
 }
 
 # fl-api (the FLARE admin client) connects directly to fl-server on the
-# admin port (same 8002 as the gRPC client port; FLARE multiplexes admin
-# and client RPC over a single HTTP/2 stream). It does NOT go through the
+# admin port (same 8002 as the client port; FLARE serves admin and client
+# traffic on one port). It does NOT go through the
 # NLB - that path is reserved for off-VPC FL clients on trusts. Without
 # this rule fl-api startup hangs in `try_connect` until the 20s timeout.
 resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_admin" {

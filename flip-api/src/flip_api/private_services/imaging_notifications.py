@@ -17,7 +17,7 @@ from uuid import UUID
 
 from botocore.exceptions import BotoCoreError
 from cryptography.exceptions import InvalidTag
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, or_, select
 
 from flip_api.db.models.main_models import Queries, Trust, TrustTask, XNATImageStatus, XNATProjectStatus
 from flip_api.domain.interfaces.trust import (
@@ -30,6 +30,32 @@ from flip_api.utils.constants import IMAGING_INVITE_TEMPLATE_NAME, IMAGING_PROJE
 from flip_api.utils.email_sender import EmailDispatchError, send_templated_email
 from flip_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, decrypt
 from flip_api.utils.logger import logger
+
+
+def _recorded_for_another_project(xnat_project_id: UUID, trust_id: UUID, project_id: UUID, db: Session) -> bool:
+    """Whether an imaging project id is already on record for a different trust or hub project.
+
+    Args:
+        xnat_project_id (UUID): The imaging project id the trust returned.
+        trust_id (UUID): The trust that returned it.
+        project_id (UUID): The hub project the task was for.
+        db (Session): Database session.
+
+    Returns:
+        bool: True if a status row holds this id for another trust or another project.
+    """
+    statement = (
+        select(XNATProjectStatus.id)
+        .where(XNATProjectStatus.xnat_project_id == xnat_project_id)
+        .where(
+            or_(
+                col(XNATProjectStatus.trust_id).is_distinct_from(trust_id),
+                col(XNATProjectStatus.project_id).is_distinct_from(project_id),
+            )
+        )
+        .limit(1)
+    )
+    return db.exec(statement).first() is not None
 
 
 def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
@@ -86,6 +112,15 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     ).first()
 
     if not existing_status:
+        # The id is the trust's to choose. One already on record for another project or trust would
+        # give two rows to a lookup that expects one and break the imaging status of both projects,
+        # so the result is dropped: no status row, no emails, and nothing for a retry to change.
+        if _recorded_for_another_project(imaging_project.imaging_project_id, task.trust_id, project_id, db):
+            logger.error(
+                f"Trust {task.trust_id} returned imaging project id {imaging_project.imaging_project_id} for project "
+                f"{project_id}, but that id is already recorded for another project — result refused"
+            )
+            return
         query_id = _get_latest_query_id(project_id, db)
         insert_status(
             trust_id=task.trust_id,

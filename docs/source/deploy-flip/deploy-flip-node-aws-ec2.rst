@@ -56,7 +56,7 @@ Dashed boxes are optional: the own-VPC network mode, the SSM endpoints, the stop
    :alt: On the node: the trust stack under Docker Compose (trust-api, the FL client, imaging-api,
          data-access-api, the OMOP database and Orthanc), XNAT as a swarm stack (xnat-web and its database), and
          the observability stack (Alloy, Loki, Grafana). trust-api polls the hub over HTTPS, the FL client
-         connects to the hub's FL endpoint over mutual-TLS gRPC, and the host pulls images from GHCR and the
+         connects to the hub's FL endpoint over TLS, and the host pulls images from GHCR and the
          seed data from Hugging Face.
 
    The services on the host, and what each connects out to.
@@ -85,8 +85,8 @@ The root has two network modes:
      - A standalone or test install in an empty account
      - A NAT gateway created with the stack; its Elastic IP is destroyed with it.
 
-The hub never checks a trust's IP address: it admits a trust by its API key and the kit's mTLS
-certificates. So the node needs no fixed address, and no hub change is needed to add or remove it. The
+The hub never checks a trust's IP address: it admits a trust by its API key and the
+credentials in its FL kit. So the node needs no fixed address, and no hub change is needed to add or remove it. The
 exception is the hub's own account (below), where the estate's firewall allows the node by address.
 
 **Does the node expose an IP address?** No. The instance has no public IP and its security group no

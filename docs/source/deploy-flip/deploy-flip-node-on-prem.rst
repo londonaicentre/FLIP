@@ -141,10 +141,10 @@ Behind a forward proxy
 Where all outbound traffic goes through a proxy, as in most trusted research environments, three settings matter:
 
 - **Image pulls** use the Docker daemon's own proxy setting (a systemd drop-in). The host owner sets it.
-- **Containers** get no proxy unless you give them one. Without it, trust-api cannot reach the hub and the FL client
-  cannot reach the FL server. Put it in your Docker client config, ``~/.docker/config.json``; Compose passes it to
-  every container it creates. ``noProxy`` must name the stack's own services, or their calls to each other go to the
-  proxy too. Add your site's internal domains to it.
+- **Containers** get no proxy unless you give them one. Without it, trust-api cannot reach the hub and a Flower
+  SuperNode cannot reach the FL server. Put it in your Docker client config, ``~/.docker/config.json``; Compose
+  passes it to every container it creates. ``noProxy`` must name the stack's own services, or their calls to each
+  other go to the proxy too. Add your site's internal domains to it.
 
   .. code-block:: json
 
@@ -160,7 +160,8 @@ Where all outbound traffic goes through a proxy, as in most trusted research env
 
   Merge the ``proxies`` key into the file if it exists; containers created before the change keep their old
   environment until they are recreated. The proxy must also allow the FL server's port (the kit's
-  ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``), not only 443.
+  ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``), not only 443. The NVIDIA FLARE client does not use the proxy, so a
+  FLARE trust needs a firewall rule to that port instead.
 - **Your shell** may export ``http_proxy`` too. Then ``curl http://127.0.0.1:<port>`` goes to the proxy, and a
   published port seems not to answer. Use ``curl --noproxy '*' …``, or export ``NO_PROXY=localhost,127.0.0.1``
   (and ``no_proxy``). The readiness checklist's loopback probe of trust-api bypasses the proxy; its hub and

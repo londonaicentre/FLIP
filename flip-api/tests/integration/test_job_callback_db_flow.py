@@ -65,6 +65,8 @@ def make_model(session, user_factory, project_factory, model_factory):
                     model_id=model.id,
                     status=job_status,
                     created=oldest + timedelta(hours=age),
+                    # As the scheduler does when it completes a job: a completed job reports only for a while.
+                    completed=datetime.utcnow() if job_status == JobStatus.COMPLETED else None,
                     credential_hash=hash_job_credential(credential),
                 )
             )
