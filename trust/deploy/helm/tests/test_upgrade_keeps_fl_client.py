@@ -184,7 +184,7 @@ def test_an_upgrade_waits_for_a_serving_fl_client_and_passes_when_it_returns(tmp
 
 @needs_make
 def test_an_fl_client_that_was_not_serving_still_does_not_fail_the_upgrade(tmp_path):
-    """Its resting states (an idle scale-from-zero GPU pool, a kit not staged yet) stay reported only."""
+    """Its resting states (no free GPU, a kit not staged yet) stay reported only."""
     result, _ = _deploy(tmp_path, fl_ready_before=False, FL_ROLLOUT_RC="1")
     assert result.returncode == 0, result.stderr
     assert "t-fl-client is not ready, not waited on" in result.stdout

@@ -21,11 +21,9 @@ It cannot be used here, because `--wait` is all-or-nothing: Helm 3 offers no per
 exclusion, and ONE unschedulable pod fails the whole upgrade. Verified against a live cluster —
 a single Pending pod alongside otherwise healthy workloads gives `UPGRADE FAILED: context
 deadline exceeded`, exit 1, and leaves the release in `failed` state. Two supported trust
-configurations sit permanently in that state by design:
+configurations can sit in that state by design:
 
-* `flClient` on a scale-from-zero GPU node pool (values-aks.yaml) — Pending is its resting state
-  between FL jobs, and that is the configuration the chart recommends to avoid billing a GPU
-  that no job is using;
+* `flClient` waiting for a GPU no node has free — Pending until one is;
 * `flClient` deployed before its kit is staged — Pending until the operator stages the kit.
 
 Under `--wait` both turn every scheduled run of the auto-upgrade agent (FLIP#1640) into a failed
@@ -62,9 +60,9 @@ import time
 # Workloads deliberately NOT waited on. Each entry needs a reason that says why being unready is a
 # legitimate steady state for a supported configuration, rather than merely inconvenient.
 OPTIONAL_COMPONENTS = {
-    # Pending is the resting state on a scale-from-zero GPU node pool, and before the kit is
+    # Pending while no node has a free GPU, and before the kit is
     # staged. Neither stops the trust serving data or imaging.
-    "fl-client": "idle or awaiting its kit / GPU node",
+    "fl-client": "awaiting its kit or a free GPU",
     # Clinician-facing annotation UI; optional, and off by default (monailabel.enabled: false).
     "monailabel": "optional annotation service",
     # Observability. The trust serves fine while its dashboards are down, and failing an upgrade
@@ -272,7 +270,7 @@ def main() -> int:
 
     if failed:
         print(
-            f"\n{len(failed)} core workload(s) did not roll out within {args.timeout}.",
+            f"\n{len(failed)} workload(s) did not roll out within {args.timeout}.",
             file=sys.stderr,
         )
         return 1

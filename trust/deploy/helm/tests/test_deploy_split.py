@@ -20,7 +20,7 @@ that makes a deploy ambiguous, so the Makefile takes it out of Helm's path (`--s
 xnat.initJob.enabled=false`) and runs the existing `xnat-init` target after. The rollout is then
 waited for by `scripts/rollout_wait.py`, which delegates to `kubectl rollout status` — `helm --wait`
 is all-or-nothing and would fail the whole deploy on a workload that is legitimately Pending (an
-`flClient` on a scale-from-zero GPU pool, or one deployed before its kit is staged). `kubectl
+`flClient` waiting for a free GPU, or one deployed before its kit is staged). `kubectl
 rollout status` applies Helm's own readiness rules (`observedGeneration` vs `generation`, the new
 ReplicaSet for a Deployment, `currentRevision == updateRevision` for a StatefulSet) to the core
 workloads only. Which step failed then says what happened, with nothing re-deriving it from
@@ -112,7 +112,7 @@ def test_the_rollout_is_waited_for_before_the_deploy_reports_success():
 def test_helms_own_all_or_nothing_wait_is_not_used():
     """`--wait` fails the whole upgrade on one unschedulable pod (verified on a live cluster:
     exit 1, release left `failed`, every other workload healthy). Two supported configurations
-    sit Pending by design — an fl-client on a scale-from-zero GPU pool, and one awaiting its
+    sit Pending by design — an fl-client waiting for a free GPU, and one awaiting its
     kit — so `--wait` would turn every unattended upgrade (FLIP#1640) into a failure."""
     assert "--wait" not in _upgrade_invocation(deploy_recipe())
 

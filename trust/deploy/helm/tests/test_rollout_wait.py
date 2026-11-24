@@ -213,7 +213,7 @@ def test_an_unready_optional_workload_is_still_reported(monkeypatch, capsys):
     _main(monkeypatch, [wl("deployment", "t-fl-client", "fl-client")])
     out = capsys.readouterr().out
     assert "t-fl-client" in out
-    assert "idle or awaiting its kit" in out
+    assert "awaiting its kit" in out
 
 
 def test_a_failing_core_workload_fails_even_when_optionals_are_fine(monkeypatch):

@@ -16,8 +16,9 @@ NAMESPACE ?= flip-trust
 # mounts. `make sync-kit` renders kitHostPath from the kit file's FL_KIT_DIR, which
 # is /opt/flip/fl-kit in every shipped kit (trust/.env.example) and the path the
 # Ansible EC2/on-prem plays stage to — so that is the default here too. Overriding
-# it means also passing --set flClient.kitHostPath=<same path> at deploy, or the pod
-# stays Pending on a `hostPath type check failed` event naming the mounted path.
+# it means also passing KIT_DEST=<same path> to the FIRST deploy, or the pod stays
+# Pending on a `hostPath type check failed` event naming the mounted path. Later
+# deploys and upgrades keep the path the release mounts (KEEP_KIT_PATH below).
 KIT_DEST ?= /opt/flip/fl-kit
 # KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
 # the FLARE image as 1000. Which backend is read from the kit ITSELF — a FLARE
@@ -253,7 +254,7 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	@echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $(KIT_DEST)"
 	NAMESPACE=$(NAMESPACE) $(CHART_DIR)/scripts/stage-to-node.sh --context "$(KUBE_CONTEXT)" \
 	  --src "$(KIT_SRC)" --dest "$(KIT_DEST)" --subdirs "$(KIT_SUBDIRS)" --owner $(KIT_UID) $(if $(NODE),--node "$(NODE)")
-	@echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
+	@echo "✅ Kit staged. On the first deploy pass KIT_DEST=$(KIT_DEST); later deploys and upgrades keep it."
 
 download-vocab: ## Download the OMOP core vocabulary from the AI Centre bucket to this host (your AWS CLI profile)
 	## For operators with access to the bucket (FLIP#923); everyone else exports the same

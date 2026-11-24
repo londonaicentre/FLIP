@@ -332,7 +332,8 @@ the FL client starts.
 - ``KUBE_CONTEXT`` is required, so the kit never lands in whichever cluster ``kubectl`` happens to point at.
 - The kit goes to ``KIT_DEST`` on the node (default ``/opt/flip/fl-kit``), and the deploy targets mount that same
   path, whatever the kit's ``FL_KIT_DIR`` says. Any previous kit there is removed first. To use another path, pass
-  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the deploy.
+  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the first deploy. Later deploys and upgrades keep the path
+  the release already mounts; pass ``KIT_DEST`` again only to move the kit.
 - ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
   to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
@@ -585,8 +586,8 @@ overlay win for the keys they set. Do not pass settings with
    * - ``flClient.kitHostPath``
      - ``/opt/flip/fl-kit``
      - Path **on the node** holding the FL kit. Required whenever the FL client is enabled with the default
-       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). The deploy targets set it
-       from ``KIT_DEST``, over the kit's ``FL_KIT_DIR`` (see Step 3).
+       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). The first deploy sets it
+       from ``KIT_DEST``, over the kit's ``FL_KIT_DIR``, and later deploys keep it (see Step 3).
    * - ``flBackend``
      - from the kit
      - ``nvflare`` or ``flower``.
