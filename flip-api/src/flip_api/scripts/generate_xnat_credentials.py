@@ -18,6 +18,9 @@ The XNAT trust services (xnat-web + xnat-db) require three passwords:
 * ``XNAT_DATASOURCE_ADMIN_PASSWORD`` — Postgres superuser password on xnat-db.
 * ``XNAT_ACTIVEMQ_PASSWORD`` — ActiveMQ broker password used by XNAT for async work.
 
+And imaging-api's XNAT data account password, ``XNAT_DATA_PASSWORD`` (FLIP#2011), which configure-xnat.sh
+applies on every run.
+
 These were previously committed to the repo with weak defaults and baked into
 the published Docker image at build time. They are now per-trust secrets: minted
 into the trust's kit file (``trust/.env.<CODE>.<env>``) at registration time and
@@ -49,7 +52,13 @@ PASSWORD_VARS = (
     "XNAT_DATASOURCE_PASSWORD",
     "XNAT_DATASOURCE_ADMIN_PASSWORD",
     "XNAT_ACTIVEMQ_PASSWORD",
+    # imaging-api's download/upload account (FLIP#2011). Unlike the three above it is not baked into a database
+    # at first start: configure-xnat.sh sets the account's password from the kit on every run, so minting it
+    # into an older kit, or rotating it, takes effect on the next deploy's xnat-init.
+    "XNAT_DATA_PASSWORD",
 )
+# The passwords Postgres fixes at first initdb, which a rotation therefore leaves out of step with the live database.
+INITDB_PASSWORD_VARS = frozenset({"XNAT_DATASOURCE_PASSWORD", "XNAT_DATASOURCE_ADMIN_PASSWORD"})
 
 # Values this script treats as "not a real credential", so it may overwrite them
 # without --force: the kit-template placeholder, unset, and the historical weak
@@ -134,7 +143,7 @@ def main() -> None:
     for var, action in actions.items():
         print(f"  {var}: {action}")
 
-    if any(action == "rotated" for action in actions.values()):
+    if any(action == "rotated" for var, action in actions.items() if var in INITDB_PASSWORD_VARS):
         print(
             "WARNING: existing credentials were rotated, but Postgres applies XNAT_DATASOURCE_* only on the\n"
             "         very first initdb of the xnat-db data volume. If this trust's xnat-db has already been\n"

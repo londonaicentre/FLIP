@@ -192,6 +192,15 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
 
 ## XNAT and PACS Environment Variables
 
+- `XNAT_SERVICE_USER` / `XNAT_DATA_USER` — imaging-api's two XNAT identities (FLIP#2011). The service account is a site
+  administrator and serves provisioning; the data account (`flip_data`, password `XNAT_DATA_PASSWORD`) has no site role,
+  is a Member of FLIP projects only, and serves the download and upload routes alone. `configure-xnat.sh` creates and
+  converges it on every deploy, project creation and imaging-api's startup backfill keep it a Member, and an upgrade
+  verb (`site_upgrade.py plan`) mints `XNAT_DATA_PASSWORD` into a kit that lacks it. Without it imaging-api stays up and
+  the data routes answer 503 naming the account; keep the Kubernetes `secretKeyRef`s to it `optional: true` and the
+  Snowflake mapping conditional, or a trust upgraded before its kit has the value stops starting. See
+  `imaging-api/README.md` ("Two XNAT identities").
+
 - `XNAT_PORT` / `XNAT_WEB_PORT` / `XNAT_AETITLE` — XNAT's DICOM SCP receiver port, its host-published
   web-UI port, and its AE title. `XNAT_PORT` was historically one variable doing both jobs, which is
   why host 8104 served Tomcat while the DICOM receiver's 8104 was an unpublished container port

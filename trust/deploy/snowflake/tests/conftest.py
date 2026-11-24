@@ -44,6 +44,7 @@ SENTINELS = {
     "AES_KEY_BASE64": "SENTINEL-aes-key-7c12",  # pragma: allowlist secret
     "XNAT_ADMIN_PASSWORD": "SENTINEL-xnat-admin-2e55",  # pragma: allowlist secret
     "XNAT_SERVICE_PASSWORD": "SENTINEL-xnat-service-88ab",  # pragma: allowlist secret
+    "XNAT_DATA_PASSWORD": "SENTINEL-xnat-data-5c21",  # pragma: allowlist secret
     "XNAT_DATASOURCE_PASSWORD": "SENTINEL-xnat-db-03de",  # pragma: allowlist secret
     "ORTHANC_PASSWORD": "SENTINEL-orthanc-6b70",  # pragma: allowlist secret
     "XNAT_DATASOURCE_ADMIN_PASSWORD": "SENTINEL-xnat-db-admin-5e21",  # pragma: allowlist secret

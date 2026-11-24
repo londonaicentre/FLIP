@@ -205,7 +205,8 @@ playbook; see :ref:`onprem-operator-access`):
 #. **Check the registry** for every image the site pulls (trust APIs, Orthanc, omop-db, XNAT, FL client) at the target
    tag, or at the kit's own ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` pin.
 #. **Confirm**, then write the tag into the kit's ``DOCKER_TAG`` and ``DOCKER_FL_TAG``, so the kit records what is
-   installed.
+   installed. A trust-local password the release introduced, and the kit lacks, is minted into the kit in the same
+   step (the command names it, never its value). The kit keeps any value it already has.
 #. **Create XNAT's prearchive folder** (``$XNAT_DATA_DIR/xnat-data/prearchive/``) as xnat-web's uid if the site
    lacks it. Older releases kept XNAT's prearchive inside the container, so sessions waiting there when you first
    upgrade from one of them are lost.
@@ -221,9 +222,35 @@ playbook; see :ref:`onprem-operator-access`):
      first start, before XNAT can connect, and leaves the old cluster where it was;
    - redeploy the XNAT stack on the new image (XNAT migrates its own schema on boot);
    - re-apply XNAT's configuration: DICOM receiver, DQR lockdown, PACS registration, PACS availability schedule (from
-     the kit, see step 2), Container Service backend and the dcm2niix command.
+     the kit, see step 2), Container Service backend and the dcm2niix command, and the XNAT data account (below).
 
 The upgrade never re-seeds data and never resets XNAT.
+
+.. _upgrade-xnat-data-account:
+
+.. admonition:: The XNAT data account (FLIP#2011)
+   :class: warning
+
+   From this release imaging-api holds two XNAT accounts. The service account (``XNAT_SERVICE_USER``) keeps its site
+   administrator rights and does everything except the two data routes. The new **data account**
+   (``XNAT_DATA_USER``, default ``flip_data``) serves downloads and uploads for the FL client. It holds no site role
+   and is a Member of FLIP's projects only, so it can read and upload within them, and cannot delete anything, see
+   another project, create users or query the PACS.
+
+   On the first upgrade to this release, with nothing for you to do:
+
+   #. the upgrade mints ``XNAT_DATA_PASSWORD`` into your kit (step 6 above);
+   #. XNAT's configure step creates the account. On every later run it sets the account's password to the kit's and
+      removes any site role it should not hold;
+   #. imaging-api, on start, makes the account a Member of every FLIP project already on the site, then checks that it
+      can log in. New projects get it when the hub creates them.
+
+   **If the account is missing**, because the kit has no password or XNAT refuses it, imaging-api still starts and
+   provisioning works. Downloads and uploads answer **503** with a message that names the account and the fix, and the
+   hub shows imaging-api as *degraded*. Check with ``curl -s localhost:8001/health``: ``xnat_data_account`` should read
+   ``ready``. ``not configured`` means the kit has no ``XNAT_DATA_PASSWORD``: run the upgrade again, or
+   ``make generate-xnat-credentials KIT=<CODE>`` on the hub admin's checkout and send the kit. ``refused by XNAT`` means
+   XNAT's configure step has not run since the password was set: run the upgrade again.
 
 .. note::
 
@@ -341,8 +368,9 @@ command refuses a release from any other checkout.
    make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
 
 Every FLIP-built image follows one chart value, ``global.image.tag`` (the observability images and ``xnat-dcm2niix``
-keep their upstream versions). The command pins the target in your kit as on Compose, regenerates the Helm override
-and Secret from the kit, and runs ``helm upgrade``. PersistentVolumeClaims survive, the vocabulary load is skipped on
+keep their upstream versions). The command pins the target in your kit as on Compose (minting a new trust-local password, such as the
+:ref:`XNAT data account's <upgrade-xnat-data-account>`, if the kit lacks it), regenerates the Helm override and Secret
+from the kit, runs ``helm upgrade``, then XNAT's configure job. PersistentVolumeClaims survive, the vocabulary load is skipped on
 populated data, and the API deployments roll onto the new images.
 
 ``KUBE_CONTEXT`` defaults to kubectl's current context; name it on a workstation with several clusters.

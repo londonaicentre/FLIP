@@ -218,6 +218,10 @@ secrets:
     xnat-admin-password: ""
     xnat-service-user: ""
     xnat-service-password: ""
+    # The data account (FLIP#2011): imaging-api's download/upload identity, a Member of FLIP projects only.
+    # Optional: without a password xnat-init skips it with a warning and imaging-api refuses those routes (503).
+    xnat-data-user: ""
+    xnat-data-password: ""
     xnat-datasource-password: ""
     xnat-datasource-admin-password: ""
     grafana-admin-password: ""

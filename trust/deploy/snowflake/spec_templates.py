@@ -45,7 +45,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from naming import Names, fl_client_image
+from kitfile import is_placeholder
+from naming import SECRET_KIT_VAR, Names, fl_client_image
 
 #: Secret object -> container environment variable, per service. This is the contract's
 #: least-privilege map, and the spec guards assert it exactly: the fl-client gets the
@@ -66,6 +67,7 @@ SECRET_MAP: dict[str, dict[str, str]] = {
         "TRUST_INTERNAL_SERVICE_KEY": "TRUST_INTERNAL_SERVICE_KEY",  # pragma: allowlist secret
         "AES_KEY_BASE64": "AES_KEY_BASE64",  # pragma: allowlist secret
         "XNAT_SERVICE_PASSWORD": "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
+        "XNAT_DATA_PASSWORD": "XNAT_DATA_PASSWORD",  # pragma: allowlist secret
     },
     "fl-client": {
         "TRUST_INTERNAL_SERVICE_KEY": "TRUST_INTERNAL_SERVICE_KEY",  # pragma: allowlist secret
@@ -100,6 +102,7 @@ SECRET_MAP: dict[str, dict[str, str]] = {
     "xnat-configure": {
         "XNAT_ADMIN_PASSWORD": "XNAT_ADMIN_PASSWORD",  # pragma: allowlist secret
         "XNAT_SERVICE_PASSWORD": "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
+        "XNAT_DATA_PASSWORD": "XNAT_DATA_PASSWORD",  # pragma: allowlist secret
     },
     "seed-orthanc": {
         "ORTHANC_PASSWORD": "ORTHANC_PASSWORD",  # pragma: allowlist secret
@@ -217,8 +220,16 @@ def _stage_volume(name: str, stage: str, uid: int | None = None) -> dict[str, An
     return volume if uid is None else {**volume, "uid": uid, "gid": uid}
 
 
-def _secrets(service: str, names: Names) -> list[dict[str, Any]]:
+#: Secret objects a kit may lack: a spec that names an object sync-kit never created fails CREATE SERVICE, so these
+#: are mapped only when the kit holds a real value. The XNAT data account (FLIP#2011) is one, for a trust deployed
+#: before it: without it imaging-api still starts and refuses the data routes with a 503 naming the account.
+OPTIONAL_SECRETS = frozenset({"XNAT_DATA_PASSWORD"})
+
+
+def _secrets(service: str, names: Names, kit: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """``containers.secrets`` entries for a service, from :data:`SECRET_MAP`.
+
+    With ``kit``, an entry of :data:`OPTIONAL_SECRETS` the kit has no real value for is left out.
 
     The object name is fully qualified (``FLIP_TRUST_<CODE>.APP.<SECRET>``) because a
     service is created with the deploy role's session, whose current schema is not
@@ -234,6 +245,7 @@ def _secrets(service: str, names: Names) -> list[dict[str, Any]]:
             "secretKeyRef": "secret_string",  # pragma: allowlist secret
         }
         for secret, env_var in sorted(SECRET_MAP[service].items())
+        if not (secret in OPTIONAL_SECRETS and kit is not None and is_placeholder(kit.get(SECRET_KIT_VAR[secret], "")))
     ]
 
 
@@ -436,6 +448,8 @@ def _imaging_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> 
         # The C-MOVE destination DQR matches by exact AE title and port.
         "XNAT_AETITLE": kit.get("XNAT_AETITLE", "").strip() or "XNAT",
         "XNAT_SERVICE_USER": kit.get("XNAT_SERVICE_USER", ""),
+        # The download/upload routes' account (FLIP#2011); its password is a secret object.
+        "XNAT_DATA_USER": kit.get("XNAT_DATA_USER", "").strip() or "flip_data",
         "BASE_IMAGES_DOWNLOAD_DIR": "/app/data/images",
         # NIfTI conversion is an SPCS job service rather than an XNAT Container Service
         # launch (FLIP#1578, FLIP#1583): imaging-api CALLs APP.CONVERT_SCAN, polls
@@ -462,7 +476,7 @@ def _imaging_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> 
                         # reads it from here and PUTs it into XNAT as a NIFTI resource.
                         {"name": "converter-io", "mountPath": "/converter-io"},
                     ],
-                    "secrets": _secrets("imaging-api", names),
+                    "secrets": _secrets("imaging-api", names, kit),
                 }
             ],
             "endpoints": [{"name": "api", "port": 8000, "protocol": "HTTP", "public": False}],
@@ -825,6 +839,7 @@ def _job_container(
     *,
     cpu: str = "0.5",
     memory: str = "1Gi",
+    kit: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """A one-shot container that runs an inlined bash script.
 
@@ -841,7 +856,7 @@ def _job_container(
         "args": ["-c", script],
         "env": env,
         "resources": _resources(cpu, memory, cpu, memory),
-        "secrets": _secrets(name, names),
+        "secrets": _secrets(name, names, kit),
     }
 
 
@@ -857,6 +872,7 @@ def _xnat_configure(kit: dict[str, str], names: Names, digests: dict[str, str]) 
         "XNAT_URL": f"http://{names.dns('xnat-web')}:8080",
         "XNAT_ADMIN_USER": kit.get("XNAT_ADMIN_USER", "admin"),
         "XNAT_SERVICE_USER": kit.get("XNAT_SERVICE_USER", ""),
+        "XNAT_DATA_USER": kit.get("XNAT_DATA_USER", "").strip() or "flip_data",
         "XNAT_PORT": kit.get("XNAT_PORT", "8104"),
         "XNAT_AETITLE": kit.get("XNAT_AETITLE", "").strip() or "XNAT",
         # XNAT's factory password unless the kit names the one in force. Not a secret
@@ -877,6 +893,7 @@ def _xnat_configure(kit: dict[str, str], names: Names, digests: dict[str, str]) 
                     _script("xnat-configure-spcs.sh"),
                     env,
                     names,
+                    kit=kit,
                 )
             ],
             **_event_table_exports(),

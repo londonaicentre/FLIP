@@ -336,3 +336,42 @@ def test_the_example_carries_no_populated_secret():
         f"values-secrets.yaml.example must keep every slot empty; populated: {sorted(populated)}. "
         "Put the value in the generated values-secrets.yaml (gitignored), never here."
     )
+
+
+# ---- The XNAT data account (FLIP#2011) ----
+
+DATA_KEYS = ("xnat-data-user", "xnat-data-password")
+DATA_TEMPLATES = ("imaging-api.yaml", "xnat-init-job.yaml", "xnat-web.yaml")
+
+
+def _env_entries(template: Path, key: str) -> list[str]:
+    """Each env entry's text whose secretKeyRef names ``key``."""
+    entries = re.finditer(r"- name: \w+\n(?:\s+[^-\s][^\n]*\n)+", template.read_text())
+    return [m.group(0) for m in entries if f"key: {key}\n" in m.group(0)]
+
+
+def test_the_data_account_reaches_imaging_api_and_both_places_configure_xnat_runs():
+    for template in DATA_TEMPLATES:
+        for key in DATA_KEYS:
+            assert _env_entries(CHART_DIR / "templates" / template, key), f"{template} does not read {key}"
+
+
+def test_the_data_account_keys_are_optional_so_an_older_secret_still_starts_the_pods():
+    """A Secret from before FLIP#2011 has neither key: a required ref would be CreateContainerConfigError, taking
+    down imaging-api's provisioning and XNAT along with the downloads."""
+    for template in DATA_TEMPLATES:
+        for key in DATA_KEYS:
+            for entry in _env_entries(CHART_DIR / "templates" / template, key):
+                assert "optional: true" in entry, f"{template}: {key} must be optional"
+
+
+def test_sync_kit_carries_the_data_account_into_a_live_secret():
+    """upgrade-trust-k8s runs sync-kit before helm and xnat-init; it is what puts a freshly minted password in the
+    Secret of a trust deployed before the account existed."""
+    spec = importlib.util.spec_from_file_location("_sync_k8s_kit", CHART_DIR / "sync_k8s_kit.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.KIT_TO_SECRET_KEY["XNAT_DATA_USER"] == "xnat-data-user"
+    assert module.KIT_TO_SECRET_KEY["XNAT_DATA_PASSWORD"] == "xnat-data-password"  # pragma: allowlist secret

@@ -523,6 +523,33 @@ def write_tags(kit_file: Path, tag: str, fl_tag: str | None = None) -> None:
     tkl.write_secure(kit_file, lines)
 
 
+#: Trust-local passwords a release added after trusts were deployed, minted into a kit that lacks one, so the
+#: upgrade itself delivers them (no separate kit step). Only passwords a deploy *creates* belong here: one the
+#: running site already holds elsewhere (a database's) cannot be minted after the fact. The XNAT data account
+#: (FLIP#2011): configure-xnat.sh creates it, or resets its password, on the same upgrade.
+MINT_IF_MISSING = ("XNAT_DATA_PASSWORD",)
+
+
+def mint_missing_passwords(kit_file: Path) -> list[str]:
+    """Add each of :data:`MINT_IF_MISSING` the kit has no value for; returns their names (never the values).
+
+    A kit that already has one keeps it, whatever it is: rotating is the operator's step, not an upgrade's.
+    """
+    import secrets
+
+    kit = read_kit(kit_file)
+    missing = [key for key in MINT_IF_MISSING if not kit.get(key, "").strip()]
+    if not missing:
+        return []
+    lines = kit_file.read_text().split("\n")
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    for key in missing:
+        lines = tkl.upsert(lines, key, secrets.token_urlsafe(24))
+    tkl.write_secure(kit_file, lines)
+    return missing
+
+
 def _ask(prompt: str) -> str:
     """The operator's answer, lower-cased; an answer the terminal's encoding cannot decode counts as none.
 
@@ -656,6 +683,9 @@ def plan(args: argparse.Namespace) -> int:
 
     write_tags(kit_file, target, fl_tag)
     print(f"✅ {kit_file.name}: {pins}")
+    minted = mint_missing_passwords(kit_file)
+    if minted:
+        print(f"✅ {kit_file.name}: minted {', '.join(minted)} (new in this release; created in XNAT on this deploy)")
     return 0
 
 

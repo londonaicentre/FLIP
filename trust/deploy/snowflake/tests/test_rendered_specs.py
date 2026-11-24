@@ -53,13 +53,13 @@ JOB_SERVICES = {"dcm2niix", "xnat-configure", "seed-orthanc", "smoke-cstore", "r
 EXPECTED_SECRETS = {
     "trust-api": {"TRUST_API_KEY", "TRUST_INTERNAL_SERVICE_KEY", "AES_KEY_BASE64"},
     "data-access-api": {"TRUST_INTERNAL_SERVICE_KEY", "AES_KEY_BASE64"},
-    "imaging-api": {"TRUST_INTERNAL_SERVICE_KEY", "AES_KEY_BASE64", "XNAT_SERVICE_PASSWORD"},
+    "imaging-api": {"TRUST_INTERNAL_SERVICE_KEY", "AES_KEY_BASE64", "XNAT_SERVICE_PASSWORD", "XNAT_DATA_PASSWORD"},
     "fl-client-net-1": {"TRUST_INTERNAL_SERVICE_KEY"},
     "xnat-web": {"XNAT_ADMIN_PASSWORD", "XNAT_SERVICE_PASSWORD", "XNAT_DB_PASSWORD"},
     "xnat-db": {"XNAT_DB_ADMIN_PASSWORD", "XNAT_DB_PASSWORD"},
     "orthanc": {"ORTHANC_REGISTERED_USERS"},
     "dcm2niix": set(),
-    "xnat-configure": {"XNAT_ADMIN_PASSWORD", "XNAT_SERVICE_PASSWORD"},
+    "xnat-configure": {"XNAT_ADMIN_PASSWORD", "XNAT_SERVICE_PASSWORD", "XNAT_DATA_PASSWORD"},
     "seed-orthanc": {"ORTHANC_PASSWORD"},
     "smoke-cstore": {"ORTHANC_PASSWORD", "XNAT_SERVICE_PASSWORD"},
     "reconvert": {"TRUST_INTERNAL_SERVICE_KEY", "AES_KEY_BASE64", "XNAT_SERVICE_PASSWORD"},
@@ -272,6 +272,28 @@ def test_specs_reference_digests_once_images_are_mirrored(kit: dict, tmp_path: P
 
     spec = yaml.safe_load((tmp_path / "trust-api.yaml").read_text())
     assert spec["spec"]["containers"][0]["image"].endswith(f"@{digest}")
+
+
+def test_the_data_account_user_reaches_imaging_api_and_xnat_configure(specs: dict) -> None:
+    """FLIP#2011: both sides must agree on the account name; its password is a secret object."""
+    for service in ("imaging-api", "xnat-configure"):
+        env = specs[service]["spec"]["containers"][0]["env"]
+        assert env["XNAT_DATA_USER"] == "flip_data", service
+        assert "XNAT_DATA_PASSWORD" not in env, service
+
+
+def test_a_kit_without_the_data_password_still_renders_and_says_so(
+    kit: dict, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A kit from before FLIP#2011: no secret object exists for it, so no spec may name one (CREATE SERVICE would
+    fail). imaging-api starts without it and refuses the data routes, and the render warns."""
+    from render_specs import render
+
+    manifest = render({k: v for k, v in kit.items() if k != "XNAT_DATA_PASSWORD"}, "GSTT", "stag", tmp_path, {})
+    named = {s["name"]: s["secrets"] for s in manifest["services"]}
+    assert not any(obj.endswith(".XNAT_DATA_PASSWORD") for secrets in named.values() for obj in secrets)
+    assert "FLIP_TRUST_GSTT.APP.XNAT_SERVICE_PASSWORD" in named["imaging-api"]
+    assert "no XNAT_DATA_PASSWORD" in capsys.readouterr().err
 
 
 def test_job_service_runs_on_the_job_pool_and_holds_nothing(specs: dict, manifest: dict) -> None:

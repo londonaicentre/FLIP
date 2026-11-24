@@ -55,6 +55,9 @@ services:
       - XNAT_ADMIN_PASSWORD=${XNAT_ADMIN_PASSWORD}
       - XNAT_SERVICE_USER=${XNAT_SERVICE_USER}
       - XNAT_SERVICE_PASSWORD=${XNAT_SERVICE_PASSWORD}
+      # configure-xnat.sh creates the data account (FLIP#2011); empty skips it with a warning.
+      - XNAT_DATA_USER=${XNAT_DATA_USER:-flip_data}
+      - XNAT_DATA_PASSWORD=${XNAT_DATA_PASSWORD:-}
       - XNAT_PORT=${XNAT_PORT}
       - XNAT_AETITLE=${XNAT_AETITLE-FLIP_XNAT}
       # Upstream PACS, read by configure-xnat.sh. Defaults are the mocked Orthanc, so an

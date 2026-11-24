@@ -85,6 +85,11 @@ KIT_TO_SECRET_KEY = {  # maps env-var name -> Secret key (names only, no values)
     "TRUST_INTERNAL_SERVICE_KEY": "trust-internal-service-key",  # pragma: allowlist secret
     "TRUST_INTERNAL_SERVICE_KEY_HEADER": "trust-internal-service-key-header",  # pragma: allowlist secret
     "AES_KEY_BASE64": "aes-key-base64",  # pragma: allowlist secret
+    # The XNAT data account (FLIP#2011). A kit-owned value like the keys above, and minted after a trust was
+    # first deployed (an upgrade verb adds it), so sync-kit, which upgrade-trust-k8s runs first, is what puts
+    # it in a live Secret before xnat-init creates the account.
+    "XNAT_DATA_USER": "xnat-data-user",
+    "XNAT_DATA_PASSWORD": "xnat-data-password",  # pragma: allowlist secret
 }
 
 # Kit keys that must hold a real value (not a scaffolding placeholder) before a

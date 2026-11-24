@@ -114,6 +114,20 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-service-password
+            # The data account (FLIP#2011). optional: a Secret from before it has no such key, and the pod must still
+            # start; imaging-api then refuses the data routes with a 503 naming the account, and xnat-init skips it.
+            - name: XNAT_DATA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-data-user
+                  optional: true
+            - name: XNAT_DATA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-data-password
+                  optional: true
             - name: AES_KEY_BASE64
               valueFrom:
                 secretKeyRef:
