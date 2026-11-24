@@ -15,12 +15,16 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlmodel import Session, col
 
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Projects
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.status import ProjectStatus, ProjectType
-from flip_api.project_services.get_projects import get_projects_endpoint, get_projects_paginated_orm
+from flip_api.project_services.get_projects import get_projects_endpoint, get_projects_paginated_orm, router
 from flip_api.utils.paging_utils import FilterInfo, paging_params
 
 paging_details = paging_params()
@@ -429,3 +433,42 @@ def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
     # No projectType filter: neither polarity is constrained.
     assert not selects_on_has_imaging(None, True)
     assert not selects_on_has_imaging(None, False)
+
+
+@pytest.fixture
+def projects_client():
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[verify_token] = uuid.uuid4
+    app.dependency_overrides[get_session] = lambda: MagicMock(spec=Session)
+    return TestClient(app)
+
+
+@patch("flip_api.project_services.get_projects.get_projects_paginated_orm")
+@patch("flip_api.project_services.get_projects.has_permissions", return_value=False)
+def test_get_projects_route_reads_the_query_params_the_ui_sends(
+    mock_has_permissions: MagicMock, mock_get_projects_paginated_orm: MagicMock, projects_client: TestClient
+):
+    """The UI's `owner` and `projectType` reach the filter; a misspelt alias would drop it silently."""
+    owner = uuid.uuid4()
+    mock_get_projects_paginated_orm.return_value = MagicMock(data=[], total_rows=0)
+
+    response = projects_client.get(
+        "/projects", params={"owner": str(owner), "projectType": "omop_only", "pageSize": 5, "search": "ct"}
+    )
+
+    assert response.status_code == 200
+    _, kwargs = mock_get_projects_paginated_orm.call_args
+    assert kwargs["filter_details"] == FilterInfo(owner=owner, project_type=ProjectType.OMOP_ONLY)
+    assert kwargs["paging_details"].page_size == 5
+    assert kwargs["paging_details"].search_str == "ct"
+
+
+@pytest.mark.parametrize("params", [{"projectType": "bogus"}, {"owner": "not-a-uuid"}, {"pageSize": 0}])
+@patch("flip_api.project_services.get_projects.get_projects_paginated_orm")
+def test_get_projects_route_refuses_a_malformed_filter(
+    mock_get_projects_paginated_orm: MagicMock, params: dict, projects_client: TestClient
+):
+    """A bad filter is a 422, never a silent fall-back to the unfiltered list."""
+    assert projects_client.get("/projects", params=params).status_code == 422
+    mock_get_projects_paginated_orm.assert_not_called()
