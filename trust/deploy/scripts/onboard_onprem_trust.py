@@ -356,13 +356,11 @@ def fetch_local_trust_health(port: str, timeout: float = 3.0) -> dict:
 # ─────────────────────────────────────────────────────────────────────
 
 PROBE_TIMEOUT_SECONDS = 4.0
-# Both hosts of each registry: ghcr.io alone passes while every pull fails on the layer host.
+# Both hosts of the one registry a trust pulls from (FLIP#1721): ghcr.io alone passes while every
+# pull fails on the layer host.
 REGISTRY_HOSTS: tuple[str, ...] = (
     "ghcr.io",
     "pkg-containers.githubusercontent.com",
-    "registry-1.docker.io",
-    "auth.docker.io",
-    "production.cloudfront.docker.com",
 )
 EGRESS_DOC = "the egress list on docs → Deploy a trust node → Network requirements"
 EGRESS_IP_URL = "https://checkip.amazonaws.com"
@@ -502,9 +500,8 @@ def check_registries_reachable() -> Check:
         Status.WARN,
         "; ".join(f"{host}: {why}" for host, why in unreachable.items()),
         hints=[
-            "ghcr.io + pkg-containers.githubusercontent.com serve FLIP's images; the docker.io hosts the"
-            " logging stack, XNAT's socket proxy and the alpine image xnat-backup runs. Pulls need both hosts"
-            " of a registry.",
+            "ghcr.io + pkg-containers.githubusercontent.com serve every image a trust runs: FLIP's own and"
+            " its mirrors of the third-party ones (FLIP#1721). Pulls need both hosts.",
             f"Allow them outbound ({EGRESS_DOC}), or agree an image mirror with the FLIP team (FLIP#1721).",
         ],
     )

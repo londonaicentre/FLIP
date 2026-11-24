@@ -177,7 +177,7 @@ class XnatDbMajorUpgrade(unittest.TestCase):
 
 # A stand-in for the docker CLI, just enough of it for xnat-backup: `ps` finds the db by its service
 # label (NO_DB hides it), `exec` is the db container's `pg_dumpall | gzip` (DUMP=ok|fail|truncated),
-# `context` is a local daemon, and `run alpine …` runs the command here — under bash, as the
+# `context` is a local daemon, and `run <HOST_TOOLS_IMAGE> …` runs the command here — under bash, as the
 # containers' busybox sh has pipefail and dash does not — with each `-v src:dst` mount rewritten
 # to its host path.
 STUB_DOCKER = r"""#!/bin/bash
@@ -205,7 +205,7 @@ case "$1" in
         --rm|-i) shift ;;
         --user) [ -n "$RUN_USERS" ] && echo "$2" >> "$RUN_USERS"; shift 2 ;;
         -v) mounts+=("$2"); shift 2 ;;
-        alpine:*) shift; break ;;
+        ghcr.io/londonaicentre/mirror/library/busybox:*@sha256:*) shift; break ;;
         *) shift ;;
       esac
     done
