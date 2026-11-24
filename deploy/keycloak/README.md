@@ -6,7 +6,7 @@
 `flip-realm.json` is the FLIP development realm (FLIP#919). It is the local stand-in for the
 Cognito user pool used in staging and production.
 
-The `keycloak` service in `deploy/compose.development.yml` imports it at every boot
+The `keycloak` service in `deploy/compose/compose.development.yml` imports it at every boot
 (`start-dev --import-realm`) and keeps no volume. This file in git is therefore the whole state
 of the dev identity provider.
 

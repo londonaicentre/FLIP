@@ -48,7 +48,7 @@ cd docs && make test     # pytest over tests/ + ruff over scripts/, tests/, conf
 ```
 
 The build needs graphviz (`dot`) on PATH: `conf.py`'s `builder-inited` hook renders the Central Hub AWS
-diagrams from `deploy/providers/AWS/architecture/central_hub.py` into the gitignored
+diagrams from `deploy/aws/architecture/central_hub.py` into the gitignored
 `source/assets/generated/` and fails loudly without it (ReadTheDocs installs it via `build.apt_packages`,
 the CI jobs via `.github/actions/install-graphviz`, which retries a mirror outage, FLIP#1988). A ReadTheDocs build
 that fails in its `apt_packages` step (`apt-get update`, `Failed to fetch … archive.ubuntu.com`) never reached

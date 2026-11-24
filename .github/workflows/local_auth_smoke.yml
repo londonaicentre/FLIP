@@ -27,7 +27,7 @@ on:
       - "flip-api/**"
       # flip-api's image build copies the fl-apps/ tree.
       - "fl-apps/**"
-      - "deploy/compose.development.yml"
+      - "deploy/compose/compose.development.yml"
       - "deploy/keycloak/**"
       - "deploy/instance.mk"
       - "deploy/env_mode.mk"
@@ -60,7 +60,7 @@ jobs:
       paths: |
         flip-api/**
         fl-apps/**
-        deploy/compose.development.yml
+        deploy/compose/compose.development.yml
         deploy/keycloak/**
         deploy/instance.mk
         deploy/env_mode.mk
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      COMPOSE: docker compose -p deploy -f deploy/compose.development.yml
+      COMPOSE: docker compose -p deploy --project-directory deploy -f deploy/compose/compose.development.yml
 
     steps:
       - name: Checkout

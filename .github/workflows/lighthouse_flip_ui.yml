@@ -71,7 +71,7 @@ jobs:
         working-directory: ./flip-ui
 
     env:
-      COMPOSE: docker compose -p deploy -f deploy/compose.development.yml
+      COMPOSE: docker compose -p deploy --project-directory deploy -f deploy/compose/compose.development.yml
       # `vite preview`'s origin. The hub env file sets UI_PORT to it, so the dev
       # realm registers it as a flip-ui redirect URI — which doubles as flip-api's
       # CORS allowlist and Keycloak's web origins.

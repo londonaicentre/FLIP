@@ -43,7 +43,7 @@ The commands, from the repo root:
 ```bash
 # Hub side, once (FLIP admin) — produces trust/.env.<CODE>.<env>
 make new-trust TRUST_CODE=<CODE> TRUST_NAME="<Human Name>" HUB=<env>
-make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
+make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>
 make sync-trust-kit KIT=<CODE> HUB=<env>
 
 # Cluster side (trust operator)

@@ -72,7 +72,7 @@ def admin_authentication():
     except client.exceptions.InvalidParameterException as e:
         if "USER_PASSWORD_AUTH" not in str(e):
             raise  # another parameter error (a missing PASSWORD, say): surface it, never return None
-        # FLIP's pool never allows USER_PASSWORD_AUTH (deploy/providers/AWS/modules/cognito/main.tf
+        # FLIP's pool never allows USER_PASSWORD_AUTH (deploy/aws/modules/cognito/main.tf
         # lists USER_AUTH, SRP and ADMIN_USER_PASSWORD only), so the first call always lands here.
         # USER_PASSWORD_AUTH is not enabled on the app client. Try the choice-based USER_AUTH
         # flow next (ALLOW_USER_AUTH, answered with the password): it is a client-side flow,

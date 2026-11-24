@@ -26,7 +26,7 @@ TF := terraform
 ANSIBLE_DIR := $(REPO_ROOT)/trust/deploy/ansible
 # Ansible from the AWS tree's locked uv project, which the on-prem play uses too, until FLIP#1438
 # PR 3 gives the trust side its own.
-ANSIBLE := uv run --project $(REPO_ROOT)/deploy/providers/AWS
+ANSIBLE := uv run --project $(REPO_ROOT)/deploy/aws
 
 KIT ?=
 # Checked when parsed: every target derives NAME and the kit file from KIT. A KIT holding spaces is

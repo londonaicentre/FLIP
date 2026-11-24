@@ -80,7 +80,7 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 - No AWS account for `make up`: sign-in is the local Keycloak, object storage the local RustFS container (see
   [Environment variables](#environment-variables)), and the two example Trusts' XNAT plugins are public upstream
   downloads that `make -C trust prepare-artifacts` fetches once, checksum-verified. The AWS CLI with SSO is only for
-  the AWS-backed targets: the optional OMOP vocabulary load, FL kit uploads and `deploy/providers/AWS`
+  the AWS-backed targets: the optional OMOP vocabulary load, FL kit uploads and `deploy/aws`
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
@@ -239,7 +239,7 @@ that `uv lock` fails instead. When you fix an alert:
 - **Add one in any project that ships**, meaning a service image, an FL image, `flip-utils`, `flip-ui` or
   `trust/xnat/export-mask`. A transitive Python fix goes in `constraint-dependencies` with the advisory IDs beside it;
   a transitive npm fix goes in `overrides`.
-- **Leave dev and docs tooling lock-only** (`docs/`, `deploy/providers/AWS/`, dev-only groups) unless the first rule
+- **Leave dev and docs tooling lock-only** (`docs/`, `deploy/aws/`, dev-only groups) unless the first rule
   applies. None of it ships.
 
 `constraint-dependencies` is read only by uv. Every service and FL image installs from its uv lockfile (the Flower
@@ -279,7 +279,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Group | Required development values |
 | --- | --- |
 | AWS region | `AWS_REGION` — what SigV4 signs with; the dev object store accepts any. `AWS_PROFILE` stays commented out unless you run an AWS-backed target (below) |
-| Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
+| Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
 | FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and kit staging onto an AWS node; leave it commented out for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
@@ -292,7 +292,7 @@ it pre-creates `jobs/`. flip-api and both fl-servers reach it through boto3's na
 static dev keys, and the fl-apis through the presigned bundle URLs flip-api signs for it, so model uploads and
 scanning, FL app bundles, training and results download run the same code as production, against a local store. `ls object-store/<bucket>/` shows the key tree
 (each object in RustFS's own on-disk format); `http://localhost:9001` browses it (sign in with the two keys from
-`deploy/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
+`deploy/compose/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
 `OBJECT_STORE_SECRET_KEY` are set); `make clean-object-store` empties it; a second stack moves `OBJECT_STORE_PORT` and
 `OBJECT_STORE_CONSOLE_PORT` (and `OBJECT_STORE_DIR` if it must not share the directory). One detail is worth knowing: presigned URLs are signed for the host they will be
 opened from — the browser's for `localhost:9000` (`S3_PUBLIC_ENDPOINT_URL`), the fl-api's for `object-store:9000`,
@@ -303,7 +303,7 @@ the public endpoint is unset there, so every audience signs against the one endp
 
 **The dev hub mounts nothing from `~/.aws` and reaches no AWS service** — sign-in (Keycloak), email (console) and
 object storage (RustFS) are all local, and so are the Trusts' XNAT plugins once `make -C trust prepare-artifacts` has
-downloaded them from upstream. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the optional OMOP
+downloaded them from upstream. The AWS-backed *targets* — `deploy/aws`, FL kit uploads, the optional OMOP
 vocabulary fetch — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up` no longer
 runs. Authorised FLIP developers can use the shared development values for those; other deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
@@ -322,7 +322,7 @@ table is the capability matrix behind it.
 | OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | AI Centre developers: the `dev` AWS profile (`FLIPDeveloperAccess`, see [Setting up AWS access](#setting-up-aws-access)) | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
 | Participant kits for remote or EC2 Trusts (`make -C trust/deploy/terraform/aws/ec2 stage-kit KIT=<CODE> KIT_BUCKET=<bucket>`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
 | Testing SES or Cognito themselves | A staging environment | Not testable in development: flip-api pins `EMAIL_BACKEND=console` and `AUTH_BACKEND=keycloak` there |
-| `deploy/providers/AWS` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
+| `deploy/aws` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
 
 **Email needs no configuration in development** (FLIP#919). flip-api pins `EMAIL_BACKEND=console` in dev (`DevSettings` rejects `ses` at boot), which
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
@@ -417,7 +417,7 @@ Some services (e.g. `flip-api`) interact with AWS via `boto3` in staging and pro
 of them does: sign-in is the local Keycloak, email the console backend and object storage the local RustFS
 container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291), and the example Trusts' XNAT plugins
 are public upstream downloads (FLIP#1292). AWS SSO is needed only for the optional OMOP vocabulary fetch, FL kit
-uploads and the `deploy/providers/AWS` targets, which `make check-aws-access` guards.
+uploads and the `deploy/aws` targets, which `make check-aws-access` guards.
 
 AI Centre developers: the vocabulary needs only the `dev` profile, whose `FLIPDeveloperAccess` role can read the
 vocabulary bucket and nothing else. Add it to `~/.aws/config` as in Step 3 of
@@ -500,22 +500,22 @@ gate re-runs every suite.
 ### Checkov security lint (Terraform)
 
 `validate_terraform.yml` carries a `Checkov Security Lint` job (FLIP#1052 + the FLIP#1058 triage) alongside
-`fmt`/`validate`: a curated checkov check list runs statically over `deploy/providers/AWS/**` and **fails the
+`fmt`/`validate`: a curated checkov check list runs statically over `deploy/aws/**` and **fails the
 PR's CI** on a regression. It covers IAM policy content — overly-broad statements such as a wildcard `Resource`/`Action` on a
 restrictable data-access action, data exfiltration or privilege-escalation shapes, on both policy syntaxes
 (`data "aws_iam_policy_document"` blocks and `jsonencode()` policies) — plus a small promoted set of
 infrastructure-posture checks (IMDSv2-only EC2, module version pinning, HSTS, WAF Log4j rule, SSM/KMS posture).
 No cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
 (e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
-`make checkov-lint`, from the repo root or `-C deploy/providers/AWS`, or with `make -C deploy/providers/AWS lint`,
+`make checkov-lint`, from the repo root or `-C deploy/aws`, or with `make -C deploy/aws lint`,
 which also runs terraform fmt and tflint (both must be installed). None needs the gitignored deploy env files.
 
 Deliberate breadth or posture is acknowledged **in-code, with a rationale**, never by weakening the check list:
 put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check
 list — including the classes triaged in FLIP#1058 and deliberately *not* promoted — lives in
-`deploy/providers/AWS/scripts/checkov_lint.sh`, which self-tests against a canary fixture before scanning so a
+`deploy/aws/scripts/checkov_lint.sh`, which self-tests against a canary fixture before scanning so a
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
-IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
+IDs, skip rationale, canary) are regression-tested by `deploy/aws/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
 
 ### Snowflake trust roots (Terraform)
@@ -565,19 +565,19 @@ variable. Read both READMEs before changing either: secrets are written by `make
 
 ### TFLint (Terraform)
 
-`validate_terraform.yml` also runs **tflint** over `deploy/providers/AWS` — the bundled `terraform` ruleset
-(recommended preset) plus the AWS ruleset, configured in `deploy/providers/AWS/.tflint.hcl`. It catches what
+`validate_terraform.yml` also runs **tflint** over `deploy/aws` — the bundled `terraform` ruleset
+(recommended preset) plus the AWS ruleset, configured in `deploy/aws/.tflint.hcl`. It catches what
 `terraform validate` accepts: a variable nothing reads, a module with no provider version constraint, an AWS
 argument value the API would reject at apply time. Every directory holding `.tf` files is linted on its own, so
 a module is checked even where no root calls it. Run it locally with `make tflint-lint` (repo root or
-`-C deploy/providers/AWS`, or as part of `make -C deploy/providers/AWS lint`); it needs tflint at the version
-pinned in `deploy/providers/AWS/scripts/tflint_lint.sh` (release binaries on GitHub — Homebrew no longer
+`-C deploy/aws`, or as part of `make -C deploy/aws lint`); it needs tflint at the version
+pinned in `deploy/aws/scripts/tflint_lint.sh` (release binaries on GitHub — Homebrew no longer
 packages it) and downloads the pinned AWS ruleset plugin on first run.
 
 A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on the line above the
 flagged block, never by disabling the rule in `.tflint.hcl` (the rationale needs that second `#`: any other
 separator, such as `-- why`, makes tflint ignore the annotation). Removing an unused root variable means
-removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AWS/Makefile`, the key in
+removing its whole input chain too: the `TF_VAR_` export in `deploy/aws/Makefile`, the key in
 `scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and `scripts/reconcile_ci_env.py` — and
 deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
 against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
@@ -702,7 +702,7 @@ uv run ruff check . --fix
 uv run mypy .
 ```
 
-CI also runs `ruff check` and `ruff format --check` over every tracked Python file ([`lint_python.yml`](.github/workflows/lint_python.yml)). It is the only lint for the files outside a service directory — `scripts/`, `deploy/providers/AWS/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/` and the rest — and the only format check covering the whole repo. It never auto-fixes, so a fixable error fails it even where a service's own `make test` would have fixed it silently. Reproduce it from the repository root, with ruff pinned to the version CI uses:
+CI also runs `ruff check` and `ruff format --check` over every tracked Python file ([`lint_python.yml`](.github/workflows/lint_python.yml)). It is the only lint for the files outside a service directory — `scripts/`, `deploy/aws/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/` and the rest — and the only format check covering the whole repo. It never auto-fixes, so a fixable error fails it even where a service's own `make test` would have fixed it silently. Reproduce it from the repository root, with ruff pinned to the version CI uses:
 
 ```bash
 git ls-files -z -- '*.py' '*.pyi' | xargs -0 uvx ruff@0.14.7 check --force-exclude
@@ -903,7 +903,7 @@ FastAPI `TestClient` on its own does **not** make a test "integration" — what 
 
 This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests/`, `trust/imaging-api/tests/`, `trust/data-access-api/tests/`, etc.
 
-The same mirroring holds everywhere, not just in the services: a test sits in the `tests/` directory of the tree it tests, at the same relative path, named `test_<file>.py` after the one file it exercises — `trust/deploy/helm/scripts/generate_values.py` → `trust/deploy/helm/tests/scripts/test_generate_values.py`. For a file that is not Python, name the test after the file: a Makefile's contract tests are `test_makefile.py` in the `tests/` beside it (`tests/`, `trust/tests/`, `trust/xnat/tests/`, `deploy/providers/AWS/tests/`), and workflows and actions are tested under `.github/tests/` (`workflows/test_release.py` for `release.yml`, `actions/test_release_tag_guard.py` for the `release-tag-guard` action). The repo-level `tests/` and `.github/tests/` trees run in `.github/workflows/test_trust_kit_scripts.yml`.
+The same mirroring holds everywhere, not just in the services: a test sits in the `tests/` directory of the tree it tests, at the same relative path, named `test_<file>.py` after the one file it exercises — `trust/deploy/helm/scripts/generate_values.py` → `trust/deploy/helm/tests/scripts/test_generate_values.py`. For a file that is not Python, name the test after the file: a Makefile's contract tests are `test_makefile.py` in the `tests/` beside it (`tests/`, `trust/tests/`, `trust/xnat/tests/`, `deploy/aws/tests/`), and workflows and actions are tested under `.github/tests/` (`workflows/test_release.py` for `release.yml`, `actions/test_release_tag_guard.py` for the `release-tag-guard` action). The repo-level `tests/` and `.github/tests/` trees run in `.github/workflows/test_trust_kit_scripts.yml`.
 
 ##### Tests for FL tutorials and app templates
 
@@ -999,7 +999,7 @@ Releases are cut from `main`. The version is set in the root `pyproject.toml`, a
 
 - **The release job runs as long as the slowest image build** (xnat-web, ~30 min). A red build, or an expired wait budget, fails the release job and names what to re-run; production stays on the sha pin it got from the push apply. Re-running `release.yml` is safe — everything after the tag is keyed on the GitHub Release not existing, so a re-run re-dispatches the builds and re-tries the apply.
 - **Nothing may merge to `main` during the wait.** The release apply runs `main` as it is when the dispatch fires, so a hotfix merged in that window would have the *release's* images applied over its code — a silent production rollback. Both ends refuse it: `release.yml` checks `main`'s HEAD before dispatching, and `terraform_apply.yml` refuses unless `release_tag` resolves to the very commit it has checked out. Recovery is to cut a release from the newer commit, not to re-run the old one.
-- **The release apply can hold on the FL gate.** Re-pinning changes the FL task-definition tag, which `deploy/providers/AWS/scripts/check-fl-plan-impact.sh` treats as FL-affecting, so the apply holds for an operator attestation. Quiesce FL and re-dispatch `terraform_apply.yml` with both `fl_quiesced: true` and the same `release_tag` — see [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md#release-applies-pinning-vxyz-instead-of-the-sha-flip1283).
+- **The release apply can hold on the FL gate.** Re-pinning changes the FL task-definition tag, which `deploy/aws/scripts/check-fl-plan-impact.sh` treats as FL-affecting, so the apply holds for an operator attestation. Quiesce FL and re-dispatch `terraform_apply.yml` with both `fl_quiesced: true` and the same `release_tag` — see [`deploy/aws/README.md`](deploy/aws/README.md#release-applies-pinning-vxyz-instead-of-the-sha-flip1283).
 
 ### Two release trains, two tag namespaces
 
@@ -1034,7 +1034,7 @@ Each service has its own version string:
 
 These **follow the root version**: every release sets each of them to the release version, whether or not that service changed, so all the services of a release carry one number. Per-service versions are informational (deployments select images by tag, not by version string). What a running container *reports* as its version is different: the service images (flip-api, trust-api, imaging-api, data-access-api and both FL APIs) bake `FLIP_RELEASE` — the `v<X.Y.Z>` release tag, or the `sha-<short7>` tag of a branch build — and their `/health` returns that, so a container names its build rather than a pyproject number two builds can share, and the Connection Status page names the build a site runs (FLIP#1204). A local build carries no `FLIP_RELEASE` and falls back to the pyproject version.
 
-The tooling and scaffolding projects — `trust/omop-db` (`omop-db-tools`), the dataset tooling under `fl-tutorials/datasets/`, the tutorial and `fl-apps` projects, `docs/`, `deploy/providers/AWS/` and `trust/xnat/tests/` — carry a placeholder version (`0.1.0` or `1.0.0`) that a release does not bump and nothing reads. The omop-db image does not install `omop-db-tools`; like every image, it is versioned by its tag, and a release publishes it at `:v<X.Y.Z>`.
+The tooling and scaffolding projects — `trust/omop-db` (`omop-db-tools`), the dataset tooling under `fl-tutorials/datasets/`, the tutorial and `fl-apps` projects, `docs/`, `deploy/aws/` and `trust/xnat/tests/` — carry a placeholder version (`0.1.0` or `1.0.0`) that a release does not bump and nothing reads. The omop-db image does not install `omop-db-tools`; like every image, it is versioned by its tag, and a release publishes it at `:v<X.Y.Z>`.
 
 ### Pre-release checklist
 
@@ -1083,7 +1083,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 
 The release is not deployed by merging. Two steps, in this order:
 
-1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI ships with the release apply: the `ui` job of `terraform_apply.yml` publishes it from the tagged commit once that apply succeeds, so a held apply holds the UI too (FLIP#1186). The user menu then shows `v<X.Y.Z>`. If the `ui` job fails, re-run it from the apply run, or run `make -C deploy/providers/AWS deploy-ui HUB=prod` from a checkout at the tag. If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
+1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/aws deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI ships with the release apply: the `ui` job of `terraform_apply.yml` publishes it from the tagged commit once that apply succeeds, so a held apply holds the UI too (FLIP#1186). The user menu then shows `v<X.Y.Z>`. If the `ui` job fails, re-run it from the apply run, or run `make -C deploy/aws deploy-ui HUB=prod` from a checkout at the tag. If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/aws/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=prod`.
 1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; an EC2 node: `make -C trust/deploy/terraform/aws/ec2 upgrade`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`. A release that moves `xnat-db` to a newer PostgreSQL major (12 to 16, FLIP#1812) dumps and restores XNAT's database inside that same upgrade and keeps the old cluster for a rollback; say so in the *Site upgrade* section, since `make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> YES=1` (Helm: `make -C trust/deploy/helm xnat-db-remove-old-cluster YES=1`) is the operator's last step once the site is confirmed.
 
 ### Release notes
@@ -1105,7 +1105,7 @@ Full detail — the per-PR gates, the trusted-publishing setup, and the `release
 
 ### Deploying the release
 
-Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml`, FLIP#962); the hub's ECS services move to the release with `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` and the sites follow on their operators' command — see [Rolling the release out](#rolling-the-release-out) above and [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for the hub-side detail (Deployment Mode, rollback). For staging, no release tag is required: merging to `develop` publishes `:stag` images and applies stag automatically; a stag site can be moved to a specific build with `TAG=sha-<short7>`.
+Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml`, FLIP#962); the hub's ECS services move to the release with `make -C deploy/aws deploy-centralhub HUB=prod TAG=v<X.Y.Z>` and the sites follow on their operators' command — see [Rolling the release out](#rolling-the-release-out) above and [`deploy/aws/README.md`](deploy/aws/README.md) for the hub-side detail (Deployment Mode, rollback). For staging, no release tag is required: merging to `develop` publishes `:stag` images and applies stag automatically; a stag site can be moved to a specific build with `TAG=sha-<short7>`.
 
 ### Hotfixes
 
@@ -1142,7 +1142,7 @@ A candidate proves the **push** path. The real release goes through the **dispat
 To extend the platform with a new service, add a definition to the appropriate Docker Compose file:
 
 ```yml
-# deploy/compose.development.yml
+# deploy/compose/compose.development.yml
 services:
   new-service:
     build:
@@ -1175,7 +1175,7 @@ Optionally add Makefile shortcuts at the repository root:
 
 ```makefile
 new-service:
-    docker compose -f deploy/compose.development.yml up -d new-service
+    docker compose --project-directory deploy -f deploy/compose/compose.development.yml up -d new-service
 ```
 
 ## Creating test data for manual testing
@@ -1220,10 +1220,10 @@ The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs
 [`docs/README.md`](docs/README.md)). Two things about that build are easy to trip over:
 
 - It needs **graphviz** (`dot` on PATH). `docs/source/conf.py` renders the Central Hub AWS diagrams from
-  `deploy/providers/AWS/architecture/central_hub.py` at build time — no PNG is committed for the site — and
+  `deploy/aws/architecture/central_hub.py` at build time — no PNG is committed for the site — and
   fails loudly without it. `FLIP_DOCS_SKIP_DIAGRAMS=1 make -C docs docs` gives a text-only build on a host
   without graphviz. ReadTheDocs and the docs CI job install graphviz themselves.
-- Those diagrams are **drift-guarded against the Terraform**: `deploy/providers/AWS/tests/test_architecture_diagram.py`
+- Those diagrams are **drift-guarded against the Terraform**: `deploy/aws/tests/test_architecture_diagram.py`
   fails when a drawn resource disappears from the `.tf` files or a load-bearing one (an ECS service, bucket,
   load balancer, …) is added without being drawn. A Terraform change of that kind updates
   `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed

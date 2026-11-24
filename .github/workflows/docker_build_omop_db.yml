@@ -104,7 +104,7 @@ jobs:
           [[ -n "$SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
 
           # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish.
-          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          # Length 7 must match the tag resolution in deploy/aws/Makefile.
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
 
           # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".

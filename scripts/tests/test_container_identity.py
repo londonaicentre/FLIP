@@ -73,8 +73,8 @@ NVFLARE_CLIENT_COMPOSE_FILES = (
 )
 
 DEV_COMPOSE_FILES = (
-    "deploy/compose.development.nvflare.yml",
-    "deploy/compose.development.flower.yml",
+    "deploy/compose/compose.development.nvflare.yml",
+    "deploy/compose/compose.development.flower.yml",
     "trust/deploy/compose/compose_trust.development.nvflare.yml",
     "fl-services/nvflare/compose.dev.yml",
 )
@@ -83,11 +83,11 @@ DEV_COMPOSE_FILES = (
 # host-provisioned material and shares host-owned bind mounts with flip-api, so a root
 # process in them rewrites the operator's own files as root (FLIP#1320).
 NON_ROOT_DEV_SERVICES = {
-    "deploy/compose.development.flower.yml": ("fl-server-net-1", "fl-server-net-2"),
+    "deploy/compose/compose.development.flower.yml": ("fl-server-net-1", "fl-server-net-2"),
 }
 
 PROD_COMPOSE_GLOBS = (
-    "deploy/compose.prod*.yml",
+    "deploy/compose/compose.prod*.yml",
     "trust/deploy/compose/compose_trust.prod*.yml",
     "trust/xnat/docker-compose-stack.prod.yml",
 )

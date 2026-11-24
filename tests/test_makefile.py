@@ -53,7 +53,7 @@ def hub_only_networks() -> set[str]:
     names: dict[str, str] = {}
     section = entry = None
     in_networks = False
-    for line in (REPO / "deploy" / "compose.development.yml").read_text().splitlines():
+    for line in (REPO / "deploy" / "compose" / "compose.development.yml").read_text().splitlines():
         if top := re.match(r"^([\w-]+):", line):
             section, entry = top[1], None
         elif key := re.match(r"^  ([\w-]+):\s*$", line):
@@ -89,7 +89,7 @@ class BuildTrue(unittest.TestCase):
 
     def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
         services = {
-            **repo_built_services("deploy/compose.development.yml"),
+            **repo_built_services("deploy/compose/compose.development.yml"),
             **repo_built_services("trust/deploy/compose/compose_trust.development.yml"),
         }
         assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()
@@ -271,7 +271,7 @@ AWS_STUB_ENV = {
     "FL_API_KEY": "probe",  # pragma: allowlist secret
     "MANAGE_DNS": "false",
 }
-AWS = "deploy/providers/AWS"
+AWS = "deploy/aws"
 KIT = (
     "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
     "FL_KIT_SLOT=Trust_9\n"
@@ -291,7 +291,7 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
-            "deploy/providers/AWS/Makefile",
+            "deploy/aws/Makefile",
             "deploy/portable.mk",
             "flip-api/Makefile",  # register-trusts recurses into it to mint the XNAT credentials
             "trust/Makefile",
@@ -437,7 +437,7 @@ class MakeKitSelection(unittest.TestCase):
         env_file.write_text("".join(f"{key}={value}\n" for key, value in AWS_STUB_ENV.items()))
         kit = f"{self.root}/trust/.env.SITE.lza-prod"
         for target, subdir, expected in (
-            ("register-trusts", "deploy/providers/AWS", f'KIT_FILES="{kit}"'),
+            ("register-trusts", "deploy/aws", f'KIT_FILES="{kit}"'),
             ("sync-kit", "trust/deploy/helm", f"--kit-file {kit}"),
             ("upgrade-trust-k8s", "trust/deploy/helm", f"plan --kit-file {kit}"),
         ):
@@ -813,14 +813,14 @@ class LocalRegistrationRefusesADeployedHub(unittest.TestCase):
                 # ALLOW_FOREIGN_PROJECT: a dev stack on this host belongs to another checkout than the scratch copy.
                 result = run_target(target, "HUB=stag", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
                 assert result.returncode != 0, result.stdout
-                assert f"make -C deploy/providers/AWS {aws_target} KIT=SCR HUB=stag" in result.stdout, result.stdout
+                assert f"make -C deploy/aws {aws_target} KIT=SCR HUB=stag" in result.stdout, result.stdout
                 assert "Waiting for the hub" not in result.stdout, result.stdout
 
     def test_the_deployed_hub_hint_keeps_revoke_old(self):
         """An operator who copies the hint for a leaked key must get the cutover, not a staged rotation."""
         result = run_target("rotate-trust-keys", "HUB=stag", "REVOKE_OLD=1", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
         assert result.returncode != 0, result.stdout
-        hint = "make -C deploy/providers/AWS rotate-trust-keys KIT=SCR HUB=stag REVOKE_OLD=1"
+        hint = "make -C deploy/aws rotate-trust-keys KIT=SCR HUB=stag REVOKE_OLD=1"
         assert hint in result.stdout, result.stdout
 
     def test_development_still_registers_on_the_local_hub(self):

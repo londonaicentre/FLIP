@@ -56,7 +56,7 @@ These experiments are far heavier than a stock FLIP run — the Ark+ model is a 
 backbone run at 768 px, and the pretrained checkpoint is ~759 MiB (~1.5 GiB for the multimodel
 variant). Several defaults sized for small models **must be raised**, or jobs OOM / time out.
 
-**Central Hub (ECS Fargate) — sizes in `deploy/providers/AWS/ecs_tasks.tf`:**
+**Central Hub (ECS Fargate) — sizes in `deploy/aws/ecs_tasks.tf`:**
 
 | Task | Stock default | Ark+ requirement | Why |
 |---|---|---|---|
@@ -93,10 +93,10 @@ Also on the hub:
 ## Part A — Deploy the FLIP hub (AWS staging, ECS Fargate)
 
 The Central Hub runs on **ECS Fargate** (flip-api + fl-api-net-1 + fl-server-net-1); the EC2 is a
-bastion only. From `deploy/providers/AWS/` with the staging profile:
+bastion only. From `deploy/aws/` with the staging profile:
 
 ```bash
-cd deploy/providers/AWS
+cd deploy/aws
 export AWS_PROFILE=stag             # must match; the Makefile enforces it
 make aws-login                          # SSO
 make plan  HUB=stag                     # the hub only (trusts run on the desktop)

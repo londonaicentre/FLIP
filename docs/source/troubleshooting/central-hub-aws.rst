@@ -22,7 +22,7 @@ Start with the deployment check. It covers resource health, connectivity, endpoi
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS status HUB=<env>
+   make -C deploy/aws status HUB=<env>
 
 .. contents:: On this page
    :local:
@@ -31,7 +31,7 @@ Start with the deployment check. It covers resource health, connectivity, endpoi
 .. seealso::
 
    Terraform state problems, CI and verifying which image a running task pulled are maintainer topics, kept in
-   :gh:`deploy/providers/AWS/TROUBLESHOOTING.md`. Its section 5 also shows how to reach the hub database through
+   :gh:`deploy/aws/TROUBLESHOOTING.md`. Its section 5 also shows how to reach the hub database through
    the bastion.
 
 *******************
@@ -50,7 +50,7 @@ over SSH too:
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS aws-login HUB=<env>
+   make -C deploy/aws aws-login HUB=<env>
 
 *******************
 Sign-in
@@ -77,7 +77,7 @@ only after its apply succeeds, and an ``apply`` or ``full-deploy`` run from your
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS deploy-ui HUB=<env>
+   make -C deploy/aws deploy-ui HUB=<env>
 
 Wait one to three minutes for the CloudFront invalidation, then hard-refresh the sign-in page.
 
@@ -105,8 +105,8 @@ Compose service name.
 
   .. code-block:: shell
 
-     make -C deploy/providers/AWS apply HUB=<env>
-     make -C deploy/providers/AWS deploy-centralhub HUB=<env>
+     make -C deploy/aws apply HUB=<env>
+     make -C deploy/aws deploy-centralhub HUB=<env>
 
 - **On a Docker Compose hub:** set the Compose service name in the hub env file, then restart flip-api:
 
@@ -136,7 +136,7 @@ older ``rootCA.pem``).
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS apply HUB=<env>                     # hub: FL server and FL API storage
+      make -C deploy/aws apply HUB=<env>                     # hub: FL server and FL API storage
       make -C trust/deploy/terraform/aws/ec2 stage-kit KIT=<CODE> KIT_BUCKET=<bucket>   # an AWS EC2 node
 
 .. warning::

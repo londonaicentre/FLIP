@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y gettext-base \
 # the full rationale; in short, this identity used to be the building developer's and
 # the dev composes reused it as runtime config, so published images and local ones
 # behaved differently. Whether the runtime uid is re-pointed depends on what the
-# compose bind-mounts: the deploy composes (deploy/compose.development.nvflare.yml)
+# compose bind-mounts: the deploy composes (deploy/compose/compose.development.nvflare.yml)
 # give this image only the kit's read-only admin/local and admin/startup, so they
 # set no `user:` and it keeps running as `flip`; the standalone harness
 # (fl-services/nvflare/compose.dev.yml) also mounts the host-provisioned
@@ -74,5 +74,5 @@ COPY --chown=${UNAME}:${UNAME} fl_api/ /app/fl_api/
 # as both the download_dir and upload_dir in fed_admin.json
 RUN mkdir -p /app/admin/transfer && chown -R ${UNAME}:${UNAME} /app/admin
 
-# The paths the API writes on ECS's read-only root filesystem; must stay VOLUMEs (FLIP#1795, deploy/providers/AWS/AGENTS.md).
+# The paths the API writes on ECS's read-only root filesystem; must stay VOLUMEs (FLIP#1795, deploy/aws/AGENTS.md).
 VOLUME ["/tmp", "/app/admin/transfer"]

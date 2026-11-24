@@ -303,7 +303,7 @@ def run(args: argparse.Namespace) -> None:
     if any(code != 204 for code in statuses):
         raise SmokeFailure(
             f"presigned POST of {LARGE_FILE_BYTES} B: expected HTTP 204 on every try, got {statuses} — "
-            "check the object-store image pin in deploy/compose.development.yml (FLIP#1534)"
+            "check the object-store image pin in deploy/compose/compose.development.yml (FLIP#1534)"
         )
     print(f"  ✅ {statuses}")
 

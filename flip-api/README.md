@@ -71,7 +71,7 @@ The flip-api is configured via environment variables. In development these are s
 | `POSTGRES_USER` | PostgreSQL username |
 | `POSTGRES_DB` | PostgreSQL database name |
 | `AWS_REGION` | AWS region for S3 (and Cognito in staging/production) |
-| `AUTH_BACKEND` | Identity provider: `keycloak` (development — the `keycloak` service in `deploy/compose.development.yml`, the only value `DevSettings` accepts) or `cognito` (staging and production, the only value `ProdSettings` accepts) |
+| `AUTH_BACKEND` | Identity provider: `keycloak` (development — the `keycloak` service in `deploy/compose/compose.development.yml`, the only value `DevSettings` accepts) or `cognito` (staging and production, the only value `ProdSettings` accepts) |
 | `AWS_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID (staging/production only) |
 | `AWS_COGNITO_APP_CLIENT_ID` | AWS Cognito App Client ID (staging/production only) |
 | `KEYCLOAK_URL` | Keycloak base URL as flip-api reaches it over the Docker network (JWKS + Admin REST API); dev default `http://keycloak:8080` |
@@ -210,7 +210,7 @@ Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStac
 
 ### Keycloak-touching tests
 
-`tests/integration/test_keycloak_round_trips.py` is the twin of `test_cognito_round_trips.py` for the Keycloak provider (`src/flip_api/auth/identity/keycloak.py`): it boots the pinned Keycloak image (kept in step with `deploy/compose.development.yml`) under Testcontainers with the committed dev realm `deploy/keycloak/flip-realm.json` imported at boot, so `register_user` really creates a user, `delete_user` really removes one, and a token minted by Keycloak's password grant really passes `verify_token`. The same import proves the realm file's `${...}` placeholders resolve.
+`tests/integration/test_keycloak_round_trips.py` is the twin of `test_cognito_round_trips.py` for the Keycloak provider (`src/flip_api/auth/identity/keycloak.py`): it boots the pinned Keycloak image (kept in step with `deploy/compose/compose.development.yml`) under Testcontainers with the committed dev realm `deploy/keycloak/flip-realm.json` imported at boot, so `register_user` really creates a user, `delete_user` really removes one, and a token minted by Keycloak's password grant really passes `verify_token`. The same import proves the realm file's `${...}` placeholders resolve.
 
 `.github/workflows/local_auth_smoke.yml` is the CI proof that the hub starts, authenticates and stores files without AWS. It boots flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `tests/local_auth_smoke.py` (sign in as the seeded admin) and `tests/local_storage_smoke.py` (a model file through the store, FLIP#1291, plus repeated model-sized presigned POSTs, FLIP#1534).
 

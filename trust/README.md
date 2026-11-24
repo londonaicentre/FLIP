@@ -512,7 +512,7 @@ own settings, sending the host's public egress IP to the hub team, and `make onb
 
 1. The hub admin scaffolds and registers your kit
    (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
-   then `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` and
+   then `make -C deploy/aws register-trusts KIT=<CODE> HUB=prod` and
    `make sync-trust-kit KIT=<CODE> HUB=prod`). The result is a complete
    kit file at `trust/.env.<CODE>.prod` containing credentials, the AES
    key, the hub URL, image tags, and a host-local profile.

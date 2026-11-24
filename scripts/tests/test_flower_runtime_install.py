@@ -30,7 +30,7 @@ a config change:
   one switch, so this guard asks for the variable.
 
 The ECS SuperLink is held to the same rule by
-``deploy/providers/AWS/tests/test_flower_superlink_runtime_install.py``, next to the Terraform it reads.
+``deploy/aws/tests/test_flower_superlink_runtime_install.py``, next to the Terraform it reads.
 
 Deliberately stdlib-only and executable as a plain script, like the other guards here —
 ``test_trust_kit_scripts.yml`` runs these with ``python <file>``, not pytest.
@@ -52,7 +52,7 @@ SUPERLINK_ENV = "FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION"
 # compose `command:` and Helm `args:` is appended to. Globs rather than a list, so a new compose,
 # chart template or image is covered without anyone remembering to add it here.
 FLAG_SCAN_GLOBS = (
-    "deploy/compose*.yml",
+    "deploy/compose/compose*.yml",
     "trust/deploy/compose/*.yml",
     "fl-services/flower/compose*.yml",
     "trust/deploy/helm/templates/*",
@@ -64,15 +64,15 @@ FLAG_SCAN_GLOBS = (
 # The FLARE composes are left out because they name their own server through the same
 # DOCKER_FL_SERVER_NAME variable.
 FLOWER_COMPOSE_GLOBS = (
-    "deploy/compose*flower*.yml",
+    "deploy/compose/compose*flower*.yml",
     "fl-services/flower/compose*.yml",
 )
 
 # The composes known to run a Flower SuperLink today. Each must still yield at least one, or the
 # check below would pass by asserting over nothing after a rename.
 SUPERLINK_COMPOSES = (
-    "deploy/compose.development.flower.yml",
-    "deploy/compose.prod.flower.yml",
+    "deploy/compose/compose.development.flower.yml",
+    "deploy/compose/compose.prod.flower.yml",
     "fl-services/flower/compose.dev.yml",
     "fl-services/flower/compose.secure.yml",
 )

@@ -109,7 +109,7 @@ jobs:
 
           # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish; today
           # only the hub ECS images are consumed (by `make deploy-centralhub`). Length 7
-          # must match the tag resolution in deploy/providers/AWS/Makefile.
+          # must match the tag resolution in deploy/aws/Makefile.
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
 
           # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".

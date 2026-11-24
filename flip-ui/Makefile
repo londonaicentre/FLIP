@@ -31,7 +31,7 @@ include ../deploy/instance.mk
 # -p is explicit rather than inherited: compose would otherwise derive the project from the
 # directory of the first -f file (always deploy/), pinning every instance to `deploy` and, on
 # a second stack, running these one-shots against the default stack's project (FLIP#957).
-docker_command = docker compose -p $(COMPOSE_PROJECT) -f ../deploy/compose.development.yml
+docker_command = docker compose -p $(COMPOSE_PROJECT) --project-directory ../deploy -f ../deploy/compose/compose.development.yml
 
 unit_test:
 	$(docker_command) run --rm --remove-orphans --name $(INSTANCE_PREFIX)flip-ui-test flip-ui npm run test:unit:update

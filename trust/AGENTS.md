@@ -71,15 +71,15 @@ workstation (prod AWS creds required):
 1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
    — scaffolds `trust/.env.<CODE>.prod` from the base template
    (`trust/.env.example`).
-2. `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` — registers
+2. `make -C deploy/aws register-trusts KIT=<CODE> HUB=prod` — registers
    on the prod hub, fills the Kit credentials and fills the Hub-shared block from
    `.env.prod`. `make sync-trust-kit KIT=<CODE> HUB=prod` is only for a later refresh,
    or to finish a run whose sync step failed after registering.
 
-Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
+Then `make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=prod`
 tarballs the populated kit file as-is, as `.env.<CODE>.prod`, + the operator's
 slice of the FL participant kit S3 bucket (its `FL_KIT_SLOT`'s) into
-`deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
+`deploy/aws/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
 The packager does NOT edit the kit file.
 
 The operator extracts, copies `.env.<CODE>.prod` into their checkout,
@@ -123,7 +123,7 @@ pins both the defaults and those lines).
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
 | `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
 | `deploy/helm/` | The same trust stack as Helm chart `flip-trust` for Kubernetes (chart, Makefile, `sync_k8s_kit.py`, tests) |
-| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/ansible/aws-ec2-host.yml` composes for an EC2 node: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/providers/AWS provision-local-trust KIT=<CODE> HUB=<hub>`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
+| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/ansible/aws-ec2-host.yml` composes for an EC2 node: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/aws provision-local-trust KIT=<CODE> HUB=<hub>`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
 | `deploy/ansible/roles/` | The trust-host roles themselves, one per concern, with a README of what each varies by host type. `flip_fl_kit/tasks/s3.yml` carries the FLIP#965 kit-staging guards that `deploy/ansible/tests/test_fl_kit_s3_staging.py` pins |
 | `deploy/compose/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead; `trust/xnat` then builds the XNAT images and deploys them at `:dev`, or a command-line `XNAT_TAG`) |
 | `deploy/compose/compose_trust.prod.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
