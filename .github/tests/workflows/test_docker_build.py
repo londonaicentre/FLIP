@@ -21,6 +21,7 @@ Usage:
 
 from __future__ import annotations
 
+import posixpath
 import re
 import sys
 import unittest
@@ -35,6 +36,9 @@ from image_workflows import (  # noqa: E402
     WORKFLOWS,
     ReleaseTagContract,
     code_text,
+    covered,
+    push_block,
+    push_paths,
     step_block,
 )
 from pr_paths_changed import glob_to_regex  # noqa: E402
@@ -107,50 +111,45 @@ class FlipReleaseBuildArg(unittest.TestCase):
 
 
 class XnatBuildTriggers(unittest.TestCase):
-    """An image-context edit rebuilds that image; the dcm2niix command is baked into xnat-web."""
+    """The XNAT images publish only after "Trust - XNAT CI" passes (FLIP#880), so its push filter is
+    their path filter: an input it misses would never be rebuilt."""
 
-    workflows = ("web", "db", "nginx")
+    workflows = [p for p in DOCKER_BUILD_WORKFLOWS if p.name.startswith("docker_build_xnat_")]
+    suite = WORKFLOWS / "test_trust_xnat.yml"
 
-    def test_changed_paths_select_the_required_images(self) -> None:
-        cases: tuple[tuple[list[str], set[str]], ...] = (
-            (["trust/xnat/postgres/Dockerfile"], {"db", "web"}),
-            (["trust/xnat/postgres/XNAT.sql"], {"db", "web"}),
-            (["trust/xnat/postgres/guard-xnat-db-passwords.sh"], {"db", "web"}),
-            (["trust/xnat/scripts/xnat_db_migrate_dump.sh"], {"db", "web"}),
-            (["trust/xnat/nginx/custom-nginx.conf"], {"nginx", "web"}),
-            (["trust/xnat/xnat/Dockerfile"], {"web"}),
-            (["trust/xnat/xnat/config/anon_script.das"], {"web"}),
-            (["trust/xnat/.env"], {"web"}),
-            (["trust/xnat/artifacts.manifest"], {"web"}),
-            (["trust/xnat/dcm2niix/Dockerfile"], set()),
-            (
-                ["trust/xnat/dcm2niix/Dockerfile", "trust/xnat/xnat/config/dcm2niix_command.json"],
-                {"web"},
-            ),
-            (["flip-api/src/flip_api/main.py"], set()),
-        )
-        for changed_paths, expected in cases:
-            for changed_path in changed_paths:
-                assert (GITHUB_DIR.parent / changed_path).is_file(), changed_path
-            selected = set()
-            for image in self.workflows:
-                text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
-                push = re.search(r"\n  push:\n((?: {4}[^\n]*\n|\n)+)", text)
-                assert push, image
-                paths = re.search(r"\n    paths:\n((?:      - .*\n)+)", "\n" + push[1])
-                assert paths, image
-                patterns = re.findall(r"      - [\"\']([^\"\']+)[\"\']", paths[1])
-                # GitHub evaluates positive/negative path filters in order; any included
-                # changed file starts the workflow. Reuse the service gate's GitHub matcher.
-                for changed_path in changed_paths:
-                    included = False
-                    for pattern in patterns:
-                        if glob_to_regex(pattern.removeprefix("!")).match(changed_path):
-                            included = not pattern.startswith("!")
-                    if included:
-                        selected.add(image)
-            with self.subTest(changed_paths=changed_paths):
-                assert selected == expected, f"selected={selected}, expected={expected}"
+    def test_builds_are_gated_on_the_xnat_suite(self) -> None:
+        name = re.search(r"^name: (.+)$", code_text(self.suite), re.M)
+        assert name, self.suite.name
+        assert len(self.workflows) >= 5, [wf.name for wf in self.workflows]
+        for wf in self.workflows:
+            text = code_text(wf)
+            with self.subTest(workflow=wf.name):
+                assert f'workflows: ["{name[1]}"]' in text, wf.name
+                assert "github.event.workflow_run.conclusion == 'success'" in text, wf.name
+                assert "branches:" not in push_block(text), f"{wf.name}: a branch push still publishes ungated"
+
+    def test_every_image_input_triggers_the_suite(self) -> None:
+        """Inputs are read off each build: its own file, its context, and every ``../`` path it reaches."""
+        patterns = [glob_to_regex(p) for p in push_paths(code_text(self.suite))]
+        for wf in self.workflows:
+            text = code_text(wf)
+            context = re.search(r"working-directory: \./(\S+)", text)
+            assert context, wf.name
+            inputs = {f".github/workflows/{wf.name}", f"{context[1]}/Dockerfile"}
+            inputs |= {posixpath.normpath(f"{context[1]}/{ref}") for ref in re.findall(r"\.\./[\w./-]+", text)}
+            for changed_path in sorted(inputs):
+                with self.subTest(workflow=wf.name, changed_path=changed_path):
+                    assert (GITHUB_DIR.parent / changed_path).is_file(), changed_path
+                    assert any(p.match(changed_path) for p in patterns), changed_path
+
+    def test_every_build_context_is_covered_whole(self) -> None:
+        """Naming only each Dockerfile would keep the test above green while the rest of the context went unbuilt."""
+        paths = push_paths(code_text(self.suite))
+        for wf in self.workflows:
+            context = re.search(r"working-directory: \./(\S+)", code_text(wf))
+            assert context, wf.name
+            with self.subTest(workflow=wf.name):
+                assert covered(context[1], [p for p in paths if p.endswith("/**")]), context[1]
 
     def test_published_base_images_match_the_local_build(self) -> None:
         """CI builds from the workflow's build args, a local build and the upgrade verbs read .env.
@@ -167,19 +166,31 @@ class XnatBuildTriggers(unittest.TestCase):
                 assert published, image
                 assert local[1] == published[1], (local[1], published[1])
 
-    def test_own_workflow_edits_still_trigger_each_build(self) -> None:
-        for image in self.workflows:
-            name = f"docker_build_xnat_{image}.yml"
-            text = code_text(WORKFLOWS / name)
-            with self.subTest(image=image):
-                assert f'      - ".github/workflows/{name}"' in text, image
+    def test_tags_name_the_tested_commit(self) -> None:
+        """Under workflow_run, github.sha is the default branch's head, not the commit built."""
+        for wf in self.workflows:
+            tags = step_block(code_text(wf), "Determine tags")
+            with self.subTest(workflow=wf.name):
+                assert 'SHA="$GH_WR_SHA"' in tags, wf.name
+                assert 'REF_NAME="$GH_WR_BRANCH"' in tags, wf.name
+                assert "${{ github.sha }}" not in tags.split("run: |", 1)[1], wf.name
 
-    def test_push_triggered_builds_do_not_read_workflow_run_context(self) -> None:
-        for image in self.workflows:
-            text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
+    def test_tool_version_tags_move_only_with_their_own_source(self) -> None:
+        """Every green suite run publishes these images; the tag the sites pin must not follow each one.
+
+        A dispatch still republishes it (a base-image rebuild changes no source), and a failed registry
+        lookup must fail the step: read as an absent tag, it would republish the pinned tag.
+        """
+        for image in ("dcm2niix", "export_mask"):
+            push = step_block(code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml"), "Push Docker image")
             with self.subTest(image=image):
-                assert "workflow_run" not in text, image
-                assert "GH_WR_" not in text, image
+                assert "context-$(git rev-parse HEAD:./)" in push, image
+                assert '"$PUBLISHED" == "$CURRENT"' in push, image
+                assert 'CURRENT="$(digest "$VERSION_TAG")"' in push, image
+                assert '[[ "$GH_EVENT_NAME" != "workflow_dispatch" ]]' in push, image
+                assert "GH_EVENT_NAME: ${{ github.event_name }}" in push, image
+                assert "2>/dev/null" not in push, image
+                assert "return 1" in push, image
 
     def test_xnat_web_pulls_its_moving_base(self) -> None:
         """The Tomcat base tag moves: without --pull a runner holding an old copy would build on it."""
