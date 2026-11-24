@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from kitfile import is_placeholder
 from naming import Names, fl_client_image
 
 #: Secret object -> container environment variable, per service. This is the contract's
@@ -289,13 +290,17 @@ def _event_table_exports() -> dict[str, Any]:
 
 
 def _trust_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
+    # An empty or still-scaffolded value is not a header name; keep the platform default.
+    key_header = kit.get("TRUST_API_KEY_HEADER", "").strip()
+    if is_placeholder(key_header):
+        key_header = "Authorization"
     env = {
         "ENV": "production",
         "LOG_LEVEL": _log_level(kit),
         "CENTRAL_HUB_API_URL": kit.get("CENTRAL_HUB_API_URL", ""),
         "TRUST_NAME": kit.get("TRUST_NAME", names.code),
         "POLL_INTERVAL_SECONDS": kit.get("POLL_INTERVAL_SECONDS", "5"),
-        "TRUST_API_KEY_HEADER": kit.get("TRUST_API_KEY_HEADER", "Authorization"),
+        "TRUST_API_KEY_HEADER": key_header,
         # The wrong-host self-check; empty leaves it off.
         "EXPECTED_TRUST_ID": kit.get("EXPECTED_TRUST_ID", ""),
         "TRUST_INTERNAL_SERVICE_KEY_HEADER": kit.get(

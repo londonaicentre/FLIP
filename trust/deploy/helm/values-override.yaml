@@ -6,8 +6,9 @@
 # kit path. This file is kept as a worked example / manual fallback.
 #
 # TRUST_API_KEY_HEADER is not set here: the chart default (values.yaml) is
-# "Authorization", the platform default. `make sync-kit` writes the kit's value,
-# and its EXPECTED_TRUST_ID, into the generated override.
+# "Authorization", the platform default. Only `make sync-kit` carries the kit's
+# value, and its EXPECTED_TRUST_ID, into the generated override:
+# scripts/generate_values.py maps neither, so by this route set both by hand.
 trustApi:
   env:
     CENTRAL_HUB_API_URL: "https://stag.flip.aicentre.co.uk/api"
