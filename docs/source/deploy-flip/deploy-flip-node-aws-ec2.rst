@@ -152,11 +152,14 @@ four ways:
   VPC's gateway endpoint serves S3.
 - **The kit from the hub's bucket.** ``KIT_BUCKET`` and ``KIT_KMS_KEY_ARN`` are the hub's kit bucket and
   its key. The node reads its slot's kit and the vocabulary itself, so ``stage-kit`` needs no ``KIT_SRC``.
-  The bucket is given once, to ``plan``: the steps that configure the host read it back from the node's
-  Terraform state (the ``kit_bucket_name`` output), and take the kit date from the kit file
-  (``FLARE_KIT_DATE`` or ``FLOWER_KIT_DATE``, by its FL backend). ``KIT_BUCKET=`` or ``FL_KIT_DATE=`` on
-  the command line still overrides either. A node applied before that output existed has no record of its
-  bucket, and those steps stop until it is planned and applied once more, or ``KIT_BUCKET`` is given.
+  The bucket is given once, to the first ``plan``: later plans and the steps that configure the host read it
+  back from the node's Terraform state (the ``kit_bucket_name`` output), and take the kit date from the kit
+  file (``FLARE_KIT_DATE`` or ``FLOWER_KIT_DATE``, by its FL backend). ``KIT_BUCKET=`` or ``FL_KIT_DATE=`` on
+  the command line still overrides either, and an empty ``KIT_BUCKET=`` to ``plan`` is how the node's kit read
+  is removed. The state also records the node's name: with more than one node in a checkout, a step run for
+  one node while the root is initialised for another stops and names the ``make init`` to run. A node applied
+  before the state recorded these stops ``plan`` and those steps until ``KIT_BUCKET`` is typed once, to a
+  ``plan`` that is then applied.
 
 The steps are those in *Build the node and join* below, with these flags:
 
@@ -239,16 +242,18 @@ To check the node has joined:
 
 Before ``deploy``:
 
-- **Host paths in the kit must be the ones the node is provisioned with.** A kit scaffolded by
+- **Host paths in the kit must be the ones this install fills.** A kit scaffolded by
   ``make new-trust`` carries relative ones (``ORTHANC_STORAGE_DIR=./orthanc/…``, ``BASE_IMAGES_DOWNLOAD_DIR``,
   ``XNAT_DATA_DIR``); over the ssh docker context they would resolve to your checkout, so ``deploy`` and
-  ``upgrade`` refuse them. Comment them out: each defaults under ``/opt/flip``. Four paths cannot be moved
-  at all, because ``provision``, the seed and ``stage-kit`` prepare and fill fixed directories whatever the kit
-  says: ``OMOP_DATA_DIR`` (``/opt/flip/omop/db_data``), ``ORTHANC_STORAGE_DIR``
-  (``/opt/flip/orthanc/orthanc-storage``), ``BASE_IMAGES_DOWNLOAD_DIR`` (``/opt/flip/data/trust-<slot>``) and
-  ``FL_KIT_DIR`` (``/opt/flip/fl-kit``). ``deploy`` and ``upgrade`` refuse any other value, since the stack would
-  start on empty directories. ``FL_KIT_DIR`` has no default and must be set to that path; the other three may be
-  left unset. ``XNAT_DATA_DIR`` and ``COHORT_SNAPSHOT_STORAGE_DIR`` take any absolute path.
+  ``upgrade`` refuse them. Comment them out: each defaults under ``/opt/flip``. ``FL_KIT_DIR`` has no default
+  and must be set. On a first install ``provision``, ``stage-kit``, the seed and the vocabulary load prepare
+  and fill fixed directories whatever the kit says, so ``deploy`` refuses a kit that names another place for
+  one of them (the stack would start on directories nothing filled): ``FL_KIT_DIR`` (``/opt/flip/fl-kit``),
+  ``BASE_IMAGES_DOWNLOAD_DIR`` (``/opt/flip/data/trust-<slot>``), ``ORTHANC_STORAGE_DIR``
+  (``/opt/flip/orthanc/orthanc-storage``) unless the kit sets ``TRUST_DATA_SEED=false``, and ``OMOP_DATA_DIR``
+  (``/opt/flip/omop/db_data``) unless it does and the node has no kit bucket to load the vocabulary from.
+  ``XNAT_DATA_DIR`` and ``COHORT_SNAPSHOT_STORAGE_DIR`` take any absolute path. ``upgrade`` fills nothing, so a
+  live node keeps whatever absolute paths its kit names.
 - **A trust on slot 3 or above** needs ``SOURCE_TRUST=1`` (or 2): the mock dataset has two partitions,
   and the seed defaults to the slot number.
 - **A trust with its own data** sets ``TRUST_DATA_SEED=false`` in the kit: ``deploy`` and ``seed`` then load

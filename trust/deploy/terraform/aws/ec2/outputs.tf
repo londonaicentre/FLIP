@@ -41,3 +41,8 @@ output "kit_bucket_name" {
   description = "The hub kit bucket the node was applied with (empty for none). The Makefile reads it for the verbs that configure the host, so it is not retyped after plan."
   value       = var.kit_bucket_name
 }
+
+output "node_name" {
+  description = "The node this state holds. The Makefile checks it against the kit it was given before it reads kit_bucket_name: the root is initialised for one node at a time."
+  value       = var.name
+}

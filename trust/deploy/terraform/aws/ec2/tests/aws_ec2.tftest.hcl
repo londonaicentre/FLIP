@@ -198,6 +198,10 @@ run "no_kit_bucket_grants_no_s3_or_kms" {
     condition     = output.kit_bucket_name == ""
     error_message = "The state records that the node has no kit bucket, for the Makefile's host verbs."
   }
+  assert {
+    condition     = output.node_name == var.name
+    error_message = "The state names its node: the Makefile refuses to read another node's kit bucket."
+  }
 }
 
 run "kit_bucket_grants_read_on_this_slots_kit_only" {

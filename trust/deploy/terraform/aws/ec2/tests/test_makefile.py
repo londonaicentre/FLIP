@@ -46,13 +46,21 @@ def make(
     dry: bool = True,
     env: dict[str, str] | None = None,
     state_bucket: str | None = "",
+    state_name: str = "flip-stag-test",
+    applied: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a target. `terraform` is a stub that logs its arguments beside the kit and answers `output` with
-    `state_bucket`, the kit bucket the root's state records (None: the state cannot be read)."""
+    """Run a target. `terraform` is a stub that logs its arguments beside the kit and answers `output` from the
+    root's state: the node `state_name` and its kit bucket `state_bucket` (None: a state from before the root
+    recorded either), and an instance only when `applied`."""
     stub = kit.parent / "tf-stub" / "terraform"
     stub.parent.mkdir(exist_ok=True)
-    answer = "exit 1" if state_bucket is None else f"printf %s '{state_bucket}'"
-    stub.write_text(f'#!/bin/sh\necho "$*" >> {kit.parent}/terraform.calls\n{answer}\n')
+    recorded = "exit 1" if state_bucket is None else f"printf %s '{state_bucket}'"
+    named = "exit 1" if state_bucket is None else f"printf %s '{state_name}'"
+    stub.write_text(
+        f'#!/bin/sh\necho "$*" >> {kit.parent}/terraform.calls\ncase "$*" in\n'
+        f"  *node_name) {named} ;;\n  *kit_bucket_name) {recorded} ;;\n"
+        f"  *instance_id) exit {0 if applied else 1} ;;\nesac\n"
+    )
     stub.chmod(0o755)
     env = dict(os.environ if env is None else env)
     env["PATH"] = f"{stub.parent}{os.pathsep}{env['PATH']}"
@@ -191,13 +199,44 @@ def test_deploy_refuses_a_path_the_node_is_not_provisioned_with(tmp_path, line):
     """The play, the seed and stage-kit hold these paths as literals: compose elsewhere starts on empty dirs."""
     moved = kit_with(tmp_path, NODE_DIRS + line + "\n")
     env, calls = stub_tools(tmp_path)
-    for target in ("deploy", "upgrade"):
-        result = make(target, moved, dry=False, env=env)
-        assert result.returncode != 0, target
-        key = line.split("=")[0]
-        expected = next(d for d in NODE_DIRS.splitlines() if d.startswith(key))
-        assert f"     {expected}\n" in result.stdout, result.stdout
-        assert not calls.exists(), f"{target} reached {calls.read_text()}"
+    result = make("deploy", moved, dry=False, env=env)
+    assert result.returncode != 0
+    key = line.split("=")[0]
+    expected = next(d for d in NODE_DIRS.splitlines() if d.startswith(key))
+    assert f"     {expected}\n" in result.stdout, result.stdout
+    assert not calls.exists(), f"deploy reached {calls.read_text()}"
+
+
+OWN_DATA = (
+    "TRUST_DATA_SEED=false\nOMOP_DATA_DIR=/data/flip/omop/db_data\n"  # pragma: allowlist secret
+    "ORTHANC_STORAGE_DIR=/data/flip/orthanc\n"  # pragma: allowlist secret
+    "BASE_IMAGES_DOWNLOAD_DIR=/data/flip/images\nFL_KIT_DIR=/data/flip/fl-kit\n"  # pragma: allowlist secret
+)
+
+
+def test_upgrade_leaves_a_live_nodes_own_paths_alone(tmp_path):
+    """upgrade prepares, stages and seeds nothing: pointing a live kit at /opt/flip would start omop-db empty."""
+    env, calls = stub_tools(tmp_path)
+    result = make("upgrade", kit_with(tmp_path, OWN_DATA), dry=False, env=env)
+    assert "host paths" not in result.stdout + result.stderr, result.stdout
+    assert calls.read_text().startswith("docker"), "the guards passed and upgrade went on to the docker context"
+    assert not (tmp_path / "terraform.calls").exists(), "upgrade reads no state"
+
+
+def test_deploy_holds_a_data_path_only_where_it_fills_it(tmp_path):
+    """With TRUST_DATA_SEED=false nothing seeds Orthanc, and OMOP gets only a kit bucket's vocabulary."""
+    data = "TRUST_DATA_SEED=false\nFL_KIT_DIR=/opt/flip/fl-kit\nOMOP_DATA_DIR=/data/omop\n"  # pragma: allowlist secret
+    own = kit_with(tmp_path, data + "ORTHANC_STORAGE_DIR=/data/orthanc\n")  # pragma: allowlist secret
+    env, calls = stub_tools(tmp_path)
+    no_bucket = make("deploy", own, dry=False, env=env)
+    assert "names host paths" not in no_bucket.stdout, no_bucket.stdout
+    assert calls.exists()
+    calls.unlink()
+    with_bucket = make("deploy", own, dry=False, env=env, state_bucket="hub-kits")
+    assert with_bucket.returncode != 0
+    assert "     OMOP_DATA_DIR=/opt/flip/omop/db_data\n" in with_bucket.stdout, "the vocabulary load writes there"
+    assert "ORTHANC_STORAGE_DIR=" not in with_bucket.stdout
+    assert not calls.exists()
 
 
 def test_deploy_refuses_a_kit_without_an_fl_kit_dir(kit, tmp_path):
@@ -205,7 +244,7 @@ def test_deploy_refuses_a_kit_without_an_fl_kit_dir(kit, tmp_path):
     env, calls = stub_tools(tmp_path)
     result = make("deploy", kit, dry=False, env=env)
     assert result.returncode != 0
-    assert "Set FL_KIT_DIR=/opt/flip/fl-kit" in result.stdout
+    assert "has no FL_KIT_DIR" in result.stdout
     assert not calls.exists()
 
 
@@ -262,7 +301,8 @@ def test_the_host_verbs_take_the_kit_bucket_the_node_was_applied_with(tmp_path):
     seed = make("seed", dated, state_bucket="hub-kits").stdout
     assert "--skip-tags omop-vocab" not in seed
     assert "-e vocab_s3_bucket=hub-kits" in seed
-    assert (tmp_path / "terraform.calls").read_text().splitlines() == ["output -raw kit_bucket_name"] * 3, "once a run"
+    once = ["output -raw node_name", "output -raw kit_bucket_name"]
+    assert (tmp_path / "terraform.calls").read_text().splitlines() == once * 3, "one read a run"
 
 
 def test_a_kit_bucket_on_the_command_line_wins_over_the_state(kit):
@@ -280,19 +320,57 @@ def test_a_local_kit_dir_wins_over_the_nodes_bucket(kit, tmp_path):
 
 @pytest.mark.parametrize("target", ["provision", "stage-kit", "seed", "deploy"])
 def test_the_host_verbs_refuse_a_state_that_does_not_name_the_bucket(tmp_path, target):
-    """An unreadable state read as "no bucket" would be the same silent switch."""
+    """A state from before the root recorded the bucket, read as "no bucket", would be the same silent switch."""
     path = kit_with(tmp_path, NODE_DIRS)
     env, calls = stub_tools(tmp_path)
     result = make(target, path, dry=False, env=env, state_bucket=None)
     assert result.returncode != 0
-    assert "does not say whether the node reads a kit bucket" in result.stdout
+    assert "whether it reads a kit bucket" in result.stdout
     assert not calls.exists(), f"{target} reached {calls.read_text()}"
     assert make(target, path, "KIT_BUCKET=", f"KIT_SRC={tmp_path}", state_bucket=None).returncode == 0
 
 
-@pytest.mark.parametrize("target", ["help", "plan", "upgrade", "lint", "test"])
-def test_only_the_host_verbs_read_the_state(kit, target):
-    """The bucket default is lazy: nothing else runs terraform at parse time, under -n or for help."""
+@pytest.mark.parametrize("target", ["plan", "provision", "stage-kit", "seed", "deploy"])
+def test_another_nodes_state_is_refused(tmp_path, target):
+    """.terraform/ points at whichever node `make init` last named: its bucket is not this kit's node's."""
+    path = kit_with(tmp_path, NODE_DIRS)
+    env, calls = stub_tools(tmp_path)
+    result = make(target, path, dry=False, env=env, state_bucket="other-hub-kits", state_name="flip-stag-other")
+    assert result.returncode != 0
+    assert "initialised for node flip-stag-other, not flip-stag-test" in result.stdout, result.stdout
+    assert "make init KIT=TEST HUB=stag" in result.stdout
+    assert not calls.exists(), f"{target} reached {calls.read_text()}"
+    assert "terraform plan" not in result.stdout
+
+
+@pytest.mark.parametrize("target", ["provision", "stage-kit", "seed", "deploy"])
+def test_the_host_verbs_refuse_a_root_with_no_node(tmp_path, target):
+    path = kit_with(tmp_path, NODE_DIRS)
+    result = make(target, path, dry=False, env=stub_tools(tmp_path)[0], state_bucket=None, applied=False)
+    assert result.returncode != 0
+    assert "holds no node" in result.stdout
+
+
+def test_a_later_plan_keeps_the_bucket_the_node_was_applied_with(kit):
+    """Planned without it, the apply would drop the node's kit read and empty the recorded bucket."""
+    out = make("plan", kit, state_bucket="hub-kits").stdout
+    assert "-var 'kit_bucket_name=hub-kits' -var 'kit_slot=3'" in out
+    assert "-var 'kit_bucket_name='" in make("plan", kit, "KIT_BUCKET=", state_bucket="hub-kits").stdout, "typed wins"
+    assert "-var 'kit_bucket_name='" in make("plan", kit, state_bucket=None, applied=False).stdout, "a first plan"
+
+
+def test_plan_refuses_a_node_whose_state_predates_the_record(kit, tmp_path):
+    """It cannot tell a node with no bucket from one whose bucket was never recorded."""
+    (tmp_path / "key.pub").write_text("ssh-ed25519 AAAA test\n")
+    result = make("plan", kit, f"PUBLIC_KEY_FILE={tmp_path}/key.pub", dry=False, state_bucket=None)
+    assert result.returncode != 0
+    assert "whether it reads a kit bucket" in result.stdout
+    assert "plan -out" not in (tmp_path / "terraform.calls").read_text()
+
+
+@pytest.mark.parametrize("target", ["help", "upgrade", "destroy", "lint", "test"])
+def test_only_plan_and_the_host_verbs_read_the_state(kit, target):
+    """The read is lazy: nothing else runs terraform at parse time, under -n or for help."""
     assert make(target, kit, dry=target != "help").returncode == 0
     assert not (kit.parent / "terraform.calls").exists()
 
