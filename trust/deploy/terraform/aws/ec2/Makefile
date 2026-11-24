@@ -81,11 +81,10 @@ define require_kit
 		echo "❌ $(notdir $(KIT_FILE)) has no FL_KIT_SLOT_NUMBER / FL_EDGE_PORT yet: register the trust first (make register-trusts KIT=$(KIT) HUB=<env>)."; exit 1; }
 endef
 
-# The bucket the node was applied with, for the verbs that configure the host: read from this root's
-# state, so it is not retyped after plan (a forgotten one made the seed skip the vocabulary and
-# provision lay down an empty kit tree). KIT_BUCKET= on the command line, empty for none, still wins.
-# Read once, and only by a recipe that names it, so help, test, lint and plan never run terraform
-# for it. `!` is a state that could not be read, or one applied before it held the output.
+# The bucket the node was applied with, read from this root's state so the host verbs are not given
+# it again. KIT_BUCKET= on the command line, empty for none, wins. The read replaces itself with its
+# result: it runs once, and only in a recipe that names it, so help, test, lint and plan never run
+# terraform for it. `!` is a state that could not be read, or one applied before it held the output.
 STATE_KIT_BUCKET = $(eval STATE_KIT_BUCKET := $$(shell $(TF) output -raw kit_bucket_name 2>/dev/null || echo '!'))$(STATE_KIT_BUCKET)
 NODE_KIT_BUCKET = $(if $(filter file,$(origin KIT_BUCKET)),$(STATE_KIT_BUCKET),$(KIT_BUCKET))
 define require_kit_bucket
@@ -104,14 +103,17 @@ NODE_DIR_KEYS := ORTHANC_STORAGE_DIR BASE_IMAGES_DOWNLOAD_DIR XNAT_DATA_DIR OMOP
 # directories that are empty, or that the node's daemon created root-owned. Unset, the first three
 # take these same paths as their compose default; FL_KIT_DIR has none and must be set. XNAT_DATA_DIR
 # and COHORT_SNAPSHOT_STORAGE_DIR are prepared at bring-up from the kit's own value.
-NODE_FIXED_DIRS = OMOP_DATA_DIR=/opt/flip/omop/db_data ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage \
-	BASE_IMAGES_DOWNLOAD_DIR=/opt/flip/data/trust-$(KIT_SLOT) FL_KIT_DIR=/opt/flip/fl-kit
-node_dir_differs = $(filter-out $(patsubst %/,%,$(call kit_get,$(firstword $(subst =, ,$(1))))),$(lastword $(subst =, ,$(1))))
+# $(call node_dir_moved,<KEY>,<path>): KEY=<path> when the kit sets KEY to anything else.
+node_dir_moved = $(if $(filter-out $(2) $(2)/,$(call kit_get,$(1))),$(1)=$(2))
+NODE_DIRS_MOVED = $(call node_dir_moved,OMOP_DATA_DIR,/opt/flip/omop/db_data) \
+	$(call node_dir_moved,ORTHANC_STORAGE_DIR,/opt/flip/orthanc/orthanc-storage) \
+	$(call node_dir_moved,BASE_IMAGES_DOWNLOAD_DIR,/opt/flip/data/trust-$(KIT_SLOT)) \
+	$(call node_dir_moved,FL_KIT_DIR,/opt/flip/fl-kit)
 define require_node_dirs
 	@bad="$(strip $(foreach k,$(NODE_DIR_KEYS),$(if $(filter-out /%,$(call kit_get,$(k))),$(k))))"; [ -z "$$bad" ] || { \
 		echo "❌ $(notdir $(KIT_FILE)) sets relative host paths for a remote node: $$bad."; \
 		echo "   Comment them out (each but FL_KIT_DIR defaults under /opt/flip) or make them absolute."; exit 1; }
-	@bad="$(strip $(foreach d,$(NODE_FIXED_DIRS),$(if $(call kit_get,$(firstword $(subst =, ,$(d)))),$(if $(call node_dir_differs,$(d)),$(d)))))"; [ -z "$$bad" ] || { \
+	@bad="$(strip $(NODE_DIRS_MOVED))"; [ -z "$$bad" ] || { \
 		echo "❌ $(notdir $(KIT_FILE)) names host paths this node is not provisioned with. It prepares, seeds and stages:"; \
 		for d in $$bad; do echo "     $$d"; done; \
 		echo "   Set them to those values (or comment them out, FL_KIT_DIR excepted): compose would otherwise start on empty directories."; exit 1; }
