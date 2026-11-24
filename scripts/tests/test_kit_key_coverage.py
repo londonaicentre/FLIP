@@ -18,13 +18,20 @@ shape for six months while the onboarding checklist printed PASS for it, and the
 kept its own ``TRUST_API_KEY_HEADER`` whatever the kit said.
 
 A key counts as read on a shape when that shape's kit readers name it: ``${KEY`` in a trust
-compose file or a word in the trust Makefiles (Compose), a quoted ``"KEY"`` in the chart's
-kit scripts or a word in its Makefile (Helm), a quoted ``"KEY"`` in the spec renderers
-(Snowflake). Comment lines do not count. This proves a shape names the key, not that it
-passes the kit's value on, so a new key still needs its own test.
+compose file (Compose), a quoted ``"KEY"`` in the chart's kit scripts (Helm) or in the spec
+renderers (Snowflake). A Makefile counts only where it uses the value: it expands the
+variable (``$(KEY)``, ``${KEY}``, ``$$KEY``) or reads its line out of the kit (``^KEY=``); a
+name in an ``export`` list or a message is not a read. Comment lines do not count. This
+proves a shape names the key, not that it passes the kit's value on, so a new key still
+needs its own test.
+
+Compose is two shapes: the deployed files (``compose_trust.prod*.yml``) and the development
+ones are separate reader sets, so a key wired only in development does not pass for a
+deployed trust.
 
 A key no reader names goes in that shape's ``NOT_APPLICABLE`` with the reason. "not wired"
-marks a gap rather than a decision: remove the entry in the PR that wires the key.
+marks a gap rather than a decision: the PR that wires the key removes the entry, and the
+guard fails until it does.
 
 Stdlib-only and line-based, run as a plain script by ``test_trust_kit_scripts.yml``.
 """
@@ -41,21 +48,27 @@ KIT_EXAMPLE = REPO_ROOT / "trust" / ".env.example"
 # A live assignment or a commented-out one (`# KEY=`, `#KEY=`): an optional key is still a key.
 KIT_KEY = re.compile(r"^(?:# ?)?([A-Z_][A-Z0-9_]*)=", re.MULTILINE)
 
-# shape -> (glob, pattern a reading line matches, with %s the key)
-COMPOSE_VAR = r"\$\{%s(?![A-Za-z0-9_])"
-WORD = r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])"
-QUOTED = r'"%s"'
+# shape -> (glob, pattern a reading line matches, with KEY the key)
+COMPOSE_VAR = r"\$\{KEY(?![A-Za-z0-9_])"
+MAKE_USE = r"\$[({]KEY[)}]|\$\$\{?KEY(?![A-Za-z0-9_])|\^KEY="
+QUOTED = r'"KEY"'
+# The XNAT stack file and the two Makefiles serve the deployed and the development trust alike.
+COMPOSE_SHARED = (
+    ("trust/xnat/docker-compose-stack.yml", COMPOSE_VAR),
+    ("trust/Makefile", MAKE_USE),
+    ("trust/xnat/Makefile", MAKE_USE),
+)
 READERS = {
-    "compose": (
-        ("trust/deploy/compose/compose_trust*.yml", COMPOSE_VAR),
-        ("trust/xnat/docker-compose-stack.yml", COMPOSE_VAR),
-        ("trust/Makefile", WORD),
-        ("trust/xnat/Makefile", WORD),
+    "compose (prod)": (("trust/deploy/compose/compose_trust.prod*.yml", COMPOSE_VAR), *COMPOSE_SHARED),
+    "compose (development)": (
+        ("trust/deploy/compose/compose_trust.development*.yml", COMPOSE_VAR),
+        ("trust/deploy/compose/compose_trust-1_override.yml", COMPOSE_VAR),
+        *COMPOSE_SHARED,
     ),
     "helm": (
         ("trust/deploy/helm/sync_k8s_kit.py", QUOTED),
         ("trust/deploy/helm/scripts/generate_values.py", QUOTED),
-        ("trust/deploy/helm/Makefile", WORD),
+        ("trust/deploy/helm/Makefile", MAKE_USE),
     ),
     "snowflake": (
         ("trust/deploy/snowflake/spec_templates.py", QUOTED),
@@ -80,10 +93,20 @@ SNOWFLAKE_OMOP = (
 )
 
 # shape -> reason -> keys. Keep the reason to a few words.
+COMPOSE_BOTH = {
+    "Helm only": "OMOP_VOCAB_DIR K8S_PLATFORM_VALUES",
+    "no effect off SPCS yet, as trust/.env.example says": SNOWFLAKE_OMOP,
+    "the hub's kit prefix; only an EC2 node's S3 kit fetch reads it": "FLOWER_KIT_DATE FLARE_KIT_DATE",
+    "not wired (#2047, no stack file reads it on any shape)": "XNAT_ACTIVEMQ_PASSWORD",
+}
 NOT_APPLICABLE = {
-    "compose": {
-        "Helm only": "OMOP_VOCAB_DIR K8S_PLATFORM_VALUES",
-        "no effect off SPCS yet, as trust/.env.example says": SNOWFLAKE_OMOP,
+    "compose (prod)": {
+        **COMPOSE_BOTH,
+        "debugger port; development compose only": "TRUST_DEBUG_PORT IMAGING_DEBUG_PORT DATA_ACCESS_DEBUG_PORT",
+    },
+    "compose (development)": {
+        **COMPOSE_BOTH,
+        "it dials the local hub and FL server": "CENTRAL_HUB_API_URL NLB_SUBDOMAIN FL_SERVER_PORT FL_EDGE_PORT",
     },
     "helm": {
         "host port or bind address; the chart publishes Services": HOST_PORTS,
@@ -94,6 +117,7 @@ NOT_APPLICABLE = {
         "in-cluster URL the chart derives": "DATA_ACCESS_API_URL IMAGING_API_URL",
         "kit staged by make stage-kit, not fetched by date": "FLOWER_KIT_DATE FLARE_KIT_DATE",
         "the chart takes FL_KIT_SLOT_NUMBER": "FL_KIT_SLOT",
+        "read through trust_kit_lib.trust_data_seed, which names it": "TRUST_DATA_SEED",
         "set as a chart value, the kit line is not read": (
             "OMOP_POSTGRES_USER OMOP_POSTGRES_DB DATA_ACCESS_POSTGRES_USER XNAT_ADMIN_USER XNAT_PORT XNAT_AETITLE "
             "PACS_HOST PACS_AETITLE PACS_QR_PORT PACS_LABEL PACS_SUPPORTS_EXTENDED_NEGOTIATIONS "
@@ -155,14 +179,15 @@ def check_shape(shape: str, keys: list[str], failures: list[str]) -> None:
     texts = reader_text(shape)
     not_applicable = {key: reason for reason, names in NOT_APPLICABLE[shape].items() for key in names.split()}
     for key in keys:
-        read = any(re.search(pattern % re.escape(key), text) for text, pattern in texts)
+        read = any(re.search(pattern.replace("KEY", re.escape(key)), text) for text, pattern in texts)
         if not read and key not in not_applicable:
             failures.append(
                 f"{shape}: nothing reads the kit key {key}. Wire it ({', '.join(g for g, _ in READERS[shape])}), "
                 f"or add it to NOT_APPLICABLE['{shape}'] with the reason."
             )
+        elif read and not_applicable.get(key, "").startswith("not wired"):
+            failures.append(f"{shape}: {key} is now read; remove its '{not_applicable[key]}' entry.")
         elif read and key in not_applicable:
-            # Not a failure: the PR that wires a key and this list can land in either order.
             print(f"  note: {shape}: {key} is now read; drop it from NOT_APPLICABLE ('{not_applicable[key]}')")
     for key in sorted(set(not_applicable) - set(keys)):
         failures.append(f"{shape}: NOT_APPLICABLE lists {key}, which trust/.env.example no longer declares.")
