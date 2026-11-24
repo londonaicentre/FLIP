@@ -180,14 +180,9 @@ def write_supernode_key(number: int) -> None:
     priv_path = KEY_DIR / f"supernode_credentials_{number}"
     pub_path = KEY_DIR / f"supernode_credentials_{number}.pub"
 
-    # Write private key
-    with open(priv_path, "wb") as f:
+    # Created owner-only, so the private key is never readable by anyone else.
+    with open(os.open(priv_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
         f.write(private_bytes)
-    # Set permissions for private key (600) - mainly for Unix, but good practice
-    try:
-        os.chmod(priv_path, 0o600)
-    except Exception:
-        pass
 
     # Write public key
     with open(pub_path, "wb") as f:

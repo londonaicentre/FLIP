@@ -24,12 +24,7 @@ import { ILog } from "@/services/model-service";
  * @param b array of string. All must be contained in A.
  * @returns boolean
  */
-export const stringArrayContainsAll = (a: string[], b: string[]): boolean => {
-    // Both inputs are Arrays
-    return Array.isArray(a) && Array.isArray(b) &&
-        // Everything in b is in a
-        b.every((val) => a.includes(val));
-};
+export const stringArrayContainsAll = (a: string[], b: string[]): boolean => b.every((val) => a.includes(val));
 
 export const formatBytes = (bytes: number, decimals = 2): string => {
     if (bytes === 0) return "0 Bytes";

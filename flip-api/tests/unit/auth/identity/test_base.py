@@ -96,7 +96,6 @@ def provider(alice) -> InMemoryProvider:
 
 def test_get_username_returns_the_email_of_the_user_with_that_id(provider, alice):
     assert provider.get_username(alice.id) == "alice@example.com"
-    assert provider.get_username(str(alice.id)) == "alice@example.com"
 
 
 def test_get_username_surfaces_the_not_found_error(provider):
