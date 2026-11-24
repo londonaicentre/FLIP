@@ -37,7 +37,7 @@ from flip_api.db.models.user_models import UserProfile
 from flip_api.domain.interfaces.project import IProjectApproval
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.projects import ProjectDetails
-from flip_api.domain.schemas.status import ProjectStatus, TrustApprovalStatus, XNATImageStatus
+from flip_api.domain.schemas.status import ProjectStatus, ProjectType, TrustApprovalStatus, XNATImageStatus
 from flip_api.project_services.get_projects import get_projects_paginated_orm
 from flip_api.project_services.services.project_services import (
     InvalidTrustDecisionsError,
@@ -52,7 +52,7 @@ from flip_api.project_services.services.project_services import (
     stage_project_service,
     unstage_project_service,
 )
-from flip_api.utils.paging_utils import get_filter_details, get_paging_details
+from flip_api.utils.paging_utils import FilterInfo, paging_params
 
 
 @pytest.fixture
@@ -560,15 +560,15 @@ def test_list_projects_project_type_filter_selects_by_has_imaging(session, proje
         session=session,
     )
 
-    def listed(params: dict[str, str | UUID]) -> set:
+    def listed(project_type: ProjectType | None) -> set:
         page = get_projects_paginated_orm(
             session=session,
             user_id=creator_id,
-            paging_details=get_paging_details(),
-            filter_details=get_filter_details(params),
+            paging_details=paging_params(),
+            filter_details=FilterInfo(project_type=project_type),
         )
         return {project.id for project in page.data}
 
-    assert listed({"projectType": "omop_only"}) == {tabular_id}
-    assert listed({"projectType": "imaging"}) == {imaging_id}
-    assert listed({}) >= {imaging_id, tabular_id}
+    assert listed(ProjectType.OMOP_ONLY) == {tabular_id}
+    assert listed(ProjectType.IMAGING) == {imaging_id}
+    assert listed(None) >= {imaging_id, tabular_id}

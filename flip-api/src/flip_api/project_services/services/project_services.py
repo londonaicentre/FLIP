@@ -62,7 +62,7 @@ from flip_api.domain.schemas.status import (
 from flip_api.model_services.services.model_service import delete_models
 from flip_api.project_services.utils.audit_helper import audit_project_action
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
+from flip_api.utils.paging_utils import IPagedResponse, PagingInfo
 from flip_api.utils.user_roles import profile_display_name
 
 
@@ -512,25 +512,19 @@ def get_trusts_approval_status_for_projects(
 def get_project_models_service(
     project_id: UUID,
     session: Session,
-    query_params: dict = {},
-    all_results: bool = False,
-) -> tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]:
+    paging: PagingInfo | None = None,
+) -> IPagedResponse[IModelsInfoResponse]:
     """
     Retrieves models for a project with pagination and optional search.
 
     Args:
         project_id (UUID): The ID of the project to retrieve models for.
         session (Session): The SQLModel session to use for database operations.
-        query_params (dict, optional): Query parameters for pagination and search. Defaults to {}.
-        all_results (bool, optional): Whether to retrieve all results without pagination. Defaults to False.
+        paging (PagingInfo | None): The page and search string; None returns every model.
 
     Returns:
-        tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]: A tuple containing the paged response with model info
-        and paging details.
+        IPagedResponse[IModelsInfoResponse]: The page of models and the total count.
     """
-    paging_details = get_paging_details(query_string_parameters=query_params)
-    logger.debug(f"Paging details: {paging_details}")
-
     # NOTE Do NOT use "not Model.deleted" below — This expression is evaluated immediately in Python, not translated
     # into SQL. Use "Model.deleted == False" or the below to create a proper SQL condition.
     filters = (
@@ -542,8 +536,8 @@ def get_project_models_service(
     query_stmt = select(Model).join(Projects, join_on).where(*filters)
     count_stmt = select(func.count(col(Model.id))).join(Projects, join_on).where(*filters)
 
-    if paging_details.search_str:
-        search_pattern = f"%{paging_details.search_str.lower()}%"
+    if paging is not None and paging.search_str:
+        search_pattern = f"%{paging.search_str.lower()}%"
         search_filter = or_(
             func.lower(Model.name).like(search_pattern),
             func.lower(Model.description).like(search_pattern),
@@ -555,8 +549,8 @@ def get_project_models_service(
 
     # Order and paginate
     query_stmt = query_stmt.order_by(desc(col(Model.creation_timestamp)))
-    if not all_results and paging_details.page_size is not None:
-        query_stmt = query_stmt.limit(paging_details.page_size).offset(paging_details.offset)
+    if paging is not None:
+        query_stmt = query_stmt.limit(paging.page_size).offset(paging.offset)
 
     db_models = session.exec(query_stmt).all()
     logger.debug(f"Models retrieved for project {project_id}: {db_models}")
@@ -573,7 +567,7 @@ def get_project_models_service(
     ]
     logger.debug(f"{models_response=}")
 
-    return IPagedResponse[IModelsInfoResponse](data=models_response, total_rows=total_rows), paging_details
+    return IPagedResponse[IModelsInfoResponse](data=models_response, total_rows=total_rows)
 
 
 def update_project_status(

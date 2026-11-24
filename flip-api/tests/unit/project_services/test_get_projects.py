@@ -19,11 +19,11 @@ from sqlmodel import Session, col
 
 from flip_api.db.models.main_models import Projects
 from flip_api.db.models.user_models import PermissionRef
-from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.domain.schemas.status import ProjectStatus, ProjectType
 from flip_api.project_services.get_projects import get_projects_endpoint, get_projects_paginated_orm
-from flip_api.utils.paging_utils import get_filter_details, get_paging_details
+from flip_api.utils.paging_utils import FilterInfo, paging_params
 
-paging_details = get_paging_details()
+paging_details = paging_params()
 
 PROJECT_ID = uuid.uuid4()
 QUERY_ID = uuid.uuid4()
@@ -43,7 +43,7 @@ def test_get_projects_paginated_orm_no_results():
         session=session,
         user_id=uuid.uuid4(),  # Give random user which won't have access to any projects
         paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert project_response.data == []
@@ -98,7 +98,7 @@ def test_get_projects_paginated_orm_some_results(user_id):
         session=session,
         user_id=user_id,
         paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert len(project_response.data) == 2
@@ -185,7 +185,7 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
         session=session,
         user_id=user_id,
         paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert len(response.data) == 1
@@ -207,13 +207,11 @@ def test_get_projects_endpoint_researcher_filters_by_user_id(
 ):
     """A user without CAN_MANAGE_PROJECTS (e.g. a researcher) must have the per-user filter applied."""
     user_id = uuid.uuid4()
-    request = MagicMock()
-    request.query_params = {}
     session = MagicMock(spec=Session)
     mock_has_permissions.return_value = False
     mock_get_projects_paginated_orm.return_value = MagicMock(data=[], total_rows=0)
 
-    get_projects_endpoint(request=request, session=session, user_id=user_id)
+    get_projects_endpoint(paging_details=paging_details, session=session, user_id=user_id)
 
     mock_has_permissions.assert_called_once_with(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], session)
     _, kwargs = mock_get_projects_paginated_orm.call_args
@@ -228,13 +226,11 @@ def test_get_projects_endpoint_admin_bypasses_user_filter(
 ):
     """A user with CAN_MANAGE_PROJECTS (e.g. an admin) lists every project — user_id=None is passed through."""
     user_id = uuid.uuid4()
-    request = MagicMock()
-    request.query_params = {}
     session = MagicMock(spec=Session)
     mock_has_permissions.return_value = True
     mock_get_projects_paginated_orm.return_value = MagicMock(data=[], total_rows=0)
 
-    get_projects_endpoint(request=request, session=session, user_id=user_id)
+    get_projects_endpoint(paging_details=paging_details, session=session, user_id=user_id)
 
     _, kwargs = mock_get_projects_paginated_orm.call_args
     assert kwargs["user_id"] is None
@@ -252,14 +248,12 @@ def test_get_projects_endpoint_500_when_paginated_orm_raises(
     """
     from fastapi import HTTPException
 
-    request = MagicMock()
-    request.query_params = {}
     session = MagicMock(spec=Session)
     mock_has_permissions.return_value = True
     mock_get_projects_paginated_orm.side_effect = RuntimeError("db connection dropped")
 
     with pytest.raises(HTTPException) as exc_info:
-        get_projects_endpoint(request=request, session=session, user_id=uuid.uuid4())
+        get_projects_endpoint(paging_details=paging_details, session=session, user_id=uuid.uuid4())
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Error occurred while fetching projects."
@@ -306,7 +300,7 @@ def test_get_projects_paginated_orm_total_cohort_from_query_stats(user_id, stats
         session=session,
         user_id=user_id,
         paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert len(response.data) == 1
@@ -326,8 +320,8 @@ def test_get_projects_paginated_orm_applies_search_and_owner_filters(user_id):
     session.exec.return_value.all.return_value = []
     session.exec.return_value.one_or_none.return_value = None
 
-    search_paging = get_paging_details({"search": "cancer"})
-    owner_filter = get_filter_details({"owner": str(user_id)})
+    search_paging = paging_params(search="cancer")
+    owner_filter = FilterInfo(owner=user_id)
 
     get_projects_paginated_orm(
         session=session,
@@ -395,7 +389,7 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
         session=session,
         user_id=user_id,
         paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert len(response.data) == 1
@@ -417,12 +411,11 @@ def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
 
     def conditions_for(project_type: str | None) -> list:
         session.exec.reset_mock()
-        params: dict[str, str | uuid.UUID] = {"projectType": project_type} if project_type else {}
         get_projects_paginated_orm(
             session=session,
             user_id=user_id,
             paging_details=paging_details,
-            filter_details=get_filter_details(params),
+            filter_details=FilterInfo(project_type=ProjectType(project_type) if project_type else None),
         )
         where = session.exec.call_args_list[0].args[0].whereclause
         return list(getattr(where, "clauses", [where]))

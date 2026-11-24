@@ -46,7 +46,7 @@ from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
+from flip_api.utils.paging_utils import IPagedResponse, PagingInfo
 from flip_api.utils.user_roles import profile_display_name
 
 
@@ -512,10 +512,10 @@ def queued_positions_by_model(session: Session) -> dict[UUID, int]:
 def get_all_models_service(
     session: Session,
     user_id: UUID | None,
-    query_params: dict,
+    paging: PagingInfo,
     status_filter: list[ModelStatus] | None = None,
     project_id: UUID | None = None,
-) -> tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]:
+) -> tuple[IPagedResponse[IAllModelsResponse], dict[str, int]]:
     """Estate-wide, access-scoped model list joined with project name, owner and run trusts (#726).
 
     Mirrors the projects-list access rule: when ``user_id`` is provided the query is restricted to
@@ -532,17 +532,15 @@ def get_all_models_service(
     Args:
         session (Session): The database session.
         user_id (UUID | None): The requesting user, or ``None`` to see every model (manager bypass).
-        query_params (dict): Raw query params (``pageNumber`` / ``pageSize`` / ``search``).
+        paging (PagingInfo): The page and search string.
         status_filter (list[ModelStatus] | None): Optional set of statuses to filter the list to.
         project_id (UUID | None): Optional project to scope the list — and the counts — to. The
             caller is responsible for the access check; this only narrows.
 
     Returns:
-        tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]: the page of rows, the
-        ``status value -> count`` map for the tiles, and the paging details.
+        tuple[IPagedResponse[IAllModelsResponse], dict[str, int]]: the page of rows and the
+        ``status value -> count`` map for the tiles.
     """
-    paging = get_paging_details(query_string_parameters=query_params)
-
     # Base conditions exclude the status filter so the tile counts see every status.
     base_conditions: list[Any] = [col(Model.deleted).is_(False), col(Projects.deleted).is_(False)]
     if user_id is not None:
@@ -612,7 +610,7 @@ def get_all_models_service(
         for model, project_name, owner_name in rows
     ]
 
-    return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts, paging
+    return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts
 
 
 def get_models_project_options_service(session: Session, user_id: UUID | None) -> list[IModelsProjectOption]:

@@ -61,6 +61,7 @@ from flip_api.project_services.services.project_services import (
     unstage_project_service,
     update_project_status,
 )
+from flip_api.utils.paging_utils import paging_params
 from flip_api.utils.project_manager import get_project_by_id
 
 MOCK_SERVICE_PATH = "flip_api.project_services.services.project_services"
@@ -629,7 +630,7 @@ class TestGetProjectModelsService:
         query_result.all.return_value = []
         mock_db_session.exec.side_effect = [count_result, query_result]
 
-        models, total = get_project_models_service(project_id, mock_db_session)
+        models = get_project_models_service(project_id, mock_db_session)
 
         assert models.data == []
         assert models.total_rows == 0
@@ -1096,7 +1097,7 @@ def test_get_trusts_approval_status_for_projects_returns_empty_for_empty_input()
 
 
 class TestGetProjectModelsServiceSearch:
-    """`get_project_models_service` accepts a `search` query-string param and
+    """`get_project_models_service` takes a search string and
     appends a case-insensitive name+description filter to both the model and
     count queries.
     """
@@ -1108,7 +1109,7 @@ class TestGetProjectModelsServiceSearch:
         get_project_models_service(
             project_id=uuid4(),
             session=mock_db_session,
-            query_params={"search": "segmentation"},
+            paging=paging_params(search="segmentation"),
         )
 
         # Two exec() calls: count then models. Both should carry the `like %seg%` predicate.
