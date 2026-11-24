@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# site.yml — the hub's only AWS host: the Central Hub SSM bastion, found from this root's Terraform
+# bastion.yml — the hub's only AWS host: the Central Hub SSM bastion, found from this root's Terraform
 # outputs. A trust node on AWS is provisioned by trust/deploy/ansible/aws-ec2.yml, from the
 # standalone trust/deploy/terraform/aws/ec2 root (FLIP#1528, FLIP#1438).
 

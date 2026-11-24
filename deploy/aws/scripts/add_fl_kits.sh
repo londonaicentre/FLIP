@@ -28,7 +28,7 @@
 # reads S3 at every trust registration, so the slots are claimable at the next one —
 # no Terraform, no restart.
 #
-# Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod> [YES=1]`
+# Invoked by `make -C deploy/aws add-fl-kits N=<n> HUB=<stag|prod> [YES=1]`
 # (the Makefile hands this script the environment CLASS as ENV_NAME=prod|stag),
 # which exports the env-file vars this script reads (AICENTRE_BUCKET_NAME,
 # FLARE_KIT_DATE or FLOWER_KIT_DATE, AWS_PROFILE, FL_BACKEND, HUB) plus N / YES.
@@ -86,7 +86,7 @@ esac
 
 AICENTRE_BUCKET_NAME="${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME must be set (run via make with HUB=<env>)}"
 FLARE_KIT_DATE="${FLARE_KIT_DATE:?FLARE_KIT_DATE must be set (run via make with HUB=<env>)}"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 NVFLARE_DIR="${REPO_ROOT}/fl-services/nvflare"
 WORKSPACE_PARENT="${NVFLARE_DIR}/provision/workspace-${ENV_NAME}"
 KEY_PREFIX="fl-flare-participant-kits/${FLARE_KIT_DATE}"

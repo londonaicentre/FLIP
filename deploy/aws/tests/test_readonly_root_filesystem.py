@@ -31,7 +31,7 @@ import pytest
 from tf_source import hcl_block, strip_comments
 
 AWS_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = AWS_DIR.parents[2]
+REPO_ROOT = AWS_DIR.parents[1]
 SOURCES = {
     path.relative_to(AWS_DIR).as_posix(): strip_comments(path.read_text())
     for path in sorted(AWS_DIR.rglob("*.tf"))

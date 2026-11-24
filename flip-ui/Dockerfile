@@ -13,7 +13,7 @@
 # Local development image — used by deploy/compose.development.yml with a bind
 # mount of the repo into /app. Stag/prod do not run flip-ui as a container;
 # the UI is served as a static bundle from S3 + CloudFront (see
-# deploy/providers/AWS/cloudfront.tf and `make deploy-ui`).
+# deploy/aws/cloudfront.tf and `make deploy-ui`).
 #
 # ⚠️  Do not use in production. This Dockerfile exists only to support the
 # local Vite dev server. Stag/prod do not consume it (no GHCR publish, no

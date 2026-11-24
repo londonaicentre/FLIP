@@ -27,7 +27,7 @@
 # gets `:stag` back from step 2, which is a no-op and correct.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_resolve_image_tags.sh
+#     bash deploy/aws/scripts/tests/test_resolve_image_tags.sh
 
 set -u
 

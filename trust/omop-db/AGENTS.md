@@ -49,7 +49,7 @@ tolerate the DICOM vocab the seed has already loaded):
 - **`trust/.data_version` is THE pin and must not move**: one value for the OMOP and Orthanc mock
   data together, a git tag on `aicentreflip/trust-data` (the dataset holds one copy of every artefact
   at an unversioned path; consumers fetch `resolve/<tag>/<path>`). Its path is hardcoded in
-  `deploy/providers/AWS/Makefile` (→ Ansible `-e trust_data_version=`), `trust/Makefile`, `trust/seed_trust.sh`, this
+  `deploy/aws/Makefile` (→ Ansible `-e trust_data_version=`), `trust/Makefile`, `trust/seed_trust.sh`, this
   Makefile, `seed_orthanc.py` and the spleen uploader; the Helm chart carries the same value as
   `trustData.version` (`TRUST_DATA_VERSION` in `generate_values.py`). Publish with
   `make -C trust publish-trust-data VERSION=<tag> …`, then bump the pin. Never upload a versioned

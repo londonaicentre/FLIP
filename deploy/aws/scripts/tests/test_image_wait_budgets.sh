@@ -23,7 +23,7 @@
 # coming.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_image_wait_budgets.sh
+#     bash deploy/aws/scripts/tests/test_image_wait_budgets.sh
 
 set -u
 

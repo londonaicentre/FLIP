@@ -30,7 +30,7 @@ a config change:
   one switch, so this guard asks for the variable.
 
 The ECS SuperLink is held to the same rule by
-``deploy/providers/AWS/tests/test_flower_superlink_runtime_install.py``, next to the Terraform it reads.
+``deploy/aws/tests/test_flower_superlink_runtime_install.py``, next to the Terraform it reads.
 
 Deliberately stdlib-only and executable as a plain script, like the other guards here —
 ``test_trust_kit_scripts.yml`` runs these with ``python <file>``, not pytest.

@@ -24,7 +24,7 @@
 # because the rollback relies on it to stop before it moves a service.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_reset_fl_server_local.sh
+#     bash deploy/aws/scripts/tests/test_reset_fl_server_local.sh
 
 set -u
 

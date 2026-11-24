@@ -11,12 +11,12 @@
 #
 
 # What HUB means (ENV, the env-file name, ENV_CLASS, …) is derived once in
-# ../../env_mode.mk, shared with every Makefile that reads HUB. Unlike the root
+# ../env_mode.mk, shared with every Makefile that reads HUB. Unlike the root
 # Makefile, an unset HUB is no estate here: every goal but the static ones below
 # refuses to run without HUB=stag|prod (FLIP#1377). Every estate is an LZA one; see
 # "Deploying onto an LZA estate" in README.md.
 READS_HUB_ENV_FILE := yes
-include ../../env_mode.mk
+include ../env_mode.mk
 
 # Goals that need no env file and call no AWS API. When every goal on the command line is one of
 # these, the parse-time env guards below stand aside, so a contributor without the gitignored
@@ -26,14 +26,14 @@ include ../../env_mode.mk
 override STATIC_GOALS := lint fmt-check tflint-lint checkov-lint help
 _GOALS_FROM_OUTSIDE := $(or $(findstring environment,$(origin MAKECMDGOALS)),$(findstring command,$(origin MAKECMDGOALS)),$(findstring override,$(origin MAKECMDGOALS)))
 override STATIC_ONLY := $(if $(_GOALS_FROM_OUTSIDE),,$(if $(MAKECMDGOALS),$(if $(filter-out $(STATIC_GOALS),$(MAKECMDGOALS)),,yes)))
-MAIN_ENV_FILE=../../../$(ENV_FILE_NAME)
+MAIN_ENV_FILE=../../$(ENV_FILE_NAME)
 ifeq ($(STATIC_ONLY),)
 $(if $(IS_DEPLOYED),,$(error HUB=stag or HUB=prod is required: these targets act on a deployed hub, and an unset HUB means development))
 endif
 
 # The trust node's two deployment shapes live beside the trust compose files, not in
 # this provider (#1213). Spelled once; every recipe that reaches them goes through these.
-REPO_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))../../..)
+REPO_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))../..)
 HELM_CHART_DIR := $(REPO_ROOT)/trust/deploy/helm
 ONPREM_ANSIBLE_DIR := $(REPO_ROOT)/trust/deploy/ansible
 
@@ -50,7 +50,7 @@ endif
 # after their .env* block; running `make plan/apply` directly from this directory
 # would otherwise leave the DOCKER_FL_* names empty and produce invalid ECS image
 # references like `ghcr.io/londonaicentre/:stag`.
-include ../../fl_backend.mk
+include ../fl_backend.mk
 
 LOCK ?= true
 
@@ -161,7 +161,7 @@ $(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_
 # `sensitive` with no default, so otherwise Terraform errors out mid-plan
 # with a generic "no value for required variable" that gives no hint about
 # where the value should come from.
-$(if $(FL_API_KEY),,$(error 🔑 FL_API_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-fl-api-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))`))
+$(if $(FL_API_KEY),,$(error 🔑 FL_API_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../flip-api generate-fl-api-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))`))
 endif
 
 # The GPUs fl-api on ECS writes into a job that declares none (mirrors compose).
@@ -408,13 +408,13 @@ update-env: ## Update environment file with Terraform outputs
 ansible-init: ## Configure the Central Hub SSM bastion: package upgrades, then the PostgreSQL client (retry if SSM drops)
 	@echo "☁️🔗 Configure the Central Hub SSM bastion"
 	@uv sync
-	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ansible-playbook site.yml
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ansible-playbook bastion.yml
 
 .PHONY: provision-bastion
 provision-bastion: ssh-config ## Install the minimal operator tooling on the Central Hub SSM bastion only
 	@echo "🔧 Provisioning the Central Hub SSM bastion..."
 	@uv sync
-	@uv run ansible-playbook site.yml --tags bastion --limit localhost,flip
+	@uv run ansible-playbook bastion.yml --tags bastion --limit localhost,flip
 	@echo "✅ Central Hub SSM bastion provisioned."
 
 .PHONY: deploy-centralhub
@@ -694,7 +694,7 @@ deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucke
 	@# Uses build:deploy (vite build only); test_flip_ui.yml runs the vue-tsc
 	@# typecheck. Its postbuild:deploy hook writes dist/js/window.js from $(MAIN_ENV_FILE), which
 	@# this Makefile exports. The public demo is published by deploy-demo, never here.
-	@cd ../../../flip-ui && npm ci && npm run build:deploy
+	@cd ../../flip-ui && npm ci && npm run build:deploy
 	@# The sync and its cache-control split are scripts/publish-ui.sh, shared with
 	@# .github/workflows/publish_ui.yml. There is no workload distribution to
 	@# invalidate (the networking account's edge distribution serves the bucket) and
@@ -703,7 +703,7 @@ deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucke
 	@# deploy is visible on the next index.html fetch with no invalidation at all.
 	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
-	$(_AWS_ENV) ./scripts/publish-ui.sh ../../../flip-ui/dist "$$UI_BUCKET"
+	$(_AWS_ENV) ./scripts/publish-ui.sh ../../flip-ui/dist "$$UI_BUCKET"
 
 .PHONY: deploy-demo
 deploy-demo: ## Build the public demo from the working tree and publish it to its own bucket (CI does this after every apply, FLIP#2012)
@@ -713,8 +713,8 @@ deploy-demo: ## Build the public demo from the working tree and publish it to it
 	@DEMO_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipDemoBucketName 2>/dev/null); \
 	[ -n "$$DEMO_BUCKET" ] || { echo "❌ Terraform output FlipDemoBucketName is empty: set FLIP_DEMO_BUCKET_NAME and apply first."; exit 1; }; \
 	echo "🖼️  Building the public demo from working tree..."; \
-	(cd ../../../flip-ui && npm ci && npm run build:demo) && \
-	$(_AWS_ENV) ./scripts/publish-ui.sh ../../../flip-ui/dist-demo "$$DEMO_BUCKET"
+	(cd ../../flip-ui && npm ci && npm run build:demo) && \
+	$(_AWS_ENV) ./scripts/publish-ui.sh ../../flip-ui/dist-demo "$$DEMO_BUCKET"
 
 # Identity of the trust kit a hub-admin target acts on — a trust CODE that selects its kit
 # file trust/.env.<KIT>.<env>. REQUIRED on the command line (no default, so a prod op can't
@@ -798,12 +798,12 @@ endif
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
 	@echo "   2. Start the trust stack (sudo: this playbook leaves the login user without docker access):"
-	@echo "      cd ../../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)"
+	@echo "      cd ../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)"
 
 .PHONY: down
 down:
 	@echo "🛑 Stopping all containers..."
-	DOCKER_CONTEXT=flip $(MAKE) -C ../../../ down
+	DOCKER_CONTEXT=flip $(MAKE) -C ../../ down
 	@echo "✅ Containers stopped and removed"
 
 .PHONY: status
@@ -860,7 +860,7 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	@:$(if $(KIT),,$(call old_kits_hint,$(REPO_ROOT)/trust/))
 	@KIT=$(KIT) ENV_CLASS=$(ENV_CLASS) MAIN_ENV_FILE=$(abspath $(MAIN_ENV_FILE)) KIT_FILES="$(REGISTER_KIT_FILES)" bash scripts/register-trusts.sh
 	@# The XNAT stack passwords are trust-side secrets the hub never mints, as in the dev register-trust.
-	@for kit in $(REGISTER_KIT_FILES); do $(MAKE) -C ../../../flip-api generate-xnat-credentials ENV_FILE="$$kit" FORCE= || exit 1; done
+	@for kit in $(REGISTER_KIT_FILES); do $(MAKE) -C ../../flip-api generate-xnat-credentials ENV_FILE="$$kit" FORCE= || exit 1; done
 
 .PHONY: rotate-trust-keys
 rotate-trust-keys: ## Reissue one trust's api + internal-service keys in place (FLIP#1569); staged by default (FLIP#1714)
@@ -886,7 +886,7 @@ package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for a
 	## kit file, slices the operator's portion of the FL participant kit out of
 	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one
 	## supernode_credentials_<N> for flower), and tarballs the kit file + slice
-	## into deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
+	## into deploy/aws/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
 	## Hand the tarball to the operator over an encrypted channel.
 	## Required: KIT=<CODE> (e.g. KIT=GSTT); the FL kit slice is the kit's FL_KIT_SLOT.
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required (e.g. KIT=GSTT)"; exit 1)

@@ -79,7 +79,7 @@ uv run --no-project --with pytest --with jinja2 --with click --with diagrams pyt
 ## Terraform CI (FLIP#962)
 
 Terraform runs in GitHub Actions as well as from a laptop. `terraform_plan.yml`
-plans staging on every PR touching `deploy/providers/AWS/**`; `terraform_apply.yml`
+plans staging on every PR touching `deploy/aws/**`; `terraform_apply.yml`
 applies on every push to `develop` (stag) and `main` (prod), then its `ui` job
 publishes flip-ui through the reusable `publish_ui.yml`; `terraform_drift.yml` plans
 nightly and raises one issue per environment; `staging_lifecycle.yml` powers staging
@@ -270,7 +270,7 @@ Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-pl
 
 ## Image tags, deploys and the FL quiesce
 
-Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `HUB=prod` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
+Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/aws/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `HUB=prod` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
 
 ## Infrastructure
 

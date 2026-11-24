@@ -19,7 +19,7 @@ must be exactly the origin every fl-api admits (``BUNDLE_URL_ALLOWED_ORIGINS``, 
 change to one file alone 400s every bundle download, which only a live training run would show. No
 fl-server holds store credentials or a bucket name: it runs job code, and uploads through URLs flip-api
 presigns. The Terraform side has the same guard in
-``deploy/providers/AWS/tests/test_fl_api_bundle_allow_list.py``. Last, the store's image must stay a pinned
+``deploy/aws/tests/test_fl_api_bundle_allow_list.py``. Last, the store's image must stay a pinned
 RustFS release no older than the first one whose presigned-POST uploads work (FLIP#1534).
 
 Standard library only and run as a plain script (``python <file>``), like every test in this directory.

@@ -26,7 +26,7 @@
 # avoiding outright.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_check_fl_plan_impact.sh
+#     bash deploy/aws/scripts/tests/test_check_fl_plan_impact.sh
 
 set -u
 

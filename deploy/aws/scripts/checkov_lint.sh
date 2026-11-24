@@ -18,7 +18,7 @@
 # `terraform fmt`/`validate` only check syntax and schema — nothing stops an
 # overly-broad IAM statement or a hardening regression from merging silently.
 # This script runs a curated, PROMOTED subset of checkov's checks over
-# deploy/providers/AWS statically: no cloud credentials, no terraform init, no
+# deploy/aws statically: no cloud credentials, no terraform init, no
 # plan — safe on fork PRs and under `act`.
 #
 # IAM policy content (FLIP#1052) — both syntaxes are covered: checkov evaluates
@@ -44,7 +44,7 @@
 # scanned (--skip-download keeps the run offline and fork-safe).
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/checkov_lint.sh
+#     bash deploy/aws/scripts/checkov_lint.sh
 # The checkov command can be overridden, e.g. CHECKOV="uvx checkov==3.3.15" —
 # an explicit override also opts out of the version assertion.
 

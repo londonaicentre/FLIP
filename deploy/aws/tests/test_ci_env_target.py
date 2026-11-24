@@ -15,7 +15,7 @@
 
 """The CI compose script's table must agree with ``deploy/env_mode.mk`` and the Makefile.
 
-``scripts/compose-ci-env.sh`` writes the env file that ``deploy/providers/AWS/Makefile``
+``scripts/compose-ci-env.sh`` writes the env file that ``deploy/aws/Makefile``
 ``include``s, and it names that file from the HUB it is given. Two failures are
 possible and neither is loud:
 

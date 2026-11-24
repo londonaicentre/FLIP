@@ -84,7 +84,7 @@ class TestResolverWiring:
         # deploy/fl_backend.mk's DOCKER_FL_API_NAME, which is what Terraform
         # receives as var.fl_api_name. A mismatch probes a repository that does
         # not exist and silently takes the fallback path.
-        backend_mk = (AWS_DIR.parent.parent / "fl_backend.mk").read_text()
+        backend_mk = (AWS_DIR.parent / "fl_backend.mk").read_text()
         for name in ("flare-fl-api", "flower-fl-api", "flare-fl-server", "flower-superlink"):
             assert name in backend_mk, f"{name} is not in deploy/fl_backend.mk"
             assert f'"{name}"' in RESOLVER, f"{name} is not resolved by resolve-image-tags.sh"

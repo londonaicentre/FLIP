@@ -36,7 +36,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 LIFECYCLE = WORKFLOWS / "staging_lifecycle.yml"
 APPLY = WORKFLOWS / "terraform_apply.yml"
@@ -221,7 +221,7 @@ def test_the_hold_runs_outside_the_apply_run() -> None:
 
 def test_the_staging_apply_role_trusts_the_power_workflow() -> None:
     """The power job runs from staging_lifecycle.yml, so the apply role has to accept that ref."""
-    module = (REPO_ROOT / "deploy" / "providers" / "AWS" / "modules" / "terraform_ci_bootstrap").resolve()
+    module = (REPO_ROOT / "deploy" / "aws" / "modules" / "terraform_ci_bootstrap").resolve()
     main = (module / "main.tf").read_text()
     assert "power_workflow_ref" in main, "the staging power workflow needs its own job_workflow_ref local"
     assert 'var.environment == "stag" ? [local.power_workflow_ref] : []' in main, (

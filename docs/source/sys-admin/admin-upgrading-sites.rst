@@ -52,7 +52,7 @@ Two rules apply throughout:
      - ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``
    * - Central Hub
      - FLIP admin
-     - ``make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
+     - ``make -C deploy/aws deploy-centralhub HUB=prod TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
 
 .. contents::
    :local:
@@ -491,7 +491,7 @@ until it is re-keyed. On the admin workstation:
 
    .. code-block:: shell
 
-      cd deploy/providers/AWS
+      cd deploy/aws
       uv run --no-project --with boto3 python scripts/reconcile_ci_env.py \
           --env prod --compare ../../../.env.prod
 
@@ -506,7 +506,7 @@ until it is re-keyed. On the admin workstation:
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
+      make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=prod
 
 Then mark *Refreshed kit needed: yes* in the release's Site upgrade section, with the keys that changed, so operators
 replace the block before upgrading.
@@ -525,11 +525,11 @@ Upgrading the hub
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z
+   make -C deploy/aws deploy-centralhub HUB=prod TAG=vX.Y.Z
 
 .. seealso::
 
-   :gh:`deploy/providers/AWS/README.md` and *Cutting a release* in :gh:`CONTRIBUTING.md` for the full hub procedure.
+   :gh:`deploy/aws/README.md` and *Cutting a release* in :gh:`CONTRIBUTING.md` for the full hub procedure.
 
 Approved cohorts after an upgrade
 =================================

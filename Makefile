@@ -414,36 +414,36 @@ restart-no-trust: _check-compose-project-owner
 	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
 ci:
 	act --env-file .env.development
-# Runs the script directly; `make -C deploy/providers/AWS lint` runs it too, with
+# Runs the script directly; `make -C deploy/aws lint` runs it too, with
 # terraform fmt and tflint. Both are credential-free and need no deploy env file.
 checkov-lint:
-	bash deploy/providers/AWS/scripts/checkov_lint.sh
-# Static tflint lint over deploy/providers/AWS: unused declarations, missing provider
+	bash deploy/aws/scripts/checkov_lint.sh
+# Static tflint lint over deploy/aws: unused declarations, missing provider
 # version constraints, AWS argument values the API would reject. Credential-free;
 # needs tflint at the version pinned in the script, and downloads the pinned AWS
 # ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
-	bash deploy/providers/AWS/scripts/tflint_lint.sh
+	bash deploy/aws/scripts/tflint_lint.sh
 # Copy the third-party images a trust node runs (trust/deploy/mirror-images.manifest) into
 # ghcr.io/londonaicentre/mirror/ by digest (FLIP#1721). CI does this on develop/main
 # (.github/workflows/mirror_images.yml); locally it needs a GHCR login with write:packages.
 # CHECK=1 pushes nothing and fails on a missing or drifted mirror.
 mirror-images:
 	bash scripts/mirror_images.sh $(if $(CHECK),--check)
-# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
-# (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
+# Re-render the two committed Central Hub AWS diagrams under deploy/aws/docs/
+# (central-hub-aws-lza-{network,data}.png) from deploy/aws/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
 # so it otherwise runs the identical render in a throwaway python:3.13-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across
 # runs), and a host `dot` of another graphviz version produces a different file for an unchanged
 # diagram, so don't commit a re-render that only differs by graphviz. Runs the script directly
-# rather than via deploy/providers/AWS/Makefile, whose env guards need the gitignored deploy env
+# rather than via deploy/aws/Makefile, whose env guards need the gitignored deploy env
 # file for any goal but its static lint ones.
 aws-diagram:
 ifneq ($(shell command -v dot 2>/dev/null),)
-	cd deploy/providers/AWS && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
+	cd deploy/aws && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
 else
-	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/providers/AWS python:3.13-slim sh -c \
+	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/aws python:3.13-slim sh -c \
 	  "apt-get update -qq >/dev/null && apt-get install -y -qq graphviz >/dev/null && \
 	   pip -q install --root-user-action=ignore diagrams >/dev/null && \
 	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
@@ -454,7 +454,7 @@ ifeq ($(IS_DEPLOYED),)
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
 else
 	@echo "ℹ️  flip-ui is served from S3 + CloudFront when HUB=$(HUB); no container to start."
-	@echo "    CI publishes it after each apply; to publish by hand, run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\`."
+	@echo "    CI publishes it after each apply; to publish by hand, run \`make -C deploy/aws deploy-ui HUB=$(HUB)\`."
 endif
 ui-off: _check-compose-project-owner
 ifeq ($(IS_DEPLOYED),)
@@ -582,7 +582,7 @@ release-main-check: _release-tag
 	@python3 scripts/release/main_check.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(OWED),--owed "$(OWED)")
 
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
-UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
+UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask deploy/aws flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
 
 # Regenerate every uv.lock so it matches its pyproject.toml. Run after changing
 # dependencies in any service, or to refresh all lockfiles in one pass.
@@ -670,7 +670,7 @@ _wait-for-hub:
 # A deployed hub runs on ECS, out of reach of the local flip-api these targets exec into: they
 # would mint keys in the local database and write them into the real kit (FLIP#938).
 _refuse-deployed-hub:
-	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/providers/AWS $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)$(if $(filter 1,$(REVOKE_OLD)), REVOKE_OLD=1)'"; exit 1; }
+	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/aws $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)$(if $(filter 1,$(REVOKE_OLD)), REVOKE_OLD=1)'"; exit 1; }
 
 # REVOKE_OLD is the leaked-key switch (FLIP#1714). Anything other than empty, 0 or 1 (`true`, `yes`)
 # is refused rather than read as "stage", which would leave a leaked key valid.
@@ -760,7 +760,7 @@ new-trust:
 # $(MAIN_ENV_FILE) values. Preserves credentials. Safe to run repeatedly. Use
 # after rotating AES_KEY_BASE64 or bumping image tags on the hub side — does NOT
 # redistribute the updated kit file to remote operators (still out-of-band).
-# A deployed hub's `make -C deploy/providers/AWS register-trusts` runs this same refresh
+# A deployed hub's `make -C deploy/aws register-trusts` runs this same refresh
 # itself (FLIP#1476): its flip-api task env carries only some of the hub-shared vars.
 #
 # Works identically for dev/stag/prod: the Hub-shared values live in
@@ -815,7 +815,7 @@ check-aws-access:
 	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
 		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
 		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. Only the"; \
-		echo "    AWS-backed targets need it — deploy/providers/AWS, FL kit uploads, the optional OMOP vocabulary load.)"; \
+		echo "    AWS-backed targets need it — deploy/aws, FL kit uploads, the optional OMOP vocabulary load.)"; \
 		exit 1; \
 	fi
 	@echo "✅ AWS access confirmed."

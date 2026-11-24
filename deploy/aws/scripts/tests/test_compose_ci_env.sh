@@ -24,13 +24,13 @@
 # way to make CI plan from an empty string months later.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_compose_ci_env.sh
+#     bash deploy/aws/scripts/tests/test_compose_ci_env.sh
 
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AWS_DIR="$(cd "${HERE}/../.." && pwd)"
-REPO_ROOT="$(cd "${AWS_DIR}/../../.." && pwd)"
+REPO_ROOT="$(cd "${AWS_DIR}/../.." && pwd)"
 SCRIPT="${AWS_DIR}/scripts/compose-ci-env.sh"
 MAKEFILE="${AWS_DIR}/Makefile"
 WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
@@ -143,7 +143,7 @@ expect_stderr() {
 }
 
 # Read a key back out of the composed file the way the real Makefile does: include
-# it, re-export it through a `TF_VAR_…=${KEY}` line exactly as deploy/providers/AWS/Makefile
+# it, re-export it through a `TF_VAR_…=${KEY}` line exactly as deploy/aws/Makefile
 # does, and read the result out of the recipe's *environment*. Going through `env`
 # rather than interpolating $(KEY) into a shell command is deliberate — the shell
 # would strip quotes and expand `$word` itself, so an interpolated probe reports

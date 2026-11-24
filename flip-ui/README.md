@@ -45,13 +45,13 @@ Set `UI_PORT` to a port between 44350 and 44359. Sign-in only works on a port th
 The UI is served as **static assets from S3 behind CloudFront** at the canonical subdomain
 (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront relays `/api/*` to the internal NLB's web listener, so users and
 trusts keep hitting the same URLs. There is no flip-ui Docker container on stag/prod EC2 — only flip-api and the
-FL services. See [deploy/providers/AWS/README.md](../deploy/providers/AWS/README.md#flip-ui-on-s3--cloudfront)
+FL services. See [deploy/aws/README.md](../deploy/aws/README.md#flip-ui-on-s3--cloudfront)
 for the full rollout.
 
 Deploy from the working tree with:
 
 ```bash
-cd deploy/providers/AWS
+cd deploy/aws
 make deploy-ui HUB=stag     # or HUB=prod for prod
 ```
 
@@ -105,7 +105,7 @@ The build regenerates `dist-demo/js/window.js` from
 [`scripts/generate-demo-window-js.sh`](scripts/generate-demo-window-js.sh), which reads no
 environment and points at no real backend. The demo is served at the root of its own host (FLIP#2012),
 never on the real app's origin: `.github/workflows/publish_demo.yml` publishes `dist-demo/` to its own
-bucket after each apply, and `make -C deploy/providers/AWS deploy-demo HUB=stag|prod` is the manual
+bucket after each apply, and `make -C deploy/aws deploy-demo HUB=stag|prod` is the manual
 fallback.
 
 The demo is a point-in-time capture, not a live system, and says so twice: `window.RELEASE_VERSION`

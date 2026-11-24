@@ -53,7 +53,7 @@ YES="${YES:-}"
 ECS_CLUSTER="${ECS_CLUSTER:-flip-cluster}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 FLOWER_DIR="${REPO_ROOT}/fl-services/flower"
 KEY_PREFIX="fl-flower-participant-kits/${FLOWER_KIT_DATE}"
 BASE_S3="s3://${AICENTRE_BUCKET_NAME}/${KEY_PREFIX}"

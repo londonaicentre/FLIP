@@ -329,13 +329,13 @@ Deploying
 
 **CI applies this estate**, authenticated by GitHub OIDC with no long-lived AWS keys:
 
-- every pull request into ``main`` or ``develop`` that touches ``deploy/providers/AWS/**`` plans LZA staging;
+- every pull request into ``main`` or ``develop`` that touches ``deploy/aws/**`` plans LZA staging;
 - a push to ``develop`` applies LZA staging;
 - a merge to ``main`` applies **LZA production**;
 - a nightly plan reports drift.
 
 To point a GitHub environment at another account, change its values (the ``TF_HUB`` variable and the two role ARNs);
-see "Repointing CI at the LZA accounts" in :gh:`deploy/providers/AWS/README.md`.
+see "Repointing CI at the LZA accounts" in :gh:`deploy/aws/README.md`.
 
 .. list-table::
    :header-rows: 1
@@ -364,7 +364,7 @@ Break-glass deploy from a laptop
 
 .. code-block:: shell
 
-   cd deploy/providers/AWS
+   cd deploy/aws
    export AWS_PROFILE=stag   # or: prod
    export HUB=stag           # or: prod
 
@@ -409,7 +409,7 @@ The Makefile refuses to run when ``AWS_PROFILE`` does not match ``HUB``, and nee
 Further reading
 ***************
 
-- :gh:`deploy/providers/AWS/README.md` — maintainer notes: how the stack is built, the Terraform CI pipeline and
+- :gh:`deploy/aws/README.md` — maintainer notes: how the stack is built, the Terraform CI pipeline and
   the design rationale.
 - :ref:`security` — the "Cloud infrastructure" controls, including the estate-level ones the accelerator adds.
 - The AI Centre's estate configuration (``londonaicentre/lza``) and its edge stack

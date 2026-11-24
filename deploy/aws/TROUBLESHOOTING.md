@@ -73,7 +73,7 @@ If the existing resource has a mismatched attribute (e.g., different public key 
 
 **Root cause**: The `community.general.terraform` Ansible module always runs `terraform validate` before `terraform init`, and the S3 backend in `backend.tf` has no `bucket` or `region` (they are passed at init time via `-backend-config`).
 
-**Fix**: The `site.yml` playbook has been updated to use raw `terraform init` + `terraform output -json` instead of the module. If you encounter this on other branches:
+**Fix**: The `bastion.yml` playbook (then `site.yml`) has been updated to use raw `terraform init` + `terraform output -json` instead of the module. If you encounter this on other branches:
 
 ```yaml
 - name: initialize Terraform backend
@@ -171,7 +171,7 @@ gh workflow run fl-docker-build-nvflare.yml --ref <branch>   # or fl-docker-buil
 
 ### 2.7 `make deploy-ui` fails with `InvalidAccessKeyId` despite a successful SSO login
 
-**Symptom**: `make -C deploy/providers/AWS deploy-ui HUB=stag` builds the bundle successfully, then fails on the first `aws s3` call:
+**Symptom**: `make -C deploy/aws deploy-ui HUB=stag` builds the bundle successfully, then fails on the first `aws s3` call:
 
 ```
 📦 Syncing static assets to s3://flipstag/ ...
@@ -187,7 +187,7 @@ make: *** [Makefile:388: deploy-ui] Error 1
 **Fix**: Prefix every `aws` call in the `deploy-ui` recipe with `$(_AWS_ENV)` (which expands to `unset AWS_* … ; AWS_PROFILE=$(AWS_PROFILE)`). Already applied — if you see this on a fresh checkout, confirm the recipe matches:
 
 ```bash
-sed -n '/^deploy-ui:/,/^$/p' deploy/providers/AWS/Makefile | grep -c '_AWS_ENV'
+sed -n '/^deploy-ui:/,/^$/p' deploy/aws/Makefile | grep -c '_AWS_ENV'
 # Expect 6 (2× terraform output + s3 sync + 2× s3 cp + cloudfront create-invalidation)
 ```
 
@@ -272,7 +272,7 @@ make status HUB=stag
 The bastion has `psql` installed and its security group is allowed to reach RDS on port 5432. It deliberately has no Secrets Manager permission, so obtain the database password through the approved operator channel and enter it only at the interactive prompt.
 
 ```bash
-cd deploy/providers/AWS
+cd deploy/aws
 make ssh-config HUB=stag
 terraform output -raw DbEndpoint
 ssh flip

@@ -14,7 +14,7 @@
 
 """Render the AWS EC2 trust node architecture diagram from the Terraform in this directory.
 
-Diagram-as-code in the style of ``deploy/providers/AWS/architecture/central_hub.py``: nodes, clusters and edges
+Diagram-as-code in the style of ``deploy/aws/architecture/central_hub.py``: nodes, clusters and edges
 are declared with the ``diagrams`` library and rendered through graphviz, and ``TERRAFORM_ADDRESSES`` maps every
 drawn label to the Terraform addresses it stands for (``module.network.<address>`` for the network module's own
 resources). ``tests/test_architecture_diagram.py`` checks that map against the ``.tf`` files in both directions, so a

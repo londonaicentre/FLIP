@@ -32,7 +32,7 @@
 # (FL_BACKEND), and asserts both.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_setup_github_environments.sh
+#     bash deploy/aws/scripts/tests/test_setup_github_environments.sh
 
 set -u
 

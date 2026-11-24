@@ -22,7 +22,7 @@ subprocesses across the reject / accept / retry matrix. No image build and no
 Postgres are needed: both scripts are POSIX ``sh`` and reach for an external
 command only on the accept path, so the few they do need (``docker-entrypoint.sh``
 for xnat-db, ``psql`` for xnat-web) are stubbed onto ``PATH`` — the same
-mock-bin idiom as ``deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh``.
+mock-bin idiom as ``deploy/aws/scripts/tests/test_add_fl_kits.sh``.
 
 The weak values are imported from ``test_password_guards`` rather than restated,
 so a value added to the canonical set is automatically exercised here too.

@@ -135,7 +135,7 @@ with `values-aks.yaml`, `values-small-node.yaml` and no vocabulary load.
 ## Joining a hub
 
 The hub admin registers the trust and packages its kit exactly as for an on-prem trust
-(`new-trust`, `make -C deploy/providers/AWS register-trusts`, `sync-trust-kit`,
+(`new-trust`, `make -C deploy/aws register-trusts`, `sync-trust-kit`,
 `package-onprem-trust-kit`; see [Deploy a FLIP node on an Azure VM](../../../../docs/source/deploy-flip/deploy-flip-node-azure.rst)), then, in `vm/`:
 
 ```bash

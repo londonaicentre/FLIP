@@ -29,7 +29,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO / ".github" / "workflows"
-MODULE_VARIABLES = REPO / "deploy" / "providers" / "AWS" / "modules" / "terraform_ci_bootstrap" / "variables.tf"
+MODULE_VARIABLES = REPO / "deploy" / "aws" / "modules" / "terraform_ci_bootstrap" / "variables.tf"
 
 
 def code(workflow: str) -> str:
@@ -81,7 +81,7 @@ class PublishUi(unittest.TestCase):
         assert "needs: build" in publish
         assert "role-to-assume: ${{ vars.TF_UI_PUBLISH_ROLE_ARN }}" in publish
         assert "npm" not in publish
-        assert "deploy/providers/AWS/scripts/publish-ui.sh dist" in publish
+        assert "deploy/aws/scripts/publish-ui.sh dist" in publish
         assert '"${FLIP_UI_BUCKET_NAME}"' in publish
         others = [path.name for path in WORKFLOWS.glob("*.yml") if path.name != "publish_ui.yml"]
         assert not [name for name in others if "TF_UI_PUBLISH_ROLE_ARN" in code(name)]

@@ -12,7 +12,7 @@
 
 # ROLE (FLIP#936): Flower overlay of the local prod-image harness (see the note in
 # compose.prod.yml) — not a deployment target. The canonical production equivalent is the Flower
-# branch of the ECS task definitions (deploy/providers/AWS/ecs_tasks.tf with fl_backend=flower, FLIP#566),
+# branch of the ECS task definitions (deploy/aws/ecs_tasks.tf with fl_backend=flower, FLIP#566),
 # which mirrors this overlay: SuperLink 8000 behind the fleet proxy on 9092 (FLIP#1517; its own
 # container here, an ECS sidecar there), TLS + SuperNode-auth command flags, and the
 # register-supernode-keys one-shot (ecs_flower.tf).

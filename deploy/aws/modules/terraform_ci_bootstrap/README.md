@@ -42,7 +42,7 @@ Pin a **full commit SHA**, through the GitHub archive URL:
 
 ```hcl
 module "flip_stag_terraform_ci" {
-  source    = "https://github.com/londonaicentre/FLIP/archive/<SHA>.tar.gz//FLIP-<SHA>/deploy/providers/AWS/modules/terraform_ci_bootstrap"
+  source    = "https://github.com/londonaicentre/FLIP/archive/<SHA>.tar.gz//FLIP-<SHA>/deploy/aws/modules/terraform_ci_bootstrap"
   providers = { aws = aws.flip_stag }
 
   oidc_provider_arn  = aws_iam_openid_connect_provider.github_flip_stag.arn

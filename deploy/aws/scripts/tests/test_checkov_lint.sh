@@ -26,7 +26,7 @@
 # and `-d <dir> ...` — driven by MOCK_* variables per case.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_checkov_lint.sh
+#     bash deploy/aws/scripts/tests/test_checkov_lint.sh
 
 set -u
 
@@ -39,7 +39,7 @@ trap 'rm -rf "${TEST_ROOT}"' EXIT
 
 # Repo skeleton: AWS_ROOT = the copied script's grandparent, the canary at the path the
 # script expects beneath it. Per-case fixtures are written under FAKE_AWS_ROOT.
-FAKE_AWS_ROOT="${TEST_ROOT}/repo/deploy/providers/AWS"
+FAKE_AWS_ROOT="${TEST_ROOT}/repo/deploy/aws"
 mkdir -p "${FAKE_AWS_ROOT}/scripts/tests/checkov_canary"
 cp "${SCRIPT_SRC}" "${FAKE_AWS_ROOT}/scripts/checkov_lint.sh"
 cp "${CANARY_SRC}" "${FAKE_AWS_ROOT}/scripts/tests/checkov_canary/main.tf"

@@ -57,7 +57,7 @@ class TestFileExistence:
 
     def test_check_file_exists_real_file(self) -> None:
         """Test checking existence of a real file."""
-        # This test runs from deploy/providers/AWS, so Makefile should exist
+        # This test runs from deploy/aws, so Makefile should exist
         result = check_file_exists("Makefile", "Makefile")
         assert result is True
 
@@ -142,12 +142,12 @@ class TestIntegration:
 
     def test_verify_actual_files_exist(self) -> None:
         """Test that actual deployment files exist."""
-        # These tests run from deploy/providers/AWS
+        # These tests run from deploy/aws
         assert check_file_exists("update_ssm_ssh_config.py", "SSH config script")
         assert check_file_exists("check_status.py", "Status checker")
         assert check_file_exists("tests/test_update_ssm_ssh_config.py", "Unit tests")
         assert check_file_exists("Makefile", "Makefile")
-        assert check_file_exists("site.yml", "Ansible playbook")
+        assert check_file_exists("bastion.yml", "Ansible playbook")
 
     def test_verify_actual_makefile_targets(self) -> None:
         """Test that actual Make targets exist."""

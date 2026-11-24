@@ -285,7 +285,7 @@ def main() -> int:
         print(f"❌ Kit file not found: {path}")
         print("   Register the trust first:")
         print(f'     make new-trust TRUST_CODE={args.kit} TRUST_NAME="..."')
-        print(f"     make -C deploy/providers/AWS register-trusts KIT={args.kit} HUB={env}")
+        print(f"     make -C deploy/aws register-trusts KIT={args.kit} HUB={env}")
         print(f"     make sync-trust-kit KIT={args.kit} HUB={env}")
         return 1
 

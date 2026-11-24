@@ -38,7 +38,7 @@ from tf_source import hcl_block, strip_comments
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 PARAMETER_STORE_TF = AWS_PROVIDER_DIR / "parameter_store.tf"
-WORKFLOWS_DIR = AWS_PROVIDER_DIR.parents[2] / ".github" / "workflows"
+WORKFLOWS_DIR = AWS_PROVIDER_DIR.parents[1] / ".github" / "workflows"
 RESOURCE = 'resource "aws_ssm_parameter" "ci_host_aws_public_key"'
 
 

@@ -176,7 +176,7 @@ Provision the host with Ansible
 .. code-block:: shell
 
    read -rsp 'Sudo password: ' ANSIBLE_BECOME_PASS && export ANSIBLE_BECOME_PASS
-   make -C deploy/providers/AWS provision-local-trust
+   make -C deploy/aws provision-local-trust
 
 It installs Docker and the base packages, creates the directories under ``/opt/flip``, pre-creates the FL kit tree
 under ``/opt/flip/fl-kit`` and copies the logging stack's config into place.

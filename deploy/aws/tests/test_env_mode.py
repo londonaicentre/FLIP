@@ -32,13 +32,13 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 ENV_MODE_MK = REPO_ROOT / "deploy" / "env_mode.mk"
 AWS_DIR = Path(__file__).resolve().parents[1]
 #: The Makefiles that read the hub env file, and what each sets before including env_mode.mk.
 HUB_ENV_MAKEFILES = (
     "Makefile",
-    "deploy/providers/AWS/Makefile",
+    "deploy/aws/Makefile",
     "flip-ui/Makefile",
     "fl-services/nvflare/Makefile",
     "fl-services/flower/Makefile",

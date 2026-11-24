@@ -31,7 +31,7 @@ import pytest
 from tf_source import hcl_block, strip_comments
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = AWS_PROVIDER_DIR.parents[2]
+REPO_ROOT = AWS_PROVIDER_DIR.parents[1]
 COGNITO_PY = REPO_ROOT / "flip-api" / "src" / "flip_api" / "auth" / "identity" / "cognito.py"
 IAM_ECS_TF = AWS_PROVIDER_DIR / "iam_ecs.tf"
 
@@ -108,7 +108,7 @@ def test_cognito_statement_grants_every_called_action() -> None:
     missing = _required_actions() - _cognito_statement_actions()
     assert not missing, (
         f"flip-api calls Cognito operations its task role cannot perform: {sorted(missing)}. "
-        "Add them to the CognitoUserPool statement in deploy/providers/AWS/iam_ecs.tf."
+        "Add them to the CognitoUserPool statement in deploy/aws/iam_ecs.tf."
     )
 
 
@@ -122,5 +122,5 @@ def test_cognito_statement_grants_nothing_uncalled() -> None:
     unused = _cognito_statement_actions() - _required_actions() - GRANTED_WITHOUT_CALL.keys()
     assert not unused, (
         f"The CognitoUserPool statement grants actions cognito.py never calls: {sorted(unused)}. "
-        "Remove them from deploy/providers/AWS/iam_ecs.tf, or list them in GRANTED_WITHOUT_CALL with a reason."
+        "Remove them from deploy/aws/iam_ecs.tf, or list them in GRANTED_WITHOUT_CALL with a reason."
     )

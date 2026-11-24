@@ -54,7 +54,7 @@ KIT_LINES = ["FL_BACKEND=nvflare", "FLARE_KIT_DATE=20261009", "FL_KIT_SLOT=Trust
 
 def _pack(tmp_path: Path, kit_lines: list[str]) -> tuple[subprocess.CompletedProcess, Path]:
     """Run the packager with KIT=AZ1 HUB=stag over a kit of ``kit_lines``; returns the run and the aws calls log."""
-    scripts = tmp_path / "repo" / "deploy" / "providers" / "AWS" / "scripts"
+    scripts = tmp_path / "repo" / "deploy" / "aws" / "scripts"
     scripts.mkdir(parents=True)
     for name in ("package-onprem-trust-kit.sh", "utils.sh"):
         shutil.copy2(SCRIPTS / name, scripts / name)
@@ -90,7 +90,7 @@ def _pack(tmp_path: Path, kit_lines: list[str]) -> tuple[subprocess.CompletedPro
 
 
 def _tarballs(tmp_path: Path) -> list[Path]:
-    return list((tmp_path / "repo" / "deploy" / "providers" / "AWS" / "build" / "trust-kits").glob("*.tar.gz"))
+    return list((tmp_path / "repo" / "deploy" / "aws" / "build" / "trust-kits").glob("*.tar.gz"))
 
 
 def test_a_code_named_kit_packs_its_slot(tmp_path: Path) -> None:

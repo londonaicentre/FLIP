@@ -116,7 +116,7 @@ provision-add-client-prod:
 	$(SCRIPTS)/add-client.sh $(NET_NUMBER) $(CLIENT_NAME) $(PROVISION)/net-$(NET_NUMBER)_project_prod.yml $(PROD_WORKSPACE_DIR)
 
 # Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
-# the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
+# the deploy flow pulls from (deploy/aws Makefile `provision-local-trust`,
 # which reads s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/
 # net-N/services/<slot>/). Run with HUB=stag|prod so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
 # load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real. The

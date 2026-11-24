@@ -43,7 +43,7 @@ from image_workflows import (  # noqa: E402
 )
 
 REPO = GITHUB_DIR.parent
-SCRIPTS = REPO / "deploy" / "providers" / "AWS" / "scripts"
+SCRIPTS = REPO / "deploy" / "aws" / "scripts"
 BUDGETS = SCRIPTS / "image-wait-budgets.sh"
 RESOLVER = SCRIPTS / "resolve-image-tags.sh"
 BACKENDS = ("nvflare", "flower")
@@ -215,7 +215,7 @@ class TerraformApplyUsesTheBudgets(unittest.TestCase):
 
     def test_the_wait_step_asks_the_script_not_a_diff(self) -> None:
         step = step_block(self.text, "Decide how long to wait for this commit's images")
-        assert 'run: deploy/providers/AWS/scripts/image-wait-budgets.sh >> "$GITHUB_OUTPUT"' in step
+        assert 'run: deploy/aws/scripts/image-wait-budgets.sh >> "$GITHUB_OUTPUT"' in step
         assert "FL_BACKEND: ${{ vars.FL_BACKEND }}" in step
         assert "GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}" in step
         # A release's images come from tag-dispatched builds; the script does not ask about it.

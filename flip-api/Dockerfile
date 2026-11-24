@@ -76,7 +76,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Dependency changes ship by rebuilding the image (BUILD=true in dev), never at boot.
 ENV UV_NO_SYNC=1 PYTHONPATH=/app/src
 
-# The path the API writes on ECS's read-only root filesystem; must stay a VOLUME (FLIP#1795, deploy/providers/AWS/AGENTS.md).
+# The path the API writes on ECS's read-only root filesystem; must stay a VOLUME (FLIP#1795, deploy/aws/AGENTS.md).
 VOLUME ["/tmp"]
 
 # Expose the application port

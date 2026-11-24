@@ -36,7 +36,7 @@ they are filed by two different rules:
 | Run/change the **XNAT** swarm stack | `trust/xnat/docker-compose-stack*.yml` |
 | Build/populate the mock **OMOP** database | `trust/omop-db/compose.yml` |
 | Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
-| Provision **AWS** (the hub: ECS, RDS, the SSM bastion; a trust node is `trust/deploy/terraform/aws/`) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
+| Provision **AWS** (the hub: ECS, RDS, the SSM bastion; a trust node is `trust/deploy/terraform/aws/`) | [`deploy/aws/`](aws/README.md) |
 | Provision an **Azure** trust (VM or AKS) | [`trust/deploy/terraform/azure/`](../trust/deploy/terraform/azure/README.md) |
 | Provision an **AWS EC2** trust in any account | [`trust/deploy/terraform/aws/ec2/`](../trust/deploy/terraform/aws/ec2/README.md) |
 | Register a trust, sync or package its **kit**, upgrade a site | `make` targets; the scripts are in `trust/deploy/scripts/` |
@@ -82,7 +82,7 @@ FLIP uses AWS RDS PostgreSQL. The minimum supported version is PostgreSQL 15; th
 | PostgreSQL 16 | October 2028 | ✓ Supported |
 | PostgreSQL 17 | November 2029 | ✓ Current (Terraform default) |
 
-**Upgrade Policy**: Plan PostgreSQL major version upgrades with a 6-month lead time before EOL. AWS charges premium rates for EOL versions. To change the version, update the `postgres_version` variable in `deploy/providers/AWS/variables.tf`.
+**Upgrade Policy**: Plan PostgreSQL major version upgrades with a 6-month lead time before EOL. AWS charges premium rates for EOL versions. To change the version, update the `postgres_version` variable in `deploy/aws/variables.tf`.
 
 ## Central Hub prerequisites and configuration
 
@@ -103,7 +103,7 @@ Verifying the SES sender identity (and re-verifying an expired one) and checking
 #### Cognito Email Configuration
 
 The Cognito invitation and password-reset emails are Terraform-managed templates; their files, placeholders and
-local test utility are in [`providers/AWS/README.md` → Email Templates](providers/AWS/README.md#email-templates).
+local test utility are in [`aws/README.md` → Email Templates](aws/README.md#email-templates).
 Cognito sends them itself, not through SES.
 
 #### Cognito MFA Administration
@@ -116,7 +116,7 @@ Cognito exposes no admin API to delete a user's verified TOTP secret. With the p
 
 With `mfa_configuration = "OPTIONAL"`, disabling the preference actually takes effect: Cognito signs the user in without a challenge. The application layer then catches the user — `flip-api` `verify_token` checks whether `SOFTWARE_TOKEN_MFA` is present in the user's `UserMFASettingList` and returns 403 if not, and the `flip-ui` router guard routes the user to the post-auth enrolment page where they mint a fresh TOTP secret. First-time users follow the same path: they sign in with their temporary password, the app sees `mfaEnabled=false`, and they are walked through enrolment before any protected route is reachable.
 
-SMS MFA is intentionally disabled — it would introduce an SNS dependency and reintroduce SIM-swap risk. The rationale is documented inline at `deploy/providers/AWS/modules/cognito/main.tf` (around the `mfa_configuration` line) and the enforcement point lives in `flip-api/src/flip_api/auth/dependencies.py` (`verify_token`).
+SMS MFA is intentionally disabled — it would introduce an SNS dependency and reintroduce SIM-swap risk. The rationale is documented inline at `deploy/aws/modules/cognito/main.tf` (around the `mfa_configuration` line) and the enforcement point lives in `flip-api/src/flip_api/auth/dependencies.py` (`verify_token`).
 
 ##### `ENFORCE_MFA` flag
 
@@ -149,10 +149,10 @@ without FLIP's audit log.
 ### Central Hub
 
 The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
-[`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
+[`deploy/aws/`](aws/README.md). The task definitions in `ecs_tasks.tf` (env maps in
 `locals.tf`) are the **canonical definition of production container config**. That root deploys onto an
 AWS Landing Zone Accelerator estate, where the network and edge are owned by the accelerator — see
-[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate).
+[Deploying onto an LZA estate](aws/README.md#deploying-onto-an-lza-estate).
 There is no self-contained single-account mode (removed in FLIP#1479). What the hub costs to run — hub only,
 trust hosts excluded because their GPU sizing is a per-trust decision — is on the docs site's
 [Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
@@ -435,7 +435,7 @@ Two operational consequences, both with the operator procedure in the manual's
   authentication` at trust-api, a **400** from imaging-api / data-access-api (a payload that is not an envelope at
   all is a 400 `... is not a valid envelope`); a 500 is a key-load or cipher fault, not a mismatch. On stag/prod the
   hub's copy is what the CI apply wrote into Secrets Manager, recoverable with
-  `deploy/providers/AWS/scripts/reconcile_ci_env.py`.
+  `deploy/aws/scripts/reconcile_ci_env.py`.
 - **There is no compatibility with the pre-FLIP#1179 AES-CBC format**, so a hub and its trusts cross that boundary
   together, as a flag day under Deployment Mode.
 
@@ -471,4 +471,4 @@ internal-ALB value would also work.
 
 > **Note on troubleshooting**: AWS-deployment-specific failure modes (Terraform state drift, ECS
 > service stuck in `PENDING`, CloudFront cache invalidation, RDS connectivity) are documented in
-> [`providers/AWS/TROUBLESHOOTING.md`](providers/AWS/TROUBLESHOOTING.md).
+> [`aws/TROUBLESHOOTING.md`](aws/TROUBLESHOOTING.md).

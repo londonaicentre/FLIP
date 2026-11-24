@@ -55,8 +55,8 @@ on:
       - "fl-services/nvflare/*/Dockerfile"
       - "flip-api/Dockerfile"
       - ".github/workflows/terraform_apply.yml"
-      - "deploy/providers/AWS/scripts/image-wait-budgets.sh"
-      - "deploy/providers/AWS/scripts/resolve-image-tags.sh"
+      - "deploy/aws/scripts/image-wait-budgets.sh"
+      - "deploy/aws/scripts/resolve-image-tags.sh"
       - "trust/deploy/helm/templates/**"
       - "trust/deploy/helm/values*.yaml"
       # test_mirror_images.py asserts every third-party image a trust node runs is pinned to the

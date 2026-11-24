@@ -26,7 +26,7 @@
 # TF_HUB value, the main branch, and each of those values being absent.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_staging_power.sh
+#     bash deploy/aws/scripts/tests/test_staging_power.sh
 
 set -u
 

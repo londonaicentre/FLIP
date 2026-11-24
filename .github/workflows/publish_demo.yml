@@ -113,7 +113,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-          sparse-checkout: deploy/providers/AWS/scripts/publish-ui.sh
+          sparse-checkout: deploy/aws/scripts/publish-ui.sh
           sparse-checkout-cone-mode: false
 
       - name: Download the build
@@ -133,7 +133,7 @@ jobs:
       - name: Publish
         env:
           FLIP_DEMO_BUCKET_NAME: ${{ vars.FLIP_DEMO_BUCKET_NAME }}
-        run: deploy/providers/AWS/scripts/publish-ui.sh dist-demo "${FLIP_DEMO_BUCKET_NAME}"
+        run: deploy/aws/scripts/publish-ui.sh dist-demo "${FLIP_DEMO_BUCKET_NAME}"
 
       # As publish_ui.yml reads the app's back. The host's CSP (connect-src
       # 'none') is defence in depth behind the origin boundary, so it only warns.

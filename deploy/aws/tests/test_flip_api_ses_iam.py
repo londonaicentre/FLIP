@@ -27,7 +27,7 @@ from pathlib import Path
 from tf_source import hcl_block, strip_comments
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = AWS_PROVIDER_DIR.parents[2]
+REPO_ROOT = AWS_PROVIDER_DIR.parents[1]
 CONSTANTS_PY = REPO_ROOT / "flip-api" / "src" / "flip_api" / "utils" / "constants.py"
 SES_MODULE = AWS_PROVIDER_DIR / "modules" / "ses"
 IAM_ECS_TF = AWS_PROVIDER_DIR / "iam_ecs.tf"

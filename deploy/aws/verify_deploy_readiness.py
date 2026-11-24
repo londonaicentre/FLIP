@@ -161,7 +161,7 @@ def main() -> int:
     else:
         print("   ❌ Session Manager plugin not found or outdated")
         print("      Install: brew install session-manager-plugin (macOS)")
-        print("      Or: see deploy/providers/AWS/README.md#prerequisites")
+        print("      Or: see deploy/aws/README.md#prerequisites")
         all_passed = False
     print()
 
@@ -189,7 +189,7 @@ def main() -> int:
 
     # Check Ansible files
     print("🤖 ANSIBLE FILES")
-    all_passed &= check_file_exists("site.yml", "Ansible playbook")
+    all_passed &= check_file_exists("bastion.yml", "Ansible playbook")
     print()
 
     # Check Makefile targets
@@ -239,13 +239,13 @@ def main() -> int:
 
     # Check documentation
     print("📚 DOCUMENTATION")
-    all_passed &= check_file_exists("../../README.md", "Root README")
+    all_passed &= check_file_exists("../README.md", "Root README")
     all_passed &= check_file_exists("README.md", "AWS Provider README")
     print()
 
     # Check CI pipeline
     print("🔄 CI PIPELINE")
-    all_passed &= check_file_exists("../../../.github/workflows/test_aws_deploy_scripts.yml", "AWS Deploy Scripts CI")
+    all_passed &= check_file_exists("../../.github/workflows/test_aws_deploy_scripts.yml", "AWS Deploy Scripts CI")
     print()
 
     # Summary

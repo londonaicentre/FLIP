@@ -49,7 +49,7 @@ class PublishDemo(unittest.TestCase):
         assert permissions(publish) == {"contents": "read", "id-token": "write"}
         assert "needs: build" in publish
         assert "role-to-assume: ${{ vars.TF_DEMO_PUBLISH_ROLE_ARN }}" in publish
-        assert 'deploy/providers/AWS/scripts/publish-ui.sh dist-demo "${FLIP_DEMO_BUCKET_NAME}"' in publish
+        assert 'deploy/aws/scripts/publish-ui.sh dist-demo "${FLIP_DEMO_BUCKET_NAME}"' in publish
         assert '"${DEMO_SITE_URL}/js/window.js"' in publish
         others = [path.name for path in WORKFLOWS.glob("*.yml") if path.name != "publish_demo.yml"]
         assert not [name for name in others if "TF_DEMO_PUBLISH_ROLE_ARN" in code(name)]

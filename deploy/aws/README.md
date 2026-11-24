@@ -14,7 +14,7 @@
 # FLIP AWS Terraform/OpenTofu and Ansible Infrastructure
 
 > **Deploys: Central Hub only.** One Terraform root, one state file, and no trust (FLIP#1438): a trust on AWS is
-> its own root under [`trust/deploy/terraform/aws/`](../../../trust/deploy/terraform/aws/). See
+> its own root under [`trust/deploy/terraform/aws/`](../../trust/deploy/terraform/aws/). See
 > [`../README.md`](../README.md) for how a trust node's deployment shape relates to the infrastructure it runs on.
 
 Terraform/OpenTofu and Ansible Infrastructure as Code to deploy the FLIP application stack to AWS.
@@ -24,9 +24,9 @@ its kit and its registration:
 
 | Deployment Model | Trust Location | Managed By |
 | --- | --- | --- |
-| **AWS** | EC2 or EKS in any AWS account and VPC | [`trust/deploy/terraform/aws/`](../../../trust/deploy/terraform/aws/) (`ec2/`, `eks/`) |
-| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server, etc.) | [`trust/deploy/ansible/`](../../../trust/deploy/ansible/README.md) + selected targets in this Makefile |
-| **Kubernetes** | Any Kubernetes cluster 1.28+ (EKS, AKS, on-prem) | [`trust/deploy/helm/`](../../../trust/deploy/helm/README.md) Helm chart — deploy guide: [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) |
+| **AWS** | EC2 or EKS in any AWS account and VPC | [`trust/deploy/terraform/aws/`](../../trust/deploy/terraform/aws/) (`ec2/`, `eks/`) |
+| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server, etc.) | [`trust/deploy/ansible/`](../../trust/deploy/ansible/README.md) + selected targets in this Makefile |
+| **Kubernetes** | Any Kubernetes cluster 1.28+ (EKS, AKS, on-prem) | [`trust/deploy/helm/`](../../trust/deploy/helm/README.md) Helm chart — deploy guide: [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) |
 
 In every model, trusts poll the Central Hub for tasks over HTTPS. All communication is **outbound from the trust** to the hub; the hub never makes inbound requests to trusts.
 
@@ -60,7 +60,7 @@ The managed policies an operator needs, what each covers, and the scoped roles t
 The complete deployment process is automated via the `full-deploy` target:
 
 ```bash
-cd deploy/providers/AWS
+cd deploy/aws
 make full-deploy HUB=stag  # For staging
 # OR
 make full-deploy HUB=prod  # For production
@@ -93,12 +93,12 @@ The hub creates no trust (FLIP#1438). Each trust joins with its kit:
    `make register-trust`: it execs into a *local* flip-api container (an EC2-hub-era
    assumption, FLIP#936) and cannot reach the ECS task.
 2. Deploy the node from its own shape: an AWS node from
-   [`trust/deploy/terraform/aws/`](../../../trust/deploy/terraform/aws/), Kubernetes from
-   [`trust/deploy/helm/`](../../../trust/deploy/helm/README.md), or an on-prem host: stage the FL kit
+   [`trust/deploy/terraform/aws/`](../../trust/deploy/terraform/aws/), Kubernetes from
+   [`trust/deploy/helm/`](../../trust/deploy/helm/README.md), or an on-prem host: stage the FL kit
    (`make provision-local-trust KIT=<CODE> HUB=<hub>` on the host, or point `FL_KIT_DIR` in the kit at a
    locally-provisioned workspace) and start the stack: `sudo -E env HUB=<hub> make -C trust up-trust KIT=<CODE>` (sudo required —
    the provisioned login user is deliberately not in the docker group, see the
-   [on-prem playbook README](../../../trust/deploy/ansible/README.md)).
+   [on-prem playbook README](../../trust/deploy/ansible/README.md)).
 
 Multiple on-prem trusts can share one host — give each kit non-colliding ports and data
 directories (see the shipped `trust/.env.*.development.example` kits for a working
@@ -174,7 +174,7 @@ KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<p
 
 The UI is served from S3 by the networking account's edge CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`), which reads the bucket through cross-account OAC and relays `/api/*` to the internal NLB's web listener (see [Deploying onto an LZA estate](#deploying-onto-an-lza-estate)). There is no EC2 UI container to fall back to.
 
-**The UI ships with the apply (FLIP#1186).** Once `terraform_apply.yml` has applied a push to `develop` or `main`, its `ui` job runs [`publish_ui.yml`](../../../.github/workflows/publish_ui.yml), which publishes flip-ui from the same commit to that environment's bucket. A held or failed apply publishes nothing, so the UI never reaches users ahead of the API it calls; the `fl_quiesced: true` re-dispatch that releases a held apply publishes it. The workflow has two jobs:
+**The UI ships with the apply (FLIP#1186).** Once `terraform_apply.yml` has applied a push to `develop` or `main`, its `ui` job runs [`publish_ui.yml`](../../.github/workflows/publish_ui.yml), which publishes flip-ui from the same commit to that environment's bucket. A held or failed apply publishes nothing, so the UI never reaches users ahead of the API it calls; the `fl_quiesced: true` re-dispatch that releases a held apply publishes it. The workflow has two jobs:
 
 - **`build`** runs `npm ci && npm run build:deploy` with no AWS credentials and no secrets, because `npm ci` runs third-party install scripts. `window.js` is generated from the environment's variables `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `CENTRAL_HUB_API_URL`, `AWS_REGION` and `BLACKLISTED_MODEL_FILES`. These values are public: every browser receives them. `RELEASE_VERSION` is the release tag, or `sha-<short7>`. The apply job warns when the two Cognito variables no longer match `terraform output`.
 - **`publish`** assumes `TF_UI_PUBLISH_ROLE_ARN` and runs `scripts/publish-ui.sh` against `FLIP_UI_BUCKET_NAME`. That role is the bootstrap module's `AICentre-FLIPUiPublishRole` (set `ui_bucket_name` on the module): it can list the bucket and write its objects, and nothing else. Afterwards the job reads `js/window.js` back through the site to confirm the new build is being served. While `TF_UI_PUBLISH_ROLE_ARN` is unset the job only warns.
@@ -196,7 +196,7 @@ offline on captured, scrubbed fixtures. It is served at the root of **its own ho
 demo host cannot read the app's Cognito tokens in `localStorage`, whatever any header says.
 
 It is published with the UI: the apply's `demo` job runs
-[`publish_demo.yml`](../../../.github/workflows/publish_demo.yml) beside the `ui` job. Its publish job
+[`publish_demo.yml`](../../.github/workflows/publish_demo.yml) beside the `ui` job. Its publish job
 assumes `TF_DEMO_PUBLISH_ROLE_ARN`, runs `scripts/publish-ui.sh` against `FLIP_DEMO_BUCKET_NAME`, and reads
 `js/window.js` back from `DEMO_SITE_URL`. That role is the bootstrap module's
 `AICentre-FLIPDemoPublishRole` (set `demo_bucket_name` on the module): it can list and write the demo
@@ -449,14 +449,14 @@ the hub has assigned. A hub that stays on one backend never meets this.
 
 The SuperLink keeps registrations in memory. Terraform replays the one-shot when it registers a new SuperLink task
 definition; a SuperLink restarted any other way (`make deploy-centralhub` or `rollback-centralhub` (new task-definition revisions made outside Terraform), staging power-on, a forced deployment, a crash or a Fargate retirement) has none until it runs again (see the
-[Flower README](../../../fl-services/flower/README.md#adding-supernode-keys-to-a-deployed-hub); FLIP#1947).
+[Flower README](../../fl-services/flower/README.md#adding-supernode-keys-to-a-deployed-hub); FLIP#1947).
 
 The scripts have a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
 stubbed — no credentials or network) that CI runs in the `Deploy script tests` job of
-`validate_terraform.yml` on any `deploy/providers/AWS/**` change; it also runs standalone with plain `bash`.
+`validate_terraform.yml` on any `deploy/aws/**` change; it also runs standalone with plain `bash`.
 
 Kit-minting details and the manual fallback:
-[`fl-services/nvflare/README.md`](../../../fl-services/nvflare/README.md#onboarding-a-new-client-onto-an-existing-network).
+[`fl-services/nvflare/README.md`](../../fl-services/nvflare/README.md#onboarding-a-new-client-onto-an-existing-network).
 
 ### Deployment to Different Environments
 
@@ -528,7 +528,7 @@ FLIP uses no dev AWS account. Development runs entirely locally (Keycloak, the c
 
 > [!IMPORTANT]
 > **This estate is applied by CI, not from a laptop.** `terraform_plan.yml` plans LZA staging on every PR
-> into `main` or `develop` touching `deploy/providers/AWS/**`, `terraform_apply.yml` applies `HUB=stag`
+> into `main` or `develop` touching `deploy/aws/**`, `terraform_apply.yml` applies `HUB=stag`
 > on push to `develop` and `HUB=prod` on push to `main`, and `terraform_drift.yml` plans nightly — all
 > through OIDC, with no long-lived keys. See
 > [Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts) for how an environment is pointed
@@ -712,7 +712,7 @@ the private platform repos.
 ### Terraform module layout
 
 ```
-deploy/providers/AWS/
+deploy/aws/
 ├── main.tf                     # RDS, Secrets, target groups, the Central Hub bastion
 ├── network_lza.tf              # Discovers the accelerator-provisioned VPC and its app/data subnets
 ├── fl_ingress_lza.tf           # Internal NLB (web + FL listeners), its SG and the /flip/networking/* handoff
@@ -833,7 +833,7 @@ The hub checks only itself; a trust is checked from its own node (`make -C trust
 
 CI goes red on PRs that regress this tree's security posture (FLIP#1052 + the FLIP#1058 triage): the
 `Checkov Security Lint` job in `validate_terraform.yml` runs a curated checkov check list statically over
-`deploy/providers/AWS/**` — no credentials, no `terraform init`, no plan. Two families are promoted:
+`deploy/aws/**` — no credentials, no `terraform init`, no plan. Two families are promoted:
 
 - **IAM policy content** — wildcard `Resource`/`Action` on restrictable data-access actions plus the
   data-exfiltration / privilege-escalation / permissions-management shapes, on both policy syntaxes
@@ -903,18 +903,18 @@ and starts the stack:
 ```bash
 # On the trust host (trust operator) — provision, then start the stack
 # (sudo: the provisioned login user is deliberately not in the docker group)
-cd deploy/providers/AWS
+cd deploy/aws
 read -rsp 'Sudo password: ' ANSIBLE_BECOME_PASS; echo; export ANSIBLE_BECOME_PASS   # bash
 # fish: set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
 make provision-local-trust KIT=<CODE> HUB=<stag|prod>
-cd ../../.. && sudo -E env HUB=<stag|prod> make -C trust up-trust KIT=<CODE>
+cd ../.. && sudo -E env HUB=<stag|prod> make -C trust up-trust KIT=<CODE>
 ```
 
 Nothing opens in this account per trust: FL clients reach the FL server through the networking account's edge NLB
 (see [Deploying onto an LZA estate](#deploying-onto-an-lza-estate)), and any source restriction there is the
 platform team's. Verify the trust can poll the hub (check trust-api logs for successful task polling).
 
-Full details are in the [on-prem playbook README](../../../trust/deploy/ansible/README.md).
+Full details are in the [on-prem playbook README](../../trust/deploy/ansible/README.md).
 
 ## Terraform CI: plan on PR, apply on merge
 
@@ -924,7 +924,7 @@ GitHub:
 
 | Workflow | Trigger | Role | What it does |
 | --- | --- | --- | --- |
-| `terraform_plan.yml` | PR touching `deploy/providers/AWS/**` | plan (read-only) | Posts the staging plan as a PR comment, and runs the FL/LZA-ingress advisory (advisory-only — exits 0 on every readable plan, and `continue-on-error` keeps an unreadable one from failing the check) |
+| `terraform_plan.yml` | PR touching `deploy/aws/**` | plan (read-only) | Posts the staging plan as a PR comment, and runs the FL/LZA-ingress advisory (advisory-only — exits 0 on every readable plan, and `continue-on-error` keeps an unreadable one from failing the check) |
 | `terraform_apply.yml` | Every push to `develop` / `main` | apply, then UI-publish | Applies to staging / production, then publishes flip-ui from the same commit ([flip-ui on S3 + CloudFront](#flip-ui-on-s3--cloudfront)) |
 | `terraform_drift.yml` | Nightly 03:00 UTC | plan (read-only) | Raises one issue per environment when reality has drifted |
 
@@ -1143,7 +1143,7 @@ Terraform inputs from what is actually deployed — live state, plus the things
 state cannot answer (the running image tags, the live secret material):
 
 ```bash
-python3 scripts/reconcile_ci_env.py --env prod --compare ../../../.env.prod
+python3 scripts/reconcile_ci_env.py --env prod --compare ../../.env.prod
 python3 scripts/reconcile_ci_env.py --env stag --out /tmp/stag-tf-inputs.env
 ```
 
@@ -1214,9 +1214,9 @@ AWS_PROFILE=stag LOCK=false make plan HUB=stag \
 #    file and the profile. Both FLIP environments run on LZA accounts; see
 #    "Repointing CI at the LZA accounts" for the full per-account order these
 #    commands sit at the end of.
-bash scripts/setup-github-environments.sh --hub stag --env-file ../../../.env.stag --dry-run
-bash scripts/setup-github-environments.sh --hub stag --env-file ../../../.env.stag
-bash scripts/setup-github-environments.sh --hub prod --env-file ../../../.env.prod
+bash scripts/setup-github-environments.sh --hub stag --env-file ../../.env.stag --dry-run
+bash scripts/setup-github-environments.sh --hub stag --env-file ../../.env.stag
+bash scripts/setup-github-environments.sh --hub prod --env-file ../../.env.prod
 ```
 
 Requires repo admin. It prints key names only — values go from the local env file
@@ -1283,11 +1283,11 @@ Run these in order **per account**, from a laptop authenticated to that account:
 #    branch; the boundary exists) and stops before any GitHub write if not. Then it
 #    creates the environment if absent, sets TF_HUB and the two role ARNs read from
 #    IAM, and writes every key the workflows dereference from the env file.
-bash scripts/setup-github-environments.sh --hub stag --env-file ../../../.env.stag --dry-run
-bash scripts/setup-github-environments.sh --hub stag --env-file ../../../.env.stag
+bash scripts/setup-github-environments.sh --hub stag --env-file ../../.env.stag --dry-run
+bash scripts/setup-github-environments.sh --hub stag --env-file ../../.env.stag
 ```
 
-Then push a change under `deploy/providers/AWS/**` and read the plan before letting an
+Then push a change under `deploy/aws/**` and read the plan before letting an
 apply run:
 
 - `compose-ci-env.sh` composes `.env.stag` and fails naming any missing
@@ -1561,7 +1561,7 @@ Two more pipeline-level escapes:
 - **A plan is stuck on the state lock.** PR plans run with `-lock=false` and never
   take it. An apply does; `make force-unlock LOCK_ID=<id>` releases it.
 - **An apply must not run.** Disable `terraform_apply.yml` in the Actions tab, or
-  revert the merge — the workflow only acts on `deploy/providers/AWS/**` changes.
+  revert the merge — the workflow only acts on `deploy/aws/**` changes.
 
 ### Staging is stopped between deploys ([FLIP#1596](https://github.com/londonaicentre/FLIP/issues/1596))
 
@@ -1667,11 +1667,11 @@ The platform supports a cloud-only setup (Central Hub + Trust nodes on AWS) or a
 3. **Central Hub SSM bastion** (`aws_instance.ec2_instance`, t3.micro, 10 GB root volume, **private subnet**): Intentional minimal host for ad-hoc `psql` and network diagnostics. It runs no application containers, has no inbound security-group rules, and is reachable only through SSM Session Manager / SSH-over-SSM.
 
 4. **Trust nodes** (not this root, FLIP#1438): trust-api, imaging-api, data-access-api, the FL client, XNAT, Orthanc
-   and the OMOP database, deployed from [`trust/deploy/`](../../../trust/deploy/README.md) — on AWS from
-   [`trust/deploy/terraform/aws/`](../../../trust/deploy/terraform/aws/), in any account.
+   and the OMOP database, deployed from [`trust/deploy/`](../../trust/deploy/README.md) — on AWS from
+   [`trust/deploy/terraform/aws/`](../../trust/deploy/terraform/aws/), in any account.
 
 5. **On-Premises Trust** (hybrid model, optional): Same trust services running on a local host
-   - Provisioned via [`trust/deploy/ansible/`](../../../trust/deploy/ansible/README.md)
+   - Provisioned via [`trust/deploy/ansible/`](../../trust/deploy/ansible/README.md)
    - Polls the Central Hub over the internet via HTTPS (outbound only)
 
 | Application Component | Runtime |
@@ -1872,7 +1872,7 @@ All email templates are stored as standalone HTML files under `templates/`, orga
 ### Template Structure
 
 ```sh
-deploy/providers/AWS/
+deploy/aws/
 ├── templates/
 │   ├── cognito/
 │   │   ├── invite.html                      # Temporary password invitation
@@ -1942,7 +1942,7 @@ access to another project" variant of `xnat-invite` — the same placeholders mi
 ### Quick Local Testing
 
 ```bash
-cd deploy/providers/AWS
+cd deploy/aws
 
 # Test all templates and generate HTML previews
 python3 tests/test_email_templates.py

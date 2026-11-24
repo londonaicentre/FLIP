@@ -386,7 +386,7 @@ cat >&2 <<'EOF'
         this commit: a dispatch from a later one still deploys the newest builds.
      4. Disable deployment mode afterwards.
 
-   Runbook: deploy/providers/AWS/README.md, "Terraform CI: plan on PR, apply on
+   Runbook: deploy/aws/README.md, "Terraform CI: plan on PR, apply on
    merge" > "What an automated apply will not do".
 EOF
 

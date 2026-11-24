@@ -18,7 +18,7 @@
 # module with no provider version constraint, or an AWS argument value the API
 # would reject at apply time. tflint catches those statically: the bundled
 # `terraform` ruleset (recommended preset) plus the AWS ruleset, configured in
-# deploy/providers/AWS/.tflint.hcl. No cloud credentials, no terraform init, no
+# deploy/aws/.tflint.hcl. No cloud credentials, no terraform init, no
 # plan — safe on fork PRs and under `act`. `tflint --init` downloads the AWS
 # ruleset plugin from GitHub (set GITHUB_TOKEN to avoid the anonymous API rate
 # limit).
@@ -105,7 +105,7 @@ fi
 failed=0
 while IFS= read -r dir; do
     rel="${dir#"${AWS_ROOT}"}"
-    echo "── deploy/providers/AWS${rel}"
+    echo "── deploy/aws${rel}"
     if ! ${TFLINT} --chdir "${dir}" --config "${CONFIG}" --format compact; then
         failed=1
     fi

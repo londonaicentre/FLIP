@@ -19,13 +19,13 @@
 # Admin pre-steps (run before this script; from the repo root unless noted):
 #   1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod` writes
 #      trust/.env.<CODE>.prod.
-#   2. `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod`
+#   2. `make -C deploy/aws register-trusts KIT=<CODE> HUB=prod`
 #      fills the Kit credentials (incl. FL_KIT_SLOT) and the XNAT passwords.
 #   3. `make sync-trust-kit KIT=<CODE> HUB=prod` fills the Hub-shared block.
-#   4. Run this through `make -C deploy/providers/AWS package-onprem-trust-kit
+#   4. Run this through `make -C deploy/aws package-onprem-trust-kit
 #      KIT=<CODE> HUB=prod` (KIT_FILE=<path> for a kit kept elsewhere).
 #
-# This script's job (admin runs from deploy/providers/AWS with prod AWS creds):
+# This script's job (admin runs from deploy/aws with prod AWS creds):
 #   5. Validate the kit file has no unfilled placeholders.
 #   6. Read FL_BACKEND, FLARE_KIT_DATE / FLOWER_KIT_DATE, FL_KIT_SLOT,
 #      FL_KIT_SLOT_NUMBER from the kit file, and AICENTRE_BUCKET_NAME from
@@ -36,7 +36,7 @@
 #      (net-1/services/<slot>/ for nvflare; net-1/certificates/ + one
 #      supernode_credentials_<N> for flower).
 #   8. Tarball trust/.env.<KIT>.<env> + fl-kit/ into
-#      deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
+#      deploy/aws/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
 #
 # Operator post-steps (after receiving the tarball over encrypted channel):
 #   9. Extract, copy .env.<CODE>.<env> into trust/, edit Host-local profile +
@@ -49,7 +49,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/utils.sh"
 
@@ -79,7 +79,7 @@ if grep -qE '^[A-Z0-9_]+=<run-make-' "$KIT_FILE"; then
     n="$(grep -cE '^[A-Z0-9_]+=<run-make-' "$KIT_FILE")"
     log_error "$KIT_FILE still has $n unfilled <run-make-…> placeholder(s)."
     log_error "Fill them in on trust/.env.<CODE>.${HUB} (from the repo root), then package it again:"
-    log_error "  - Kit credentials: make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=${HUB}"
+    log_error "  - Kit credentials: make -C deploy/aws register-trusts KIT=<CODE> HUB=${HUB}"
     log_error "  - Hub-shared block: make sync-trust-kit KIT=<CODE> HUB=${HUB}"
     log_error "  - XNAT passwords:   make generate-xnat-credentials KIT=<CODE> HUB=${HUB}"
     exit 1
@@ -140,18 +140,18 @@ fi
 # kit staging reads it (`trust/deploy/terraform/aws/ec2`, KIT_BUCKET=). It's
 # a hub-side value, not per-trust, so it lives in $(MAIN_ENV_FILE) — the AWS
 # Makefile `include`s + `export`s the env file, so it's in os.environ for
-# any recipe running from deploy/providers/AWS with HUB=prod (or stag).
+# any recipe running from deploy/aws with HUB=prod (or stag).
 # Plain bucket name, no `s3://` prefix.
 if [ -z "${AICENTRE_BUCKET_NAME:-}" ]; then
     log_error "AICENTRE_BUCKET_NAME is unset in the environment."
     log_error "  This script reads it from the admin's \$(MAIN_ENV_FILE) — make sure"
-    log_error "  you ran make from deploy/providers/AWS with HUB=prod (or stag)"
+    log_error "  you ran make from deploy/aws with HUB=prod (or stag)"
     log_error "  and that the matching .env.prod / .env.stag has it set."
     exit 1
 fi
 bucket_name="$AICENTRE_BUCKET_NAME"
 
-BUILD_DIR="$REPO_ROOT/deploy/providers/AWS/build/trust-kits"
+BUILD_DIR="$REPO_ROOT/deploy/aws/build/trust-kits"
 mkdir -p "$BUILD_DIR"
 # The slice holds the FL client's private key: everything staged from here on is the admin's alone (FLIP#1964).
 umask 077

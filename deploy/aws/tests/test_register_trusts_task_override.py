@@ -36,7 +36,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "register-trusts.sh"
-DOCKERFILE = SCRIPT.parents[4] / "flip-api" / "Dockerfile"
+DOCKERFILE = SCRIPT.parents[3] / "flip-api" / "Dockerfile"
 IMAGE_ENV = {"UV_NO_SYNC": "1", "PYTHONPATH": "/app/src"}
 
 

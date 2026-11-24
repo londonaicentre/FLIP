@@ -24,7 +24,7 @@
 # publishes nothing.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_publish_ui.sh
+#     bash deploy/aws/scripts/tests/test_publish_ui.sh
 
 set -u
 

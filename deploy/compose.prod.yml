@@ -12,7 +12,7 @@
 
 # ROLE (FLIP#936): local prod-image harness ONLY — `make up HUB=stag|prod` runs the baked images with no
 # dev mounts. This file is NOT a deployment target: the Central Hub deploys on ECS Fargate, and the task
-# definitions in deploy/providers/AWS/ecs_tasks.tf (env maps in locals.tf) are the canonical definition of
+# definitions in deploy/aws/ecs_tasks.tf (env maps in locals.tf) are the canonical definition of
 # production container config. When changing production config, change Terraform first; update this file
 # only as far as the local harness needs.
 
@@ -30,14 +30,14 @@
 # and their TLS (see the overlays), whereas the container names are free to change.
 #
 # None of this touches AWS: production runs on ECS Fargate, where the container names come from the
-# task definitions in deploy/providers/AWS/ecs_tasks.tf and discovery from Cloud Map. This file is
+# task definitions in deploy/aws/ecs_tasks.tf and discovery from Cloud Map. This file is
 # only the local prod-image harness described above.
 services:
   #################### CENTRAL HUB ####################
 
   # flip-ui is NOT deployed as a container in stag/prod — it's served as a
-  # static bundle from S3 via CloudFront (see deploy/providers/AWS/cloudfront.tf
-  # and deploy/providers/AWS/Makefile's `deploy-ui` target). Dev still runs the
+  # static bundle from S3 via CloudFront (see deploy/aws/cloudfront.tf
+  # and deploy/aws/Makefile's `deploy-ui` target). Dev still runs the
   # Vite container (deploy/compose.development.yml).
 
   flip-api:

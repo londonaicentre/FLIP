@@ -42,8 +42,8 @@
 # Idempotent: re-running updates values in place.
 #
 # Usage:
-#     scripts/setup-github-environments.sh --hub stag --env-file ../../../.env.stag --dry-run
-#     scripts/setup-github-environments.sh --hub prod --env-file ../../../.env.prod
+#     scripts/setup-github-environments.sh --hub stag --env-file ../../.env.stag --dry-run
+#     scripts/setup-github-environments.sh --hub prod --env-file ../../.env.prod
 #
 # Overrides: AWS_PROFILE_FOR_ENV (the profile for this estate), TF_PLAN_ROLE_NAME /
 # TF_APPLY_ROLE_NAME (default: the AICentre-FLIPTerraform* names the bootstrap
@@ -86,7 +86,7 @@ command -v aws >/dev/null || die "aws CLI is required"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AWS_DIR="$(cd "${HERE}/.." && pwd)"
-REPO_ROOT="$(cd "${AWS_DIR}/../../.." && pwd)"
+REPO_ROOT="$(cd "${AWS_DIR}/../.." && pwd)"
 PLAN_WORKFLOW="${REPO_ROOT}/.github/workflows/terraform_plan.yml"
 [[ -f "${PLAN_WORKFLOW}" ]] || die "cannot find ${PLAN_WORKFLOW} — the secret/variable split is read from it"
 # The publishes' variables (FLIP#1186, FLIP#2012) are read from the workflows that use them.
@@ -200,7 +200,7 @@ EXPECTED_APPLY_REF="${REPO}/.github/workflows/terraform_apply.yml@refs/heads/${A
     EXPECTED_APPLY_REF+=$'\n'"${REPO}/.github/workflows/staging_lifecycle.yml@refs/heads/${APPLY_BRANCH}"
 NOT_BOOTSTRAPPED="the platform repository (aicentre-iac / aicentre-lza-iac) has not applied
    terraform_ci_bootstrap in the account '${AWS_PROFILE_FOR_ENV}' reaches — or, outside AI Centre,
-   deploy/providers/AWS/ci has not been applied there."
+   deploy/aws/ci has not been applied there."
 
 # Static AWS_* env vars outrank the profile in the CLI's credential chain, and a
 # stale one yields InvalidClientTokenId — the same reason the Makefiles' `_TF`

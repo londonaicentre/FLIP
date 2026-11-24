@@ -23,7 +23,7 @@ from pathlib import Path
 from tf_source import hcl_block, strip_comments
 
 AWS_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = AWS_DIR.parents[2]
+REPO_ROOT = AWS_DIR.parents[1]
 ECS_FLOWER = strip_comments((AWS_DIR / "ecs_flower.tf").read_text())
 EFS_PROVISION = strip_comments((AWS_DIR / "ecs_efs_provision.tf").read_text())
 LOCALS = strip_comments((AWS_DIR / "locals.tf").read_text())

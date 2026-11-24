@@ -11,7 +11,7 @@
 
 # `ruff check` and `ruff format --check` over every tracked Python file, each against its nearest
 # ruff config. The service workflows lint only their own trees and only a few check formatting,
-# so this is the one run that reaches everything (deploy/providers/AWS, scripts/, trust/deploy/,
+# so this is the one run that reaches everything (deploy/aws, scripts/, trust/deploy/,
 # .github/tests/, docs/, fl-apps/, …). The files come from `git ls-files` rather
 # than ruff's own discovery, which skips anything gitignored; --force-exclude keeps a config's
 # deliberate excludes (flip-api's generated Alembic revisions).

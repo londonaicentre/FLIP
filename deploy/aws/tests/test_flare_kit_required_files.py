@@ -15,11 +15,11 @@ only once those files are on every net (FLIP#1720), so the two lists must match.
 import re
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_script_and_flip_api_require_the_same_startup_files():
-    script = (REPO_ROOT / "deploy/providers/AWS/scripts/add_fl_kits.sh").read_text()
+    script = (REPO_ROOT / "deploy/aws/scripts/add_fl_kits.sh").read_text()
     resolver = (REPO_ROOT / "flip-api/src/flip_api/db/seed/fl_kit_slots.py").read_text()
 
     script_files = re.search(r"^REQUIRED_STARTUP_FILES=\(([^)]*)\)", script, re.M)

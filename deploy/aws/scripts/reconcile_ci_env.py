@@ -39,9 +39,9 @@ LZA estates (profile ``<env>``, the hub name, state bucket ``flip-terraform-stat
 ``flip-terraform-state-lza-stag``); another estate passes its own.
 
 Usage:
-    scripts/reconcile_ci_env.py --env prod --out ../../../.env.prod
-    scripts/reconcile_ci_env.py --env stag --compare ../../../.env.stag
-    scripts/reconcile_ci_env.py --env prod --profile <profile> --bucket <state bucket> --compare ../../../.env.prod
+    scripts/reconcile_ci_env.py --env prod --out ../../.env.prod
+    scripts/reconcile_ci_env.py --env stag --compare ../../.env.stag
+    scripts/reconcile_ci_env.py --env prod --profile <profile> --bucket <state bucket> --compare ../../.env.prod
 """
 
 from __future__ import annotations
@@ -452,7 +452,7 @@ def main() -> None:
             )
         with open(os.open(args.out, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w") as fh:
             fh.write(f"# Terraform inputs reconciled from the deployed {args.env} infrastructure by\n")
-            fh.write("# deploy/providers/AWS/scripts/reconcile_ci_env.py. Review before use.\n")
+            fh.write("# deploy/aws/scripts/reconcile_ci_env.py. Review before use.\n")
             fh.write("# NOT a complete operator env file: the trust/XNAT/Orthanc/OMOP settings\n")
             fh.write("# are not recoverable from AWS and are absent here.\n")
             for key in sorted(values):

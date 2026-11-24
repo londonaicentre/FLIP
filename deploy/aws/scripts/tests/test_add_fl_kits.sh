@@ -25,7 +25,7 @@
 # unclaimable until the SuperLink has registered its key, and the abort reporting.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh
+#     bash deploy/aws/scripts/tests/test_add_fl_kits.sh
 
 set -u
 
@@ -37,9 +37,9 @@ trap 'rm -rf "${TEST_ROOT}"' EXIT
 # The script derives REPO_ROOT (and so the workspace parent) from its own location —
 # copy it into a repo skeleton under TEST_ROOT so mint-loop paths stay in the sandbox.
 FAKE_REPO="${TEST_ROOT}/repo"
-mkdir -p "${FAKE_REPO}/deploy/providers/AWS/scripts" "${FAKE_REPO}/fl-services/nvflare"
-cp "${SCRIPT_SRC}" "${SCRIPT_SRC%.sh}_flower.sh" "${FAKE_REPO}/deploy/providers/AWS/scripts/"
-SCRIPT="${FAKE_REPO}/deploy/providers/AWS/scripts/add_fl_kits.sh"
+mkdir -p "${FAKE_REPO}/deploy/aws/scripts" "${FAKE_REPO}/fl-services/nvflare"
+cp "${SCRIPT_SRC}" "${SCRIPT_SRC%.sh}_flower.sh" "${FAKE_REPO}/deploy/aws/scripts/"
+SCRIPT="${FAKE_REPO}/deploy/aws/scripts/add_fl_kits.sh"
 WORKSPACE_PARENT="${FAKE_REPO}/fl-services/nvflare/provision/workspace-stag"
 
 MOCKBIN="${TEST_ROOT}/mockbin"

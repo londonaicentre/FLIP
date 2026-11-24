@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 from make_probe import probe_make
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 TRUST_DIR = REPO_ROOT / "trust"
 XNAT_DIR = TRUST_DIR / "xnat"
 

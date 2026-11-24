@@ -30,7 +30,7 @@ a re-run.
   `HUB` unset for development) — scaffolds `trust/.env.<CODE>.<env>` from the base template
   (`trust/.env.example`), prepending the trust's identity (`TRUST_NAME` / `TRUST_CODE` /
   `TRUST_REGION`). Refuses to overwrite an existing kit. The root `new-trust` target also refuses when that trust still has a kit under its old, pre-FLIP#1479 file name. The result is ready for
-  registration to fill in credentials (`make -C deploy/providers/AWS register-trusts KIT=<CODE>
+  registration to fill in credentials (`make -C deploy/aws register-trusts KIT=<CODE>
   HUB=<hub>` on a deployed hub, `make register-trust KIT=<CODE>` in development).
 - **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
   `sync_trust_kit.py`, and the AWS registration path. Merges a kit dict into a kit file while
@@ -41,7 +41,7 @@ a re-run.
   every kit file `0600`.
 - **`distribute_trust_kits.py`** — writes a trust kit file from `register_trust`'s JSON output. It reads one kit (a JSON object or a one-element array) on stdin and writes it to `--target PATH` (required). Callers:
   - the dev `register-trust` Makefile pipe (`--target trust/.env.<CODE>.<env>`);
-  - `deploy/providers/AWS/scripts/register-trusts.sh`, for stag/prod.
+  - `deploy/aws/scripts/register-trusts.sh`, for stag/prod.
 - **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> HUB=<env>`) — refreshes only the
   Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
   `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left

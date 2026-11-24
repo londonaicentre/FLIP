@@ -23,7 +23,7 @@
 # by MOCK_* variables per case, and logs every directory it is asked to lint.
 #
 # Usage:
-#     bash deploy/providers/AWS/scripts/tests/test_tflint_lint.sh
+#     bash deploy/aws/scripts/tests/test_tflint_lint.sh
 
 set -u
 
@@ -33,7 +33,7 @@ SCRIPT_SRC="${TESTS_DIR}/../tflint_lint.sh"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 
-FAKE_AWS_ROOT="${TEST_ROOT}/repo/deploy/providers/AWS"
+FAKE_AWS_ROOT="${TEST_ROOT}/repo/deploy/aws"
 mkdir -p "${FAKE_AWS_ROOT}/scripts/tests/tflint_canary" "${FAKE_AWS_ROOT}/scripts/tests/checkov_canary" \
     "${FAKE_AWS_ROOT}/modules/a"
 cp "${SCRIPT_SRC}" "${FAKE_AWS_ROOT}/scripts/tflint_lint.sh"
