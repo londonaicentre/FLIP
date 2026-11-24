@@ -23,7 +23,12 @@ from flip_api.domain.interfaces.fl import IInitiateTrainingInputPayload
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.services.fl_scheduler_service import log_queue_positions
 from flip_api.fl_services.services.fl_service import add_fl_job
-from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
+from flip_api.model_services.services.model_service import (
+    add_log,
+    is_model_live,
+    update_model_status,
+    validate_trust_ids,
+)
 from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
 from flip_api.utils.logger import logger
 from flip_api.utils.site_manager import is_deployment_mode_enabled
@@ -68,6 +73,13 @@ def initiate_training(
     if not can_modify_model(user_id, model_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {user_id} is not allowed to modify this model"
+        )
+
+    # The permission check above does not read `deleted`, and deleting a project is how its
+    # owner's access is withdrawn, so a deleted project or model must not be queued again.
+    if not is_model_live(model_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Model ID: {model_id} does not exist or is deleted."
         )
 
     trusts = db.exec(select(Trust).where(col(Trust.id).in_(payload.trust_ids))).all()
