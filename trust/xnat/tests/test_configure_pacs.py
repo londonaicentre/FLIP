@@ -1410,7 +1410,11 @@ def test_a_rotated_kit_signs_in_with_the_previous_admin_password_and_moves_xnat_
     held = tmp_path / "admin-password"
     held.write_text("previous")
     refused = tmp_path / "admin-password.refused"
-    env = {"ADMIN_PASSWORD_FILE": str(held), "INITIALIZED_BODY": "true", "XNAT_ADMIN_PREVIOUS_PASSWORD": "previous"}
+    env = {
+        "ADMIN_PASSWORD_FILE": str(held),
+        "INITIALIZED_BODY": "true",
+        "XNAT_ADMIN_PREVIOUS_PASSWORD": "previous",  # pragma: allowlist secret
+    }
 
     code, payloads, output = run_configure(tmp_path / "rotate", env, pacs_state=MOCK_PACS_REGISTRATION)
     assert code == 0, output
@@ -1433,7 +1437,11 @@ def test_a_rotated_kit_signs_in_with_the_previous_admin_password_and_moves_xnat_
 def test_a_previous_admin_password_xnat_also_refuses_stays_inside_the_lockout_budget(tmp_path):
     """Three passwords probed per round: the run is capped at five rounds, 15 failed logins."""
     code, payloads, output = run_configure(
-        tmp_path, {"WRONG_LOGINS": "initial,rotated,previous", "XNAT_ADMIN_PREVIOUS_PASSWORD": "previous"}
+        tmp_path,
+        {
+            "WRONG_LOGINS": "initial,rotated,previous",
+            "XNAT_ADMIN_PREVIOUS_PASSWORD": "previous",  # pragma: allowlist secret
+        },
     )
     assert code == 1, output
     assert "neither admin password authenticates" in output
