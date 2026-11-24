@@ -136,6 +136,18 @@ def test_reset_mfa_invalidates_the_cached_state(provider):
     assert provider.mfa_fetches == 2
 
 
+def test_reset_mfa_invalidates_the_state_cached_under_another_name_for_the_user(alice):
+    """The gate asks under the token's username claim, the reset under the directory e-mail: they can differ."""
+    token_username = str(alice.id)
+    provider = InMemoryProvider([alice], mfa_enrolled={token_username, "alice@example.com"})
+    assert provider.is_mfa_enabled(token_username) is True
+
+    provider.reset_mfa("alice@example.com")
+    provider.mfa_enrolled.discard(token_username)  # the backend holds one MFA state per user, whatever the name
+
+    assert provider.is_mfa_enabled(token_username) is False
+
+
 def test_mfa_cache_is_per_provider_instance(alice):
     """Two providers never share state, so a test double warmed in one cannot leak into another."""
     first = InMemoryProvider([alice], mfa_enrolled={"alice@example.com"})

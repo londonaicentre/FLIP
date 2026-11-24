@@ -160,3 +160,11 @@ class TestDocsGating:
             monkeypatch.undo()
             importlib.reload(main)
             main.app = original_app
+
+
+def test_a_trailing_slash_is_not_redirected():
+    """flip-api does not know the viewer's scheme behind the edge, so a slash redirect would name ``http://``."""
+    response = TestClient(app, follow_redirects=False).get("/api/health/")
+
+    assert response.status_code == 404
+    assert "location" not in response.headers

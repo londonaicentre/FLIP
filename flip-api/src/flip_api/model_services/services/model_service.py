@@ -277,7 +277,7 @@ def delete_models(project_id: UUID, user_id: str, session: Session, ensure_delet
     """
     logger.debug("Attempting to delete models...")
 
-    models = session.exec(select(Model).where(Model.project_id == project_id, not Model.deleted)).all()
+    models = session.exec(select(Model).where(Model.project_id == project_id, col(Model.deleted).is_(False))).all()
 
     if not models:
         if ensure_deletion:
@@ -297,6 +297,25 @@ def delete_models(project_id: UUID, user_id: str, session: Session, ensure_delet
     logger.info(f"Models for project {project_id} soft-deleted and audit logs recorded.")
 
     return len(models)
+
+
+def is_model_live(model_id: UUID, session: Session) -> bool:
+    """
+    Whether a model exists and neither it nor its project has been deleted.
+
+    Args:
+        model_id (UUID): The ID of the model.
+        session (Session): The database session.
+
+    Returns:
+        bool: True if the model and its project both exist and are not deleted.
+    """
+    statement = (
+        select(Model.id)
+        .join(Projects, col(Projects.id) == col(Model.project_id))
+        .where(Model.id == model_id, col(Model.deleted).is_(False), col(Projects.deleted).is_(False))
+    )
+    return session.exec(statement).first() is not None
 
 
 def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus | None:

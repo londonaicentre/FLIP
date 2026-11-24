@@ -26,6 +26,7 @@ import pytest
 from sqlmodel import Session, col, create_engine, select
 
 from flip_api.db.models.main_models import (
+    Model,
     Projects,
     ProjectsAudit,
     ProjectTrustIntersect,
@@ -38,6 +39,7 @@ from flip_api.domain.interfaces.project import IProjectApproval
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import ProjectStatus, ProjectType, TrustApprovalStatus, XNATImageStatus
+from flip_api.model_services.services.model_service import is_model_live
 from flip_api.project_services.get_projects import get_projects_paginated_orm
 from flip_api.project_services.services.project_services import (
     InvalidTrustDecisionsError,
@@ -142,6 +144,38 @@ def test_soft_delete_marks_row_deleted_in_place(session, project_payload, user_f
     row = session.get(Projects, new_project_id)
     assert row is not None, "Soft delete must keep the row for audit"
     assert row.deleted is True
+
+
+def test_soft_delete_deletes_the_projects_models_and_no_others(session, project_payload, user_factory, model_factory):
+    """A deleted project's models are deleted with it, so none of them can be trained again."""
+    creator_id = user_factory().id
+    project_id = create_project(payload=project_payload, current_user_id=creator_id, session=session)
+    kept_payload = project_payload.model_copy(update={"name": "Kept"})
+    kept_project_id = create_project(payload=kept_payload, current_user_id=creator_id, session=session)
+    model = model_factory.build(project_id=project_id, owner_id=creator_id, deleted=False)
+    kept_model = model_factory.build(project_id=kept_project_id, owner_id=creator_id, deleted=False)
+    session.add_all([model, kept_model])
+    session.commit()
+
+    delete_project(project_id, creator_id, session)
+
+    assert session.get(Model, model.id).deleted is True
+    assert session.get(Model, kept_model.id).deleted is False
+    assert is_model_live(model.id, session) is False
+    assert is_model_live(kept_model.id, session) is True
+
+
+def test_a_model_left_live_under_a_deleted_project_is_not_live(session, project_factory, model_factory, user_factory):
+    """Projects deleted before their models were deleted with them still hold ``deleted=False`` models."""
+    owner_id = user_factory().id
+    project = project_factory.build(owner_id=owner_id, deleted=True)
+    session.add(project)
+    session.commit()  # no ORM relationship orders the model insert after it
+    model = model_factory.build(project_id=project.id, owner_id=owner_id, deleted=False)
+    session.add(model)
+    session.commit()
+
+    assert is_model_live(model.id, session) is False
 
 
 @pytest.fixture
