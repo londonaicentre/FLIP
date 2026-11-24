@@ -495,11 +495,8 @@ jobs:
       # runs without the credentials to read Terraform state. They change only if
       # the pool or client is replaced; this is the run that would replace them,
       # so it compares them here, where both are in reach, and hands the verdict
-      # to the ui-cognito-ids job.
-      #
-      # This step never fails: the apply has happened, and failing its job here
-      # would also skip the staging restore and stop. Terraform's own error stays
-      # in this log.
+      # to the ui-cognito-ids job. The step never fails: the apply has happened,
+      # and failing this job would also skip the staging restore and stop.
       - name: Compare the UI's Cognito ids with Terraform
         id: cognito
         working-directory: deploy/aws
@@ -514,8 +511,7 @@ jobs:
             verdict=unreadable
             echo "terraform output CognitoUserPoolId / CognitoAppClientId could not be read."
           elif [[ -z "${UI_POOL_ID}" && -z "${UI_CLIENT_ID}" ]]; then
-            # A new environment: the pool did not exist before its first apply, so
-            # nobody could have set these. publish_ui.yml refuses to build without them.
+            # A first apply: the pool did not exist, so nobody could have set these.
             verdict="unset"
             echo "AWS_COGNITO_USER_POOL_ID and AWS_COGNITO_APP_CLIENT_ID are not set on this environment."
           else
@@ -532,13 +528,10 @@ jobs:
           echo "verdict: ${verdict}"
           echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
 
-  # A mismatch used to be a warning on a green run, and the ui job then published
-  # a UI nobody could sign in to (FLIP#2047). Its own job, so that it holds the UI
-  # and turns the run red without failing the apply job the staging cycle keys on.
-  # It names no environment (aws-prod's reviewers would have to approve it on every
-  # production apply), so the comparison is the apply job's and only the verdict
-  # crosses over. The verdict is the apply run's: after correcting the variables,
-  # re-run all jobs or dispatch the apply again.
+  # Holds the UI and turns the run red on ids nobody could sign in with (FLIP#2047),
+  # without failing the apply job the staging cycle keys on. No environment: aws-prod's
+  # reviewers would have to approve it on every production apply, so the apply job
+  # compares and only its verdict crosses over.
   ui-cognito-ids:
     name: Check the UI's Cognito ids against Terraform
     needs: apply

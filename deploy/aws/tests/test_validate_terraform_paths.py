@@ -40,14 +40,15 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
 import yaml
 
 AWS_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = AWS_DIR.parents[1]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "validate_terraform.yml"
 # GitHub's own filter syntax (`*` stops at `/`, `**` does not), as the PR path gate reads it.
-GATE = REPO_ROOT / "scripts" / "pr_paths_changed.py"
+_spec = importlib.util.spec_from_file_location("pr_paths_changed", REPO_ROOT / "scripts" / "pr_paths_changed.py")
+GATE = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(GATE)
 
 #: Directories the scan cannot see through, and the files the tests read there, found by hand.
 BY_HAND = {
@@ -65,13 +66,6 @@ BY_HAND = {
     "trust": ("trust/Makefile", "deploy/instance.mk", "deploy/portable.mk"),
     "trust/xnat": ("trust/xnat/Makefile", "trust/xnat/.env"),
 }
-
-
-def _gate():
-    spec = importlib.util.spec_from_file_location("pr_paths_changed", GATE)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _resolve(node: ast.AST, names: dict[str, Path], source: Path) -> Path | None:
@@ -102,18 +96,16 @@ def _outside_paths(source: Path) -> set[str]:
     """Repo-relative paths outside ``deploy/aws`` that the module ``source`` names."""
     tree = ast.parse(source.read_text())
     names: dict[str, Path] = {}
+    # A path that only goes on to build a longer one, or to be given a name, is not where a read ends.
+    prefixes = set()
     for node in sorted((n for n in ast.walk(tree) if isinstance(n, ast.Assign)), key=lambda n: n.lineno):
         if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            prefixes.add(node.value)
             value = _resolve(node.value, names, source)
             if value:
                 names[node.targets[0].id] = value
-
-    # A path that only goes on to build a longer one, or to be given a name, is not where a read ends.
-    prefixes = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            prefixes.add(node.value)
-        elif _resolve(node, names, source):
+        if _resolve(node, names, source):
             prefixes.update(ast.iter_child_nodes(node))
 
     found = set()
@@ -142,15 +134,17 @@ def _tracked(paths: set[str]) -> set[str]:
     return {path for path in paths if path in listed or any(line.startswith(f"{path}/") for line in listed)}
 
 
-SCANNED = _tracked(set().union(*(_outside_paths(source) for source in sorted(AWS_DIR.glob("tests/*.py")))))
+SCANNED = _tracked(set().union(*map(_outside_paths, AWS_DIR.glob("tests/*.py"))))
 DIRECTORIES = {path for path in SCANNED if (REPO_ROOT / path).is_dir()}
 FILES = sorted((SCANNED - DIRECTORIES) | {path for paths in BY_HAND.values() for path in paths})
 # `on:` is parsed as the boolean True by YAML 1.1.
 TRIGGERS = yaml.safe_load(WORKFLOW.read_text())[True]
+# The push list stands for both: the last test holds the pull_request one equal to it.
+PATTERNS = TRIGGERS["push"]["paths"]
 
 
-def _covered(path: str, patterns: list[str]) -> bool:
-    return _gate().first_match([path], patterns) is not None
+def _covered(path: str) -> bool:
+    return GATE.first_match([path], PATTERNS) is not None
 
 
 def test_the_scan_sees_both_kinds_of_reference() -> None:
@@ -160,12 +154,7 @@ def test_the_scan_sees_both_kinds_of_reference() -> None:
 
 
 def test_every_directory_the_scan_ends_on_is_accounted_for() -> None:
-    unexplained = [
-        path
-        for path in sorted(DIRECTORIES)
-        if path not in BY_HAND
-        and not all(_covered(f"{path}/a/b", TRIGGERS[event]["paths"]) for event in ("push", "pull_request"))
-    ]
+    unexplained = [path for path in sorted(DIRECTORIES) if path not in BY_HAND and not _covered(f"{path}/a/b")]
     assert not unexplained, (
         f"a test reads below {unexplained} by a name the scan cannot follow: "
         "list the files it reads there in BY_HAND, or cover the directory with `<dir>/**` in the workflow"
@@ -177,12 +166,10 @@ def test_the_hand_list_names_real_files() -> None:
     assert not stale, f"BY_HAND names files that no longer exist: {stale}"
 
 
-@pytest.mark.parametrize("event", ["push", "pull_request"])
-def test_the_workflow_runs_on_every_file_the_suite_reads(event: str) -> None:
-    patterns = TRIGGERS[event]["paths"]
-    missing = [path for path in FILES if not _covered(path, patterns)]
+def test_the_workflow_runs_on_every_file_the_suite_reads() -> None:
+    missing = [path for path in FILES if not _covered(path)]
     assert not missing, (
-        f"validate_terraform.yml's {event} paths do not list {missing}, which deploy/aws/tests reads: "
+        f"validate_terraform.yml's paths do not list {missing}, which deploy/aws/tests reads: "
         "a change to one of them alone would not run this suite"
     )
 

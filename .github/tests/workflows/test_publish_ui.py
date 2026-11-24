@@ -24,9 +24,15 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from image_workflows import step_block  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -154,64 +160,58 @@ class ApplyPublishesTheUi(unittest.TestCase):
         assert permissions(ui) == {"contents": "read", "id-token": "write"}
 
     @staticmethod
-    def _run_script(body: str, name: str) -> str:
-        step = re.search(
-            rf"^      - name: {re.escape(name)}\n(?:        [^\n]*\n)*?        run: \|\n"
-            r"(?P<run>(?:          [^\n]*\n)+)",
-            body,
-            re.MULTILINE,
+    def _bash(body: str, step: str, **env: str) -> subprocess.CompletedProcess:
+        """Run the script of the step named ``step`` in a job body."""
+        script = textwrap.dedent(step_block(body, step).split("run: |", 1)[1])
+        return subprocess.run(
+            ["bash", "-c", script], env={"PATH": os.environ["PATH"], **env}, capture_output=True, text=True
         )
-        assert step, f"no '{name}' step"
-        return "\n".join(line[10:] for line in step["run"].splitlines())
 
     def test_the_apply_job_compares_the_cognito_ids_and_cannot_fail(self) -> None:
         """The staging restore and stop key on the apply job's result, so the step only reports a verdict."""
         apply = job("terraform_apply.yml", "apply")
-        script = self._run_script(apply, "Compare the UI's Cognito ids with Terraform")
-        assert "2>/dev/null" not in script, "Terraform's error must reach the log"
+        step = "Compare the UI's Cognito ids with Terraform"
+        assert "2>/dev/null" not in step_block(apply, step), "Terraform's error must reach the log"
         assert "ui_cognito_ids: ${{ steps.cognito.outputs.verdict }}" in apply
 
         new = {"TF_POOL": "eu-west-2_new", "TF_CLIENT": "newclient"}
         ui = {"UI_POOL_ID": "eu-west-2_new", "UI_CLIENT_ID": "newclient"}
-        for env, verdict, says in [
-            ({**new, **ui}, "match", ""),
-            ({**new, **ui, "UI_POOL_ID": "eu-west-2_old"}, "mismatch", "AWS_COGNITO_USER_POOL_ID differs"),
-            ({**new, **ui, "UI_CLIENT_ID": "oldclient"}, "mismatch", "AWS_COGNITO_APP_CLIENT_ID differs"),
-            ({**new, "UI_POOL_ID": "eu-west-2_new"}, "mismatch", "AWS_COGNITO_APP_CLIENT_ID differs"),
-            # A first apply: nobody could have set them yet, and publish_ui.yml refuses to build without them.
-            (new, "unset", "are not set on this environment"),
-            # terraform output fails: its own verdict, and Terraform's error is not swallowed.
-            (ui, "unreadable", "could not be read"),
-            ({}, "unreadable", "could not be read"),
-        ]:
-            with self.subTest(env=env), tempfile.TemporaryDirectory() as tmp:
-                stub = Path(tmp, "terraform")
-                stub.write_text(
-                    "#!/usr/bin/env bash\n"
-                    'case "$3" in CognitoUserPoolId) v="${TF_POOL}" ;; *) v="${TF_CLIENT}" ;; esac\n'
-                    '[[ -n "$v" ]] || { echo "Error: Output $3 not found" >&2; exit 1; }\n'
-                    'printf %s "$v"\n'
-                )
-                stub.chmod(0o755)
-                output = Path(tmp, "output")
-                blank = dict.fromkeys(("TF_POOL", "TF_CLIENT", "UI_POOL_ID", "UI_CLIENT_ID"), "")
-                run = subprocess.run(
-                    ["bash", "-c", script],
-                    env={"PATH": f"{tmp}:{os.environ['PATH']}", "GITHUB_OUTPUT": str(output), **blank, **env},
-                    capture_output=True,
-                    text=True,
-                )
-                assert run.returncode == 0, run.stdout + run.stderr
-                assert output.read_text() == f"verdict={verdict}\n"
-                assert says in run.stdout, run.stdout
-                assert ("not found" in run.stderr) is (verdict == "unreadable"), run.stderr
-                # Names only: the ids themselves stay out of the log and the outputs.
-                assert not [value for value in env.values() if value in run.stdout], run.stdout
+        blank = dict.fromkeys((*new, *ui), "")
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp, "terraform")
+            stub.write_text(
+                "#!/usr/bin/env bash\n"
+                'case "$3" in CognitoUserPoolId) v="${TF_POOL}" ;; *) v="${TF_CLIENT}" ;; esac\n'
+                '[[ -n "$v" ]] || { echo "Error: Output $3 not found" >&2; exit 1; }\n'
+                'printf %s "$v"\n'
+            )
+            stub.chmod(0o755)
+            output = Path(tmp, "output")
+            path = f"{tmp}:{os.environ['PATH']}"
+            for env, verdict, says in [
+                ({**new, **ui}, "match", ""),
+                ({**new, **ui, "UI_POOL_ID": "eu-west-2_old"}, "mismatch", "AWS_COGNITO_USER_POOL_ID differs"),
+                ({**new, **ui, "UI_CLIENT_ID": "oldclient"}, "mismatch", "AWS_COGNITO_APP_CLIENT_ID differs"),
+                ({**new, "UI_POOL_ID": "eu-west-2_new"}, "mismatch", "AWS_COGNITO_APP_CLIENT_ID differs"),
+                # A first apply: nobody could have set them yet, and publish_ui.yml refuses to build without them.
+                (new, "unset", "are not set on this environment"),
+                # terraform output fails: its own verdict, and Terraform's error is not swallowed.
+                (ui, "unreadable", "could not be read"),
+                ({}, "unreadable", "could not be read"),
+            ]:
+                with self.subTest(env=env):
+                    output.write_text("")
+                    run = self._bash(apply, step, **{"PATH": path, "GITHUB_OUTPUT": str(output), **blank, **env})
+                    assert run.returncode == 0, run.stdout + run.stderr
+                    assert output.read_text() == f"verdict={verdict}\n"
+                    assert says in run.stdout, run.stdout
+                    assert ("not found" in run.stderr) is (verdict == "unreadable"), run.stderr
+                    # Names only: the ids themselves stay out of the log and the outputs.
+                    assert not [value for value in env.values() if value in run.stdout], run.stdout
 
     def test_a_cognito_verdict_other_than_match_or_unset_holds_the_ui(self) -> None:
         """A mismatch was a warning on a green run, and the UI published could sign nobody in (FLIP#2047)."""
         check = job("terraform_apply.yml", "ui-cognito-ids")
-        script = self._run_script(check, "Act on the apply job's verdict")
         assert "VERDICT: ${{ needs.apply.outputs.ui_cognito_ids }}" in check
         for verdict, ok, says in [
             ("match", True, "match Terraform"),
@@ -222,15 +222,10 @@ class ApplyPublishesTheUi(unittest.TestCase):
             ("", False, "::error title=Cognito ids not read"),
         ]:
             with self.subTest(verdict=verdict):
-                run = subprocess.run(
-                    ["bash", "-c", script],
-                    env={"PATH": os.environ["PATH"], "VERDICT": verdict},
-                    capture_output=True,
-                    text=True,
-                )
+                run = self._bash(check, "Act on the apply job's verdict", VERDICT=verdict)
                 assert (run.returncode == 0) is ok, run.stdout + run.stderr
                 assert says in run.stdout, run.stdout
-        mismatch = next(line for line in script.splitlines() if "UI Cognito ids differ" in line)
+        mismatch = next(line for line in check.splitlines() if "UI Cognito ids differ" in line)
         assert "AWS_COGNITO_USER_POOL_ID" in mismatch
         assert "AWS_COGNITO_APP_CLIENT_ID" in mismatch
 
