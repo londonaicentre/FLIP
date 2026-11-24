@@ -412,7 +412,8 @@ Day-to-day use
      - Stop everything (data is kept)
    * - ``make restart-no-trust``
      - Recreate the hub API container alone, in the background. The database,
-       the FL services and the trusts keep running.
+       the FL services and the trusts keep running. It starts nothing else, so it
+       stops with a message when the database, Keycloak or the object store is down.
    * - ``make up BUILD=true``
      - Rebuild images after a dependency or Dockerfile change. Ordinary
        source edits are bind-mounted and reload live (see

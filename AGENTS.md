@@ -87,7 +87,7 @@ make up-no-trust           # Start central hub only
 make up-trusts             # Start trust services only
 make down                  # Stop all services
 make restart               # Stop and restart all
-make restart-no-trust      # Recreate the flip-api container only (flip-db, FL services and trusts stay up; honours DEBUG)
+make restart-no-trust      # Recreate the flip-api container only (flip-db, FL services and trusts stay up; honours DEBUG; refuses when flip-db, keycloak or object-store is not running)
 make build                 # Build all Docker images (standalone, --no-cache; does not start)
 make lock                  # Regenerate every uv.lock from its pyproject.toml
 make ui                    # Start UI only

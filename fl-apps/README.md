@@ -81,7 +81,8 @@ two things ever ship —
 
 Everything else in the template directory — `recipe.py`, `README.md`, the per-template
 `required_files.json`, dev tool caches — is excluded and logged at debug level, never shipped to a
-trust. The allowlist fails **closed**: for an operator-provided `FL_APP_BASE_DIR`, an unrecognised
+trust. The allowlist fails **closed**: for an operator-provided template tree (mounted or baked at that path; no
+compose file or ECS task passes `FL_APP_BASE_DIR`), an unrecognised
 file is omitted (logged only at debug level) rather than shipped, so a hotfix to a base template ships by rebuilding
 (and, in prod, redeploying) the flip-api image, not by editing files in place at a trust.
 

@@ -117,9 +117,21 @@ OFFERED_FLIP_API_SETTINGS = (
     "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE",
     "TRUST_KEY_ROTATION_GRACE_DAYS",
 )
-# Code defaults no compose passes, and whose empty value config.py does not coerce: the
-# example must not offer them as a line to uncomment.
-NOT_PASSED_FLIP_API_SETTINGS = ("FL_APP_BASE_DIR", "FL_API_KEY_HEADER")
+# FL_APP_BASE_DIR and FL_API_KEY_HEADER are not in the list: no container reads them (no compose
+# passes them, and config.py does not coerce their empty value). A line for one is still read by
+# a host run that loads flip-api's Settings from the env file, so it is not forbidden here.
+FLIP_API_CONFIG = REPO_ROOT / "flip-api" / "src" / "flip_api" / "config.py"
+
+
+def empty_coercing_settings() -> set[str]:
+    """Fields with a ``mode="before"`` validator in config.py that handles the empty string."""
+    names: set[str] = set()
+    for chunk in FLIP_API_CONFIG.read_text().split("@field_validator(")[1:]:
+        args, _, rest = chunk.partition("@classmethod")
+        body = rest.split("\n    @", 1)[0]
+        if 'mode="before"' in args and '== ""' in body:
+            names.update(re.findall(r'"([A-Z][A-Z0-9_]*)"', args))
+    return names
 
 
 def check_offered_settings_reach_flip_api(failures: list[str]) -> None:
@@ -128,7 +140,15 @@ def check_offered_settings_reach_flip_api(failures: list[str]) -> None:
     block = re.search(r"^  flip-api:\n((?:(?:    .*)?\n)+)", compose, re.MULTILINE)
     if not block:
         raise ValueError(f"{DEV_COMPOSE_FILES[0]}: no flip-api service block")
+    coerced = empty_coercing_settings()
+    if not coerced:
+        raise ValueError(f"{FLIP_API_CONFIG.name}: no empty-coercing validators found — parser broken")
     for name in OFFERED_FLIP_API_SETTINGS:
+        if name not in coerced:
+            failures.append(
+                f"{FLIP_API_CONFIG.name}: no before-validator turns an empty {name} into its default, but the "
+                f"dev compose passes `${{{name}:-}}`: every dev flip-api would fail at boot."
+            )
         if not re.search(rf"^# {name}=", example, re.MULTILINE):
             failures.append(
                 f"{ENV_EXAMPLE.name}: no commented `# {name}=` line; drop it from OFFERED_FLIP_API_SETTINGS"
@@ -138,9 +158,6 @@ def check_offered_settings_reach_flip_api(failures: list[str]) -> None:
                 f"{DEV_COMPOSE_FILES[0]}: flip-api does not pass `{name}=${{{name}:-}}`, so the example's "
                 f"`# {name}=` line changes nothing when uncommented."
             )
-    for name in NOT_PASSED_FLIP_API_SETTINGS:
-        if re.search(rf"^#?\s*{name}=", example, re.MULTILINE):
-            failures.append(f"{ENV_EXAMPLE.name}: offers `{name}=`, which no compose passes to flip-api.")
 
 
 def main() -> int:
