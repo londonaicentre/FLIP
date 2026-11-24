@@ -84,10 +84,11 @@ def load_digests(directory: Path, code: str, env: str, kit: dict[str, str]) -> d
         return {}
     digests: dict[str, str] = {}
     for repo, entry in data.get("images", {}).items():
-        if entry.get("tag") == source_tag(kit, repo):
+        mirrored, asked = entry.get("tag"), source_tag(kit, repo)
+        if mirrored == asked:
             digests[repo] = entry.get("digest", "")
         else:
-            print(f"   ⚠  {repo} was mirrored at {entry.get('tag')}, the kit asks for {source_tag(kit, repo)}:")
+            print(f"   ⚠  {repo} was mirrored at {mirrored}, the kit asks for {asked}:")
             print("      referenced by TAG. Run `make mirror-images`.")
     return digests
 
@@ -171,8 +172,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # The kit is the one place that holds the switch. Given per run it was stored nowhere,
-    # and the next render without it detached the trust from the hub and the FL network.
+    # The Makefile refuses this at parse time; here for the script run on its own, where an
+    # ignored HUB_EGRESS=true would render a hubless trust.
     if "HUB_EGRESS" in os.environ:
         sys.exit(
             "❌ HUB_EGRESS is set on the make line or in the environment. It is read from the kit file\n"

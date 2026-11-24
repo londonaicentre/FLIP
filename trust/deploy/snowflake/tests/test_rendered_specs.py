@@ -560,6 +560,7 @@ def test_orthanc_knows_xnat_as_a_modality(specs: dict) -> None:
 # --- found on the live account (review of #1600, #1710, #1756) ------------------------------------
 
 import spec_templates  # noqa: E402
+from render_specs import load_digests  # noqa: E402
 
 
 def test_a_written_stage_volume_is_owned_by_the_user_its_container_runs_as(specs: dict, manifest: dict) -> None:
@@ -684,8 +685,6 @@ def _lock(tmp_path: Path, code: str = "GSTT", env: str = "stag", **tags: str) ->
 
 
 def test_the_image_lock_is_used_for_the_trust_it_was_written_for(kit: dict, tmp_path: Path) -> None:
-    from render_specs import load_digests
-
     lock = _lock(tmp_path, **{"trust-api": "v1.2.3", "flare-fl-client": "v1.2.3"})
     assert load_digests(lock, "GSTT", "stag", kit) == {
         "trust-api": "sha256:trust-api",
@@ -696,16 +695,12 @@ def test_the_image_lock_is_used_for_the_trust_it_was_written_for(kit: dict, tmp_
 @pytest.mark.parametrize(("code", "env"), [("KCH", "stag"), ("GSTT", "prod")])
 def test_another_trusts_image_lock_is_not_used(kit: dict, tmp_path: Path, code: str, env: str) -> None:
     """One lock per checkout: trust B rendered after mirroring trust A carried A's digests."""
-    from render_specs import load_digests
-
     assert load_digests(_lock(tmp_path, code, env, **{"trust-api": "v1.2.3"}), "GSTT", "stag", kit) == {}
 
 
 def test_a_digest_mirrored_at_another_tag_is_dropped(kit: dict, tmp_path: Path) -> None:
     """DOCKER_TAG edited, no `make mirror-images`: the specs kept the old release's digests and
     every ALTER SERVICE succeeded on the old images."""
-    from render_specs import load_digests
-
     lock = _lock(tmp_path, **{"trust-api": "v1.2.2", "orthanc": "v1.2.3", "flare-fl-client": "v1.2.3"})
     assert load_digests(lock, "GSTT", "stag", kit) == {
         "orthanc": "sha256:orthanc",

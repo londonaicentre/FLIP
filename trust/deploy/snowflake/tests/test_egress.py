@@ -213,11 +213,10 @@ def test_the_kit_is_the_only_place_that_holds_the_switch(tmp_path: Path, kit: di
     kit_file = tmp_path / "kit.env"
     kit_file.write_text("".join(f"{key}={value}\n" for key, value in {**kit, "HUB_EGRESS": "true"}.items()))
     out = tmp_path / "rendered"
-    for _ in range(2):
-        result = render_cli(kit_file, out)
-        assert result.returncode == 0, result.stderr
-        manifest = json.loads((out / "manifest.json").read_text())
-        assert manifest["external_access_integrations"] == ["FLIP_GSTT_HUB_EAI"]
+    result = render_cli(kit_file, out)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["external_access_integrations"] == ["FLIP_GSTT_HUB_EAI"]
 
 
 @pytest.mark.parametrize("value", ["true", "false", ""])

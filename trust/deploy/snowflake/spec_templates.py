@@ -590,6 +590,13 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
 SITE_PRIVACY_KEYS = ("FL_SITE_PRIVACY_POLICY", "FL_SITE_PRIVACY_PERCENTILE", "FL_SITE_PRIVACY_GAMMA")
 
 
+def governance_document(ref: str) -> Path:
+    """The kit's ``ACCESS_POLICY_FILE`` on this host: relative to ``trust/``, as Compose's
+    ``--project-directory trust`` resolves its own mount of the same file."""
+    document = Path(ref)
+    return document if document.is_absolute() else (Path(__file__).resolve().parents[2] / document).resolve()
+
+
 def refuse_site_privacy(kit: dict[str, str]) -> None:
     """Refuse a kit that asks for an FL site privacy filter, in either of its two forms.
 
@@ -600,10 +607,8 @@ def refuse_site_privacy(kit: dict[str, str]) -> None:
     asked = next((key for key in SITE_PRIVACY_KEYS if kit.get(key, "").strip()), None)
     ref = kit.get("ACCESS_POLICY_FILE", "").strip()
     if not asked and ref:
-        # Relative to trust/, as sync-kit and Compose's --project-directory trust resolve it.
-        document = Path(__file__).resolve().parents[2] / ref
         try:
-            section = tomllib.loads(document.read_text()).get("fl_privacy")
+            section = tomllib.loads(governance_document(ref).read_text()).get("fl_privacy")
         except (OSError, ValueError) as e:
             raise ValueError(
                 f"ACCESS_POLICY_FILE={ref!r} cannot be read ({e}), so it cannot be checked for a site privacy filter"
