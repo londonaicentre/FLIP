@@ -861,7 +861,7 @@ def render_override(
         lines += ["", "dataAccessApi:", f"  cohortQueryThreshold: {threshold}"]
 
     # FL-server egress (FLIP#593 pt.3): the default-deny egress NetworkPolicy
-    # drops the fl-client's outbound gRPC to the FL server unless its dial port
+    # drops the fl-client's outbound connection to the FL server unless its dial port
     # is allow-listed. The FL server sits behind an internet-facing NLB with
     # AWS-managed IPs that rotate on recreation (and DNS returns a reordered
     # subset), so pinning resolved /32s would relocate the very drift it tries to
@@ -880,7 +880,7 @@ def render_override(
             "",
             "networkPolicies:",
             "  # Restates the chart-default egress ports (values.yaml) plus the",
-            "  # fl-client → fl-server gRPC port; Helm replaces this list wholesale.",
+            "  # fl-client → fl-server port; Helm replaces this list wholesale.",
             "  allowedEgressPorts:",
             "    - port: 53",
             "      protocol: UDP",
@@ -890,7 +890,7 @@ def render_override(
             "      protocol: TCP",
             "    - port: 443",
             "      protocol: TCP",
-            f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL dial port)",
+            f"    - port: {fl_port}  # fl-client → fl-server (FL dial port)",
             "      protocol: TCP",
         ]
 
