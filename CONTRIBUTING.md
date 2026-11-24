@@ -167,7 +167,7 @@ the version used in the service's Dockerfile.
 Every image a trust node runs comes from `ghcr.io/londonaicentre/`: FLIP's own, and byte-identical copies of the
 third-party ones (Grafana, Loki, Alloy, XNAT's Docker socket proxy, the chart's `uv` and `busybox` helpers) under
 `ghcr.io/londonaicentre/mirror/`, listed with their digests in `trust/deploy/mirror-images.manifest` and pinned
-`<name>:<tag>@<digest>` in the compose files, the Helm chart and the Ansible seed role
+`<name>:<tag>@<digest>` in the compose files, the Helm chart and the Ansible roles
 (`scripts/tests/test_mirror_images.py` fails on drift). A site's proxy allowlist is by host name and cannot be
 narrowed to FLIP's packages, so one registry is the smallest ask and the digest is the control. Never add a
 `docker.io` image to anything a trust runs. To bump one: `docker buildx imagetools inspect <upstream>` for the new

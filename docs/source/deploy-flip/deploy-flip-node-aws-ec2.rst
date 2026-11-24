@@ -280,6 +280,7 @@ Not yet supported
 
 - **The node self-test before join** (``selftest_node.sh`` over SSM, as the Azure node runs it through Run
   Command) and **the running-stack check after join** (FLIP#1449) are not yet available for EC2 nodes.
-- **GPU hosts**: provisioning installs the NVIDIA driver and checks a container can see the GPU (the
-  ``flip_gpu_host`` role; it does nothing on a CPU host), but ``make deploy`` still starts the FL client
-  CPU-only. GPU instances have not been tested.
+- **GPU hosts**: provisioning installs no NVIDIA driver. On an image that ships one (a GPU AMI) it holds
+  the driver and kernel through the package upgrade, registers the NVIDIA runtime with Docker and checks a
+  container can see the GPU (the ``flip_gpu_host`` role; it does nothing on a host without ``nvidia-smi``).
+  ``make deploy`` still starts the FL client CPU-only. GPU instances have not been tested.
