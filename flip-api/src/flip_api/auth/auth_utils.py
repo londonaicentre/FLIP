@@ -32,8 +32,8 @@ def _user_permission_ids(user_id: UUID, db: Session) -> set[UUID]:
     grants are deliberately excluded: a Trust Admin's authority over their own trust must
     not leak into platform-wide checks. Use :func:`has_trust_permissions` for those.
 
-    Raises rather than swallowing DB errors: each caller converts a failure into a deny, so the
-    fail-closed behaviour stays visible at the point where the access decision is made.
+    Raises rather than swallowing DB errors, and so do its callers: a failed lookup is a 500, never
+    a deny that reads as "no access".
 
     Args:
         user_id (UUID): The ID of the user to collect permissions for.

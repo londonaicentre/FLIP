@@ -24,7 +24,7 @@ export const closedWithoutDecision = (decision: {
     decidedAt?: string | null;
 }): boolean => decision.status === "DECLINED" && !decision.decidedByName && !decision.decidedAt;
 
-/** "25 Sep 2026" — the My Trust page's date format (FLIP#1258); a naive hub timestamp is read as UTC. */
+/** "25 Sep 2026" — the hub's short date (My Trust, Access Requests, FLIP#1258); a naive timestamp is UTC. */
 export const shortDate = (iso: string): string =>
     new Date(apiTimestampMs(iso) ?? NaN).toLocaleDateString("en-GB", {
         day: "numeric",

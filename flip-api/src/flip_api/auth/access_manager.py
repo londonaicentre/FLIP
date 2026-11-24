@@ -233,9 +233,6 @@ def can_access_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
 
     Returns:
         bool: True if the user has access to the model, False otherwise
-
-    Raises:
-        HTTPException: If there is an error during the access check
     """
     logger.debug(f"Checking if user: {user_id} can access model: {model_id}")
 
@@ -277,9 +274,6 @@ def can_access_cohort_query(user_id: UUID, query_id: UUID, db: Session) -> bool:
 
     Returns:
         bool: True if the user has access to the cohort query, False otherwise
-
-    Raises:
-        HTTPException: If there is an error during the access check
     """
     logger.debug(f"Checking if user: {user_id} can access cohort query: {query_id}")
 
