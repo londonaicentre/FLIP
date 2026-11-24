@@ -227,30 +227,15 @@ def test_a_reply_without_a_node_id_fails_the_run(one_shot, tmp_path):
 
 # FLIP#2047: the node → trust name mappings live only in the FL API's memory and only this one-shot
 # writes them, so an FL API that did not take them must fail the run instead of passing as a warning.
-STUB_PYTHON_FL_API_DOWN = """#!/usr/bin/env bash
-if [ "$1" = "-c" ]; then
-  case "$2" in
-    *openapi.json*|*register_node*) exit 1 ;;
-  esac
-  exit 0
-fi
-exec "{python}" "$@"
-"""
-STUB_PYTHON_REFUSING_TRUST_2 = """#!/usr/bin/env bash
-if [ "$1" = "-c" ]; then
-  case "$2" in
-    *"'name': 'Trust_2'"*register_node*) echo "HTTP Error 401: Unauthorized" >&2; exit 1 ;;
-    *register_node*) echo "$2" | grep -o "'name': '[^']*', 'node_id': '[^']*'" >> "$MAPPINGS" ;;
-  esac
-  exit 0
-fi
-exec "{python}" "$@"
-"""
+def _failing_fl_api(tmp_path: Path, case: str) -> None:
+    """The mapping-logging `python` stub, with one case tried first for the call the FL API fails."""
+    stub = STUB_PYTHON_MAPPINGS.replace("    *register_node*)", f"    {case}\n    *register_node*)")
+    (tmp_path / "bin" / "python").write_text(stub.replace("{python}", sys.executable))
 
 
 def test_an_fl_api_that_never_answers_fails_the_run(one_shot, tmp_path):
     keys = _keys(tmp_path, 1)
-    (tmp_path / "bin" / "python").write_text(STUB_PYTHON_FL_API_DOWN.replace("{python}", sys.executable))
+    _failing_fl_api(tmp_path, "*openapi.json*) exit 1 ;;")
     result, _ = one_shot(
         [HOST], TRUST_NAMES="", KEYS_DIR=str(keys), FL_API_ADDRESS="http://fl-api:8000", FL_API_READY_ATTEMPTS="1"
     )
@@ -262,7 +247,7 @@ def test_an_fl_api_that_never_answers_fails_the_run(one_shot, tmp_path):
 def test_a_mapping_the_fl_api_refuses_fails_the_run_after_the_others_are_tried(one_shot, tmp_path):
     keys = _keys(tmp_path, 1, 2, 3)
     mappings = tmp_path / "mappings.log"
-    (tmp_path / "bin" / "python").write_text(STUB_PYTHON_REFUSING_TRUST_2.replace("{python}", sys.executable))
+    _failing_fl_api(tmp_path, """*"'name': 'Trust_2'"*) echo "HTTP Error 401: Unauthorized" >&2; exit 1 ;;""")
     result, _ = one_shot(
         [HOST], TRUST_NAMES="", KEYS_DIR=str(keys), FL_API_ADDRESS="http://fl-api:8000", MAPPINGS=str(mappings)
     )
