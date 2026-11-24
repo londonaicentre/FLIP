@@ -1347,10 +1347,42 @@ def main() -> None:
     test_57_fl_kit_contents_a_closed_folder_above_the_slot_is_named_not_crashed_on()
     test_58_a_site_without_the_membership_store_dir_is_told_the_exact_root_step()
     test_59_standalone_ready_also_names_the_upgrade()
+    test_60_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)
+
+
+def test_60_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked() -> None:
+    """A site root installed: the folder above its data dirs is root's. Only a first install seeds (FLIP#1985)."""
+    print("\n[60] existing data dirs under a root-owned parent: first install FAIL, upgrade PASS")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        (locked / "omop").mkdir(parents=True)
+        (locked / "pacs").mkdir()
+        kit = {"OMOP_DATA_DIR": f"{locked}/omop", "ORTHANC_STORAGE_DIR": f"{locked}/pacs"}
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            first = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod")
+            upgrade = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod", upgrade=True)
+            missing = mod.check_data_dir_paths(
+                {**kit, "COHORT_SNAPSHOT_STORAGE_DIR": f"{locked}/snapshots"}, True, "k", upgrade=True
+            )
+    _assert(first.status == mod.Status.FAIL and "seed marker" in first.detail, "first install: FAIL", str(first))
+    _assert(upgrade.status == mod.Status.PASS, "upgrade: PASS", f"{upgrade.status}: {upgrade.detail}")
+    _assert(
+        missing.status == mod.Status.FAIL and "COHORT_SNAPSHOT_STORAGE_DIR" in missing.detail,
+        "upgrade: a dir it would still create is checked",
+        str(missing),
+    )
+    with mock.patch.object(sys, "argv", ["prog", "SITE", "--gate", "--upgrade"]):
+        with mock.patch.object(mod, "run_checks", side_effect=SystemExit) as run:
+            try:
+                mod.main()
+            except SystemExit:
+                pass
+    _assert(run.call_args.args[3] is True, "--upgrade reaches the row", str(run.call_args))
 
 
 if __name__ == "__main__":
