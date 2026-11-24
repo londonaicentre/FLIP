@@ -740,8 +740,8 @@ def render_override(
     # value the Compose path uses, so one kit field serves both deployment shapes.
     # The fallback is the canonical FLIP kit path: every shipped kit sets FL_KIT_DIR
     # to it, the Ansible EC2/on-prem plays stage to it, and the chart Makefile's
-    # KIT_DEST defaults to it — a kit missing the field still renders a path the
-    # default `make stage-kit` actually wrote to.
+    # stage-kit falls back to it the same way — a kit missing the field still renders
+    # the path `make stage-kit` wrote to.
     kit_host_path = kit.get("FL_KIT_DIR", "").strip() or "/opt/flip/fl-kit"
 
     lines = [

@@ -24,6 +24,7 @@ drive exactly that.
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -128,21 +129,61 @@ def test_the_destination_is_emptied_before_the_copy(nvflare_kit):
     assert result.returncode == 0, result.stderr
 
     # The script wipes --dest before it copies, on both transports (tests/test_stage_to_node.py); this
-    # pins that KIT_DEST is what it is handed.
+    # pins that the kit path is what it is handed.
     assert '--dest "/opt/flip/fl-kit"' in result.stdout
     assert "stage-to-node.sh" in result.stdout
 
 
-@pytest.mark.parametrize("bad_dest", ["", "/"])
-def test_a_destination_the_wipe_must_not_touch_is_refused(nvflare_kit, bad_dest):
-    """The wipe is the one destructive step here, so its two escape values fail at parse time.
+def _kit_file(tmp_path, body: str) -> str:
+    kit_file = tmp_path / ".env.SITE.prod"
+    kit_file.write_text(body)
+    return f"KIT_FILE={kit_file}"
 
-    An empty KIT_DEST would make it ``find  -mindepth 1 -delete``, walking the working
-    directory; ``/`` would walk the node's root filesystem.
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "FL_KIT_DIR=/data/flip/fl-kit\n",
+        'FL_KIT_DIR="/data/flip/fl-kit"\n',
+        "FL_KIT_DIR=/old\nFL_KIT_DIR=/data/flip/fl-kit\n",
+        "FL_KIT_DIR=\n",
+        "FL_KIT_DIR=   \n",
+        "OTHER=1\n",
+    ],
+)
+def test_the_kit_is_staged_where_the_kit_file_says_the_chart_mounts_it(tmp_path, nvflare_kit, body):
+    """One fact, one home (FLIP#2042): stage-kit's destination is the path sync-kit renders for the same kit file."""
+    sys.path.insert(0, str(CHART_DIR))
+    try:
+        import sync_k8s_kit
+    finally:
+        sys.path.remove(str(CHART_DIR))
+    arg = _kit_file(tmp_path, body)
+    kit = {"FL_KIT_SLOT": "Trust_1", **sync_k8s_kit.read_env_vars(Path(arg.split("=", 1)[1]))}
+    rendered = re.search(r"^  kitHostPath: (.+)$", sync_k8s_kit.render_override(kit, "SITE", "eu-west-2"), re.M)
+    assert rendered is not None
+
+    result = make_n_stage_kit(nvflare_kit, "KIT=SITE", arg)
+    assert result.returncode == 0, result.stderr
+    assert f'--dest "{rendered.group(1)}"' in result.stdout
+
+
+@pytest.mark.parametrize("bad_dest", ["/", "relative/kit", "./kit"])
+def test_a_destination_the_wipe_must_not_touch_is_refused(tmp_path, nvflare_kit, bad_dest):
+    """The wipe is the one destructive step here, so a path that is not a directory of its own fails at parse time.
+
+    ``/`` would walk the node's root filesystem, and a relative path the node's working directory.
     """
-    result = make_n_stage_kit(nvflare_kit, f"KIT_DEST={bad_dest}")
+    result = make_n_stage_kit(nvflare_kit, "KIT=SITE", _kit_file(tmp_path, f"FL_KIT_DIR={bad_dest}\n"))
     assert result.returncode != 0
-    assert "KIT_DEST must not be" in result.stderr
+    assert "must be an absolute path other than /" in result.stderr
+    assert "stage-to-node.sh" not in result.stdout
+
+
+def test_kit_dest_is_refused_naming_the_kit_file(nvflare_kit):
+    result = make_n_stage_kit(nvflare_kit, "KIT_DEST=/srv/kit")
+    assert result.returncode != 0
+    assert "FL_KIT_DIR in the kit file" in result.stderr
     assert "stage-to-node.sh" not in result.stdout
 
 

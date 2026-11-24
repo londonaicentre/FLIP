@@ -75,7 +75,7 @@ def fl_client_pin(env: dict) -> str:
 
 # Where the operator placed this trust's kit ON THE NODE when the kit file does not say.
 # The canonical FLIP kit path: every shipped kit sets FL_KIT_DIR to it, the Ansible
-# EC2/on-prem plays stage to it, and the chart Makefile's stage-kit KIT_DEST defaults to it.
+# EC2/on-prem plays stage to it, and the chart Makefile's stage-kit falls back to it.
 # Same fallback as sync_k8s_kit.render_override, so both generators of a Helm override
 # agree on what a kit file without FL_KIT_DIR means.
 DEFAULT_KIT_HOST_PATH = "/opt/flip/fl-kit"

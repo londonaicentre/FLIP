@@ -49,7 +49,7 @@ make sync-trust-kit KIT=<CODE> HUB=<env>
 # Cluster side (trust operator)
 python3 trust/deploy/helm/scripts/generate_values.py \
   --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm
-make -C trust/deploy/helm stage-kit KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
 make -C trust/deploy/helm stage-vocab VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 make -C trust/deploy/helm status && make -C trust/deploy/helm smoke-cstore
@@ -125,10 +125,10 @@ images that exist.
   `deploy/env_mode.mk`'s `kit_file` and passes it to `scripts/preflight.sh` as `KIT_FILE` and to
   `sync_k8s_kit.py` as `--kit-file`, so the checklist reads the kit the site actually has.
 - **`stage-kit`** detects the backend from the kit's shape (FLARE `startup/`, Flower `certificates/` +
-  `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before the copy so a
+  `keys/`), chowns to that image's uid (1000 / 49999), empties the kit path (the kit file's `FL_KIT_DIR`) before the copy so a
   re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. On a
   kind node it copies with `docker cp`; on any other node (k3s, a VM) through a short-lived root pod pinned
-  to the node with `KIT_DEST` as a hostPath, and `kubectl cp` (`scripts/stage-to-node.sh`, FLIP#1958).
+  to the node with that path as a hostPath, and `kubectl cp` (`scripts/stage-to-node.sh`, FLIP#1958).
   That needs RBAC to read nodes and to create and exec into the pod, as good as root on the node. A cluster that
   will not run the pod (the image out of reach, an admission policy) gets the same steps printed as one command
   to run as root on the node (FLIP#1477). Under Pod Security `baseline` the chart's own hostPath mounts are refused
@@ -1386,7 +1386,7 @@ page is [Trust node on Kubernetes](../../../docs/source/troubleshooting/trust-no
 
 ### FL client won't connect
 
-1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. The chart holds no AWS credentials and cannot fetch it.
+1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT=<CODE> KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. It goes to the kit file's `FL_KIT_DIR`, the path a deploy of that kit mounts. The chart holds no AWS credentials and cannot fetch it.
    A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
 2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (FLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.

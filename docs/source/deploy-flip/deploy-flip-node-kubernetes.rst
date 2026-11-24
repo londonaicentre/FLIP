@@ -324,28 +324,29 @@ the FL client starts.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm stage-kit KIT_SRC=<slot-kit-dir> KUBE_CONTEXT=<kube-context>
+   make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<slot-kit-dir> KUBE_CONTEXT=<kube-context>
 
 - ``KIT_SRC`` is the slot's own kit: for FLARE the folder holding ``local/``, ``startup/`` and ``transfer/``; for
   Flower ``certificates/`` and ``keys/`` with this slot's credential only. The target reads the backend from that
   shape and refuses a folder with neither shape or both (``FL_BACKEND=nvflare|flower`` overrides).
 - ``KUBE_CONTEXT`` is required, so the kit never lands in whichever cluster ``kubectl`` happens to point at.
-- The kit goes to ``KIT_DEST`` on the node (default ``/opt/flip/fl-kit``), and the deploy targets mount that same
-  path, whatever the kit's ``FL_KIT_DIR`` says. Any previous kit there is removed first. To use another path, pass
-  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the first deploy. Later deploys and upgrades keep the path
-  the release already mounts; pass ``KIT_DEST`` again only to move the kit.
+- The kit goes to the path ``FL_KIT_DIR`` names in the kit file (``/opt/flip/fl-kit`` in every kit as shipped),
+  and every deploy and upgrade of that kit mounts the same path. Any previous kit there is removed first. To use
+  another path, set ``FL_KIT_DIR`` in the kit file before you stage. To move a deployed trust's kit, change
+  ``FL_KIT_DIR``, stage again, and pass ``KIT_MOVED=1`` to the next deploy or upgrade: without it, a deploy that
+  would change the path a release mounts stops before it changes anything.
 - ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
   to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
 .. note::
 
    On a kind development cluster ``stage-kit`` copies with ``docker cp``. On any other cluster (k3s, a VM) it starts
-   a short-lived root pod on the node, with ``KIT_DEST`` mounted as a ``hostPath``, and copies with
+   a short-lived root pod on the node, with the kit's path mounted as a ``hostPath``, and copies with
    ``kubectl cp``. That needs no docker or shell on the host, but RBAC to read the nodes and to create and exec
    into that pod, which is as good as root on the node. If the cluster will not run the pod, ``stage-kit`` prints
    the same steps as one command to run as root on the node. A namespace under Pod Security ``baseline`` refuses
    every ``hostPath``, the chart's own kit mount included, so use the kit Secret below there. Otherwise place the
-   kit at ``KIT_DEST`` by your site's own means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one
+   kit at that path by your site's own means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one
    else. On a host
    shared with people, check that uid isn't a person's account: whoever holds it can read the kit's private key.
 
@@ -586,8 +587,8 @@ overlay win for the keys they set. Do not pass settings with
    * - ``flClient.kitHostPath``
      - ``/opt/flip/fl-kit``
      - Path **on the node** holding the FL kit. Required whenever the FL client is enabled with the default
-       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). The first deploy sets it
-       from ``KIT_DEST``, over the kit's ``FL_KIT_DIR``, and later deploys keep it (see Step 3).
+       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). A deploy that names a
+       kit takes it from the kit file's ``FL_KIT_DIR`` (see Step 3).
    * - ``flBackend``
      - from the kit
      - ``nvflare`` or ``flower``.

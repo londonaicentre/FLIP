@@ -105,7 +105,7 @@ Start with the pod's events and logs:
      - The FL participant kit is not on the node.
      - Step 3 of :doc:`../deploy-flip/deploy-flip-node-kubernetes`, then deploy again.
    * - FL client in ``Init`` after an upgrade, with ``hostPath type check failed``
-     - The upgrade was run without the path the kit is staged at.
+     - The kit file's ``FL_KIT_DIR`` is not where the kit is staged.
      - :ref:`ts-k8s-fl-client-kit-path`
    * - ``omop-db-0`` and ``xnat-db-0`` never ready, with no logs, on Ubuntu 26.04
      - AppArmor denies signals inside containers.
@@ -199,9 +199,10 @@ the first deploy, and the upgrade was run without it. Before v0.16, every deploy
 ``flClient.kitHostPath`` on the Helm command line with the default ``/opt/flip/fl-kit``, and the upgrade's rollout
 wait did not cover the FL client, so the command exited 0.
 
-From v0.16 a deploy or upgrade without ``KIT_DEST`` or ``FL_CLIENT_KIT_HOST_PATH`` keeps the path the release
-already mounts and says so, and an FL client that was ready before the upgrade must be ready again before the
-command exits 0. Passing either variable is how you move the kit.
+From v0.16 an FL client that was ready before the upgrade must be ready again before the command exits 0. From
+v0.17 the path has one home, ``FL_KIT_DIR`` in the kit file: ``stage-kit`` copies there, every deploy mounts it,
+and ``KIT_DEST`` and ``FL_CLIENT_KIT_HOST_PATH`` are refused. An upgrade of a release that mounts another path
+than its kit file names stops before it changes anything and prints the line to put in the kit file.
 
 **Check.** Compare the path in the previous revision with the current one:
 
@@ -211,15 +212,13 @@ command exits 0. Passing either variable is how you move the kit.
    helm get values trust-release -n flip-trust --revision <previous> | grep kitHostPath
    helm get values trust-release -n flip-trust | grep kitHostPath
 
-**Fix.** On a checkout older than v0.16, run the same upgrade again with the path the kit is staged at:
+**Fix.** Set ``FL_KIT_DIR=<path the kit is staged at>`` in the kit file and run the upgrade again. On a checkout
+older than v0.17, run it with the path on the command line instead:
 
 .. code-block:: shell
 
    make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG=<tag> \
      FL_CLIENT_KIT_HOST_PATH=<path> YES=1
-
-``FL_CLIENT_KIT_HOST_PATH`` is what the targets render; it takes its default from ``KIT_DEST``. Before any upgrade
-of a release someone else deployed, read ``helm get values`` for settings that were passed on the command line.
 
 .. _ts-k8s-xnat-db-roles:
 
@@ -469,7 +468,7 @@ The targets do not know about the other release, so guard against these:
        ``KUBE_CONTEXT``, with a kubeconfig that has no rights in the first namespace
        (:ref:`ts-k8s-namespaced-account`). A slip is then refused by the cluster.
    * - Both releases mount the FL kit from ``/opt/flip/fl-kit`` on the node by default.
-     - Give the second its own ``KIT_DEST``, or deliver its kit as a Secret (``flClient.kit.source: secret``,
+     - Give the second its own ``FL_KIT_DIR`` in its kit file, or deliver its kit as a Secret (``flClient.kit.source: secret``,
        ``make kit-secret``), which puts no file on the node.
    * - Each release's log collector is a DaemonSet that reads every pod's logs on the node, so each trust's log
        store would hold the other's logs.

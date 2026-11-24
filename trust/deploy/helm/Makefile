@@ -11,15 +11,7 @@
 
 NAMESPACE ?= flip-trust
 
-# Where the FL participant kit lives ON THE NODE, and the uid that must own it.
-# KIT_DEST is what flClient.kitHostPath is set to, so it must match what the chart
-# mounts. `make sync-kit` renders kitHostPath from the kit file's FL_KIT_DIR, which
-# is /opt/flip/fl-kit in every shipped kit (trust/.env.example) and the path the
-# Ansible EC2/on-prem plays stage to — so that is the default here too. Overriding
-# it means also passing KIT_DEST=<same path> to the FIRST deploy, or the pod stays
-# Pending on a `hostPath type check failed` event naming the mounted path. Later
-# deploys and upgrades keep the path the release mounts (KEEP_KIT_PATH below).
-KIT_DEST ?= /opt/flip/fl-kit
+# The uid that must own the FL participant kit on the node (where it lives: KIT_PATH below).
 # KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
 # the FLARE image as 1000. Which backend is read from the kit ITSELF — a FLARE
 # startup kit carries startup/ (with local/ and transfer/), a Flower kit carries
@@ -34,7 +26,7 @@ KIT_SHAPE_NVFLARE := $(if $(wildcard $(KIT_SRC)/startup/),nvflare,)
 KIT_SHAPE_FLOWER := $(if $(wildcard $(KIT_SRC)/certificates/ $(KIT_SRC)/keys/),flower,)
 KIT_BACKEND := $(or $(FL_BACKEND),$(KIT_SHAPE_NVFLARE),$(KIT_SHAPE_FLOWER))
 # The subdirectories the chart mounts out of the kit by subPath (templates/fl-client.yaml).
-# They must exist under KIT_DEST before the pod starts: a subPath that is missing from the
+# They must exist under the kit path before the pod starts: a subPath that is missing from the
 # hostPath is created by kubelet as root:root 0700, and the non-root fl-client then cannot
 # write it — while the pod still reports Running, so nothing surfaces until FLARE writes the
 # trained model into transfer/ at the END of a run, or site policy writes privacy.json into
@@ -49,17 +41,6 @@ endif
 ifeq ($(wildcard $(KIT_SRC)/.),)
 $(error ❌  KIT_SRC $(KIT_SRC) is not a directory)
 endif
-# stage-kit empties KIT_DEST before copying (see the recipe), so refuse the two values
-# where that would reach beyond the kit directory. An empty KIT_DEST would make the wipe
-# `find  -mindepth 1 -delete`, which walks the working directory, and `/` would walk the
-# node's root filesystem. Both are only reachable by an explicit override, but the wipe is
-# the one step here that destroys rather than writes, so it gets a parse-time guard.
-ifeq ($(strip $(KIT_DEST)),)
-$(error ❌  KIT_DEST must not be empty — stage-kit clears it before copying)
-endif
-ifeq ($(strip $(KIT_DEST)),/)
-$(error ❌  KIT_DEST must not be / — stage-kit clears it before copying)
-endif
 ifneq ($(FL_BACKEND),)
 ifeq ($(filter nvflare flower,$(FL_BACKEND)),)
 $(error ❌  FL_BACKEND=$(FL_BACKEND) is not a backend — nvflare or flower)
@@ -73,7 +54,7 @@ endif
 KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
 # The OMOP core vocabulary (FLIP#923): VOCAB_DIR is a folder of Athena CSVs (CONCEPT.csv, ...) and
 # VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR).
-# stage-vocab empties VOCAB_DEST first, as stage-kit does KIT_DEST and with the same guards.
+# stage-vocab empties VOCAB_DEST first, as stage-kit does the kit path and with the same guards.
 VOCAB_DEST ?= /opt/flip/omop-vocab
 VOCAB_BUNDLE ?= vocab_aicentre_core_20240916
 ifneq ($(filter stage-vocab,$(MAKECMDGOALS)),)
@@ -159,24 +140,36 @@ ifeq ($(KIT_TRUST_DATA_SEED),false)
 	VALUES_OPTS := $(VALUES_OPTS) --set trustData.seed.enabled=false
 endif
 
-# The chart requires flClient.kitHostPath whenever flClient is enabled (with the default hostPath kit source), so any
-# render (make test, template-all-backends, a plain `make template`) fails the
-# moment values.yaml has no default. CI renders with the path hardcoded (.github/
-# workflows/test_helm_chart.yml); default the same value here so the local
-# targets pass and an operator can override at deploy with
-# --set flClient.kitHostPath=<path> matching where the kit was actually staged.
-# Pass FL_CLIENT_KIT_HOST_PATH= (empty) to render without the default, e.g. to
-# exercise the chart's required() guard.
-FL_CLIENT_KIT_HOST_PATH ?= $(KIT_DEST)
-ifneq ($(strip $(FL_CLIENT_KIT_HOST_PATH)),)
-	VALUES_OPTS := $(VALUES_OPTS) --set flClient.kitHostPath=$(FL_CLIENT_KIT_HOST_PATH)
+# Where the FL participant kit lives ON THE NODE: the kit file's FL_KIT_DIR, the one place it is set
+# (FLIP#2042). `make sync-kit` renders it as flClient.kitHostPath and stage-kit copies to it, so the
+# two cannot disagree. Without KIT= (a dev kind cluster, a bare render), and for a kit that leaves it
+# blank, it is the canonical path every shipped kit carries (generate_values.DEFAULT_KIT_HOST_PATH).
+# Read as sync_k8s_kit.read_env_vars reads it (last line wins, quotes dropped): tests/test_stage_kit.py.
+DEFAULT_KIT_PATH := /opt/flip/fl-kit
+KIT_PATH := $(or $(if $(KIT),$(strip $(shell sed -n 's/^FL_KIT_DIR=//p' '$(KIT_FILE)' 2>/dev/null | tail -1 | tr -d "\"'"))),$(DEFAULT_KIT_PATH))
+ifneq ($(filter command environment override,$(origin KIT_DEST) $(origin FL_CLIENT_KIT_HOST_PATH)),)
+$(error ❌  KIT_DEST and FL_CLIENT_KIT_HOST_PATH are gone (FLIP#2042): the kit's path on the node is FL_KIT_DIR in the kit file. Set it there and pass KIT=<CODE>)
 endif
-# Unless the operator passed one of the two, `helm upgrade` keeps the kit path the release already
-# mounts (FLIP#1984): a kit staged with KIT_DEST=<path> was otherwise moved back to the default by
-# the next deploy or upgrade that did not repeat it, with the old fl-client pod already gone.
-ifeq ($(filter command environment override,$(origin KIT_DEST) $(origin FL_CLIENT_KIT_HOST_PATH)),)
-KEEP_KIT_PATH = $$($(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
-	| python3 $(CHART_DIR)/scripts/keep_kit_path.py --default "$(FL_CLIENT_KIT_HOST_PATH)")
+ifneq ($(filter stage-kit,$(MAKECMDGOALS)),)
+# stage-kit empties the path before copying, so it must be a directory of its own: a relative one
+# would be wiped under the node's working directory, and / is the node's root filesystem.
+ifeq ($(filter-out /,$(filter /%,$(KIT_PATH))),)
+$(error ❌  FL_KIT_DIR in $(KIT_FILE) is '$(KIT_PATH)': it must be an absolute path other than / (stage-kit clears it before copying))
+endif
+endif
+# The chart requires flClient.kitHostPath, and an override file (sync-kit's always) carries it. A
+# render with none (make test, a plain `make template` or `make deploy`) gets the default here.
+ifeq ($(strip $(OVERRIDES_FILE)),)
+	VALUES_OPTS := $(VALUES_OPTS) --set flClient.kitHostPath=$(DEFAULT_KIT_PATH)
+endif
+# Before `helm upgrade`: a release that mounts another path than the one this deploy renders is
+# refused (scripts/check_kit_path.py). Only where that path is known here: a kit, or no override.
+ifneq ($(or $(KIT),$(if $(strip $(OVERRIDES_FILE)),,bare)),)
+CHECK_KIT_PATH = $(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
+	| python3 $(CHART_DIR)/scripts/check_kit_path.py --kit-path "$(KIT_PATH)" \
+	  --kit-file "$(if $(KIT),$(KIT_FILE))" $(if $(KIT_MOVED),--moved)
+else
+CHECK_KIT_PATH = true
 endif
 
 # The release pin (FLIP#1204): TAG=vX.Y.Z sets global.image.tag, which every FLIP-built
@@ -228,22 +221,21 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## kit arrives out-of-band (trust/README.md). This copies an already-obtained kit
 	## from KIT_SRC onto the node at the path the chart mounts (flClient.kitHostPath).
 	##
-	##   make stage-kit KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
+	##   make stage-kit KIT=<CODE> KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
 	##
-	## KIT_DEST defaults to /opt/flip/fl-kit, which is what `make sync-kit` renders as
-	## flClient.kitHostPath (from the kit's FL_KIT_DIR) — pass it only alongside a
-	## matching --set flClient.kitHostPath at deploy time.
+	## The destination is the kit file's FL_KIT_DIR (pass KIT=<CODE>), which `make sync-kit`
+	## renders as flClient.kitHostPath; without KIT it is /opt/flip/fl-kit.
 	## KIT_SRC contents are the slot's own kit: for FLARE local/ startup/ transfer/,
 	## for Flower certificates/ and keys/ holding THIS slot's credential only. That
 	## shape is also how the owning uid is chosen (KIT_UID above) — no FL_BACKEND
 	## needed; a kit with neither or both shapes is refused before anything is copied.
 	## scripts/stage-to-node.sh does the copy (FLIP#1958): on a kind node with docker exec/cp, on
-	## any other node (k3s, a VM) through a short-lived root pod pinned to it, with KIT_DEST as a
+	## any other node (k3s, a VM) through a short-lived root pod pinned to it, with the kit path as a
 	## hostPath and kubectl cp. A namespace under Pod Security "baseline" refuses that pod and the
 	## chart's own kit hostPath alike: use the kit Secret route there (flClient.kit.source=secret,
 	## `make kit-secret`).
 	##
-	## KIT_DEST's previous contents are replaced, not merged, for the same reason the EC2 play
+	## The path's previous contents are replaced, not merged, for the same reason the EC2 play
 	## wipes before its sync: re-staging after a kit-date bump, a backend switch, or a corrected
 	## over-broad sync would otherwise leave credentials that should no longer be on the node.
 	## The mounted subdirectories are created and the whole kit is made private to KIT_UID.
@@ -251,10 +243,10 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## With several nodes, NODE=<name> is required: the node the FL client runs on, which is
 	## imaging-api's unless flClient.affinity says otherwise. One node needs no NODE.
 	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem, and defaulting to kubectl's current context ($$(kubectl config current-context 2>/dev/null || echo none)) would stage into whichever cluster that happens to be. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
-	@echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $(KIT_DEST)"
+	@echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $(KIT_PATH)"
 	NAMESPACE=$(NAMESPACE) $(CHART_DIR)/scripts/stage-to-node.sh --context "$(KUBE_CONTEXT)" \
-	  --src "$(KIT_SRC)" --dest "$(KIT_DEST)" --subdirs "$(KIT_SUBDIRS)" --owner $(KIT_UID) $(if $(NODE),--node "$(NODE)")
-	@echo "✅ Kit staged. On the first deploy pass KIT_DEST=$(KIT_DEST); later deploys and upgrades keep it."
+	  --src "$(KIT_SRC)" --dest "$(KIT_PATH)" --subdirs "$(KIT_SUBDIRS)" --owner $(KIT_UID) $(if $(NODE),--node "$(NODE)")
+	@echo "✅ Kit staged at $(KIT_PATH), the path a deploy$(if $(KIT), of $(KIT)) mounts."
 
 download-vocab: ## Download the OMOP core vocabulary from the AI Centre bucket to this host (your AWS CLI profile)
 	## For operators with access to the bucket (FLIP#923); everyone else exports the same
@@ -299,13 +291,14 @@ deploy-release: preflight ## Apply the chart and wait for the core workloads to 
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) | \
 		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
+	@$(CHECK_KIT_PATH)
 	ready=$$(python3 $(CHART_DIR)/scripts/rollout_wait.py --report-ready \
 		--namespace $(NAMESPACE) --release $(RELEASE_NAME) --kubectl "$(KUBECTL)"); \
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout $(HELM_TIMEOUT) \
 		--set xnat.initJob.enabled=false \
-		$(VALUES_OPTS) $(KEEP_KIT_PATH) \
+		$(VALUES_OPTS) \
 		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }; \
 	python3 $(CHART_DIR)/scripts/rollout_wait.py \
 		--namespace $(NAMESPACE) --release $(RELEASE_NAME) \
