@@ -36,3 +36,8 @@ output "nat_public_ip" {
   description = "Address a created network leaves from (empty on a site subnet). The hub never checks it."
   value       = module.network.nat_public_ip
 }
+
+output "kit_bucket_name" {
+  description = "The hub kit bucket the node was applied with (empty for none). The Makefile reads it for the verbs that configure the host, so it is not retyped after plan."
+  value       = var.kit_bucket_name
+}

@@ -151,10 +151,12 @@ four ways:
 - **No** ``SSM_ENDPOINTS``. The estate's central endpoints already serve SSM and CloudWatch, and the
   VPC's gateway endpoint serves S3.
 - **The kit from the hub's bucket.** ``KIT_BUCKET`` and ``KIT_KMS_KEY_ARN`` are the hub's kit bucket and
-  its key, and ``FL_KIT_DATE`` the hub's kit date for its FL backend. The node reads its slot's kit and the
-  vocabulary itself, so ``stage-kit`` needs no ``KIT_SRC``. Every step that configures the host takes
-  ``KIT_BUCKET`` and ``FL_KIT_DATE``: without them ``stage-kit`` stops, and ``deploy`` seeds no
-  vocabulary.
+  its key. The node reads its slot's kit and the vocabulary itself, so ``stage-kit`` needs no ``KIT_SRC``.
+  The bucket is given once, to ``plan``: the steps that configure the host read it back from the node's
+  Terraform state (the ``kit_bucket_name`` output), and take the kit date from the kit file
+  (``FLARE_KIT_DATE`` or ``FLOWER_KIT_DATE``, by its FL backend). ``KIT_BUCKET=`` or ``FL_KIT_DATE=`` on
+  the command line still overrides either. A node applied before that output existed has no record of its
+  bucket, and those steps stop until it is planned and applied once more, or ``KIT_BUCKET`` is given.
 
 The steps are those in *Build the node and join* below, with these flags:
 
@@ -162,9 +164,9 @@ The steps are those in *Build the node and join* below, with these flags:
 
    make plan      KIT=$KIT HUB=stag SUBNET_ID=<hub app subnet> PRIVATE_IP=<allowed address> \
      BOUNDARY_ARN=<estate boundary ARN> KIT_BUCKET=<hub kit bucket> KIT_KMS_KEY_ARN=<bucket key ARN>
-   make provision KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
-   make stage-kit KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
-   make deploy    KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
+   make provision KIT=$KIT HUB=stag
+   make stage-kit KIT=$KIT HUB=stag
+   make deploy    KIT=$KIT HUB=stag
 
 ****
 Cost
@@ -224,8 +226,10 @@ Build the node and join
 
 The FL kit arrives out of band with the kit file. ``KIT_SRC`` is the slot's own kit, as the Kubernetes
 chart takes it: ``local/``, ``startup/`` and ``transfer/`` for FLARE, ``certificates/`` and ``keys/`` for
-Flower. ``stage-kit`` refuses a FLARE kit that names another slot. Without a ``KIT_BUCKET`` the seed
-loads no OMOP vocabulary, so cohort queries use the vocabulary-free form.
+Flower. ``stage-kit`` refuses a FLARE kit that names another slot. On a node planned without a
+``KIT_BUCKET`` the seed loads no OMOP vocabulary, so cohort queries use the vocabulary-free form. The seed
+runs the OMOP and Orthanc images at the tags the stack will: the kit's ``OMOP_DB_TAG`` and ``ORTHANC_TAG``
+when it pins them, else ``DOCKER_TAG``.
 
 To check the node has joined:
 
@@ -235,10 +239,16 @@ To check the node has joined:
 
 Before ``deploy``:
 
-- **Host paths in the kit must be absolute or unset.** A kit scaffolded by ``make new-trust`` carries
-  relative ones (``ORTHANC_STORAGE_DIR=./orthanc/…``, ``BASE_IMAGES_DOWNLOAD_DIR``, ``XNAT_DATA_DIR``); over
-  the ssh docker context they would resolve to your checkout, so ``deploy`` refuses them. Comment them out:
-  each defaults under ``/opt/flip``.
+- **Host paths in the kit must be the ones the node is provisioned with.** A kit scaffolded by
+  ``make new-trust`` carries relative ones (``ORTHANC_STORAGE_DIR=./orthanc/…``, ``BASE_IMAGES_DOWNLOAD_DIR``,
+  ``XNAT_DATA_DIR``); over the ssh docker context they would resolve to your checkout, so ``deploy`` and
+  ``upgrade`` refuse them. Comment them out: each defaults under ``/opt/flip``. Four paths cannot be moved
+  at all, because ``provision``, the seed and ``stage-kit`` prepare and fill fixed directories whatever the kit
+  says: ``OMOP_DATA_DIR`` (``/opt/flip/omop/db_data``), ``ORTHANC_STORAGE_DIR``
+  (``/opt/flip/orthanc/orthanc-storage``), ``BASE_IMAGES_DOWNLOAD_DIR`` (``/opt/flip/data/trust-<slot>``) and
+  ``FL_KIT_DIR`` (``/opt/flip/fl-kit``). ``deploy`` and ``upgrade`` refuse any other value, since the stack would
+  start on empty directories. ``FL_KIT_DIR`` has no default and must be set to that path; the other three may be
+  left unset. ``XNAT_DATA_DIR`` and ``COHORT_SNAPSHOT_STORAGE_DIR`` take any absolute path.
 - **A trust on slot 3 or above** needs ``SOURCE_TRUST=1`` (or 2): the mock dataset has two partitions,
   and the seed defaults to the slot number.
 - **A trust with its own data** sets ``TRUST_DATA_SEED=false`` in the kit: ``deploy`` and ``seed`` then load
