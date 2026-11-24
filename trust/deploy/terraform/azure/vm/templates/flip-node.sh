@@ -81,12 +81,18 @@ check_ref() {
     fi
 }
 
+# Without a REF the node stays where its last checkout left it (a detached HEAD): FLIP_REF is first
+# boot's ref, and returning to it would undo every `reprovision REF=` under a running trust. A clone
+# still on its branch was never pinned, so it takes FLIP_REF.
 checkout() {
-    local ref="${1:-${FLIP_REF}}"
-    check_ref "${ref}"
     if [ ! -d "${REPO_DIR}/.git" ]; then
         git clone --quiet "${FLIP_REPO_URL}" "${REPO_DIR}"
     fi
+    if [ -z "${1:-}" ] && ! git -C "${REPO_DIR}" symbolic-ref --quiet HEAD >/dev/null; then
+        return 0
+    fi
+    local ref="${1:-${FLIP_REF}}"
+    check_ref "${ref}"
     git -C "${REPO_DIR}" fetch --quiet --tags origin
     git -C "${REPO_DIR}" checkout --quiet --detach "${ref}"
 }
