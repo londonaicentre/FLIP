@@ -121,7 +121,7 @@ jobs:
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
           RESOLVE_SHA_TAG: "false"
-        run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
+        run: deploy/aws/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
 
       # Scoped to this step, exactly as in terraform_plan.yml and
       # terraform_apply.yml. A job-level `env:` block would define every key for
@@ -186,7 +186,7 @@ jobs:
           FL_API_KEY: ${{ secrets.FL_API_KEY }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
-        run: deploy/providers/AWS/scripts/compose-ci-env.sh
+        run: deploy/aws/scripts/compose-ci-env.sh
 
       - name: Write the EC2 keypair public key
         run: |
@@ -195,7 +195,7 @@ jobs:
             --name /flip/ci/host_aws_public_key \
             --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
             echo "::error::/flip/ci/host_aws_public_key is missing. It is declared in" \
-                 "deploy/providers/AWS/parameter_store.tf and created by the first" \
+                 "deploy/aws/parameter_store.tf and created by the first" \
                  "laptop apply of that root in this account."
             exit 1
           fi
@@ -208,7 +208,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Export the Terraform variables
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           # The compose step's HUB, so `make` reads the env file it wrote and maps
           # it onto TF_VAR_* exactly as a laptop plan would.
@@ -216,7 +216,7 @@ jobs:
         run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
 
       - name: Terraform init
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         run: |
           terraform init \
             -backend-config="bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }}" \
@@ -225,7 +225,7 @@ jobs:
 
       - name: Terraform plan
         id: plan
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           NAME: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
         run: |
@@ -267,7 +267,7 @@ jobs:
       - name: Summarise the drift
         if: steps.plan.outputs.exitcode == '2'
         id: summary
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         run: |
           terraform show -json tfplan > tfplan.json
           # Written to a file, not piped into `head`: `head` closing the pipe

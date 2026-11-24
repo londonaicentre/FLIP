@@ -19,7 +19,7 @@
 #   make up DOCKER_FL_SERVER_NAME=ghcr.io/foo/custom:test
 #   make up FL_PROVISIONED_DIR=/tmp/my-workspace
 #
-# FL_PROVISIONED_DIR is only read by deploy/compose.development.{flower,nvflare}.yml
+# FL_PROVISIONED_DIR is only read by deploy/compose/compose.development.{flower,nvflare}.yml
 # (volume mounts of the provisioned certs / workspace from fl-services/<backend>/provision/).
 # In stag/prod the FL services pull their kit from S3 and this path is unused —
 # the root Makefile still absolutises it for consistency but no prod compose

@@ -71,15 +71,15 @@ workstation (prod AWS creds required):
 1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
    — scaffolds `trust/.env.<CODE>.prod` from the base template
    (`trust/.env.example`).
-2. `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` — registers
+2. `make -C deploy/aws register-trusts KIT=<CODE> HUB=prod` — registers
    on the prod hub, fills the Kit credentials and fills the Hub-shared block from
    `.env.prod`. `make sync-trust-kit KIT=<CODE> HUB=prod` is only for a later refresh,
    or to finish a run whose sync step failed after registering.
 
-Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
+Then `make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=prod`
 tarballs the populated kit file as-is, as `.env.<CODE>.prod`, + the operator's
 slice of the FL participant kit S3 bucket (its `FL_KIT_SLOT`'s) into
-`deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
+`deploy/aws/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
 The packager does NOT edit the kit file.
 
 The operator extracts, copies `.env.<CODE>.prod` into their checkout,
@@ -123,7 +123,7 @@ pins both the defaults and those lines).
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
 | `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
 | `deploy/helm/` | The same trust stack as Helm chart `flip-trust` for Kubernetes (chart, Makefile, `sync_k8s_kit.py`, tests) |
-| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/ansible/aws-ec2-host.yml` composes for an EC2 node: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/providers/AWS provision-local-trust KIT=<CODE> HUB=<hub>`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
+| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/ansible/aws-ec2-host.yml` composes for an EC2 node: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/aws provision-local-trust KIT=<CODE> HUB=<hub>`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
 | `deploy/ansible/roles/` | The trust-host roles themselves, one per concern, with a README of what each varies by host type. `flip_fl_kit/tasks/s3.yml` carries the FLIP#965 kit-staging guards that `deploy/ansible/tests/test_fl_kit_s3_staging.py` pins |
 | `deploy/compose/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead; `trust/xnat` then builds the XNAT images and deploys them at `:dev`, or a command-line `XNAT_TAG`) |
 | `deploy/compose/compose_trust.prod.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
@@ -233,7 +233,7 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
 
 **Per-trust scope.** Each trust gets a distinct key. A leak in Trust_1 cannot drive operations on Trust_2's APIs. The hub mints each key at registration (`admin_create_trust`) or at the first kit download from the UI and returns it once, but never stores it — it lives only in trust-side env: `register_trust` or `make install-kit` writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file (`trust/.env.<CODE>.<env>`), which `trust/Makefile` `-include`s so every trust-internal container inherits it.
 
-**Generating keys.** The key is minted by `register_trust` (`make register-trusts`), which writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file; for a trust added in the UI it is minted by the first kit download and written by `make install-kit` (FLIP#1852). `make rotate-trust-keys KIT=<CODE>`, or **Issue new keys** on the trust card, rotates it with the API key.
+**Generating keys.** The key is minted by `register_trust` (`make register-trusts`), which writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file; for a trust added in the UI it is minted by the first kit download and written by `make install-kit` (FLIP#1852). `make rotate-trust-keys KIT=<CODE>` (repo root) reissues it with the trust's API key; the API key is staged, so the hub accepts the old and the new key until the trust first uses the new one (FLIP#1714), and `REVOKE_OLD=1` cuts the old one off at once. **Issue new keys** on the trust card rotates both and cuts the old API key off at once. The hub never checks the internal key, so a Compose site can also rotate it alone with `make -C trust rotate-internal-service-key KIT=<CODE> HUB=<env>`; every trust container must then be recreated together from the kit.
 
 **Cohort-admin gate (write routes, FLIP#857).** The trust-internal key does not distinguish callers, and fl-client legitimately holds it (it reads the frozen cohort via `flip.get_dataframe` and pulls imaging). That is safe for the read routes, but data-access-api's cohort-**defining** writes — `POST /cohort/snapshot` (freeze the approved membership everyone then trains on; a membership already frozen is never replaced) and `POST /cohort/snapshot/delete` — must not be reachable by researcher training code. They therefore carry a **second** router-level gate on top of the trust-internal key: `authenticate_cohort_admin`, proof of possessing `AES_KEY_BASE64`. trust-api (the caller) and data-access-api (the checker) hold that key, as does imaging-api, which never calls these routes; fl-client deliberately does not (it is not in fl-client's compose env). The proof is the **SHA-256 of the key**, not the key itself, so it never travels the wire or lands in a log; receivers compare it with `hmac.compare_digest`. A caller with a valid trust-internal key but no proof gets **403** (authenticated, not authorised); the dependency order (trust-internal first) means a caller with neither still gets 401 first. No new secret is minted or distributed — the gate reuses the existing AES-key possession boundary, so kit files, `register_trust`, and compose are unchanged. Header name: `COHORT_ADMIN_KEY_HEADER` (default `X-Cohort-Admin-Key`), configured on both trust-api and data-access-api.
 

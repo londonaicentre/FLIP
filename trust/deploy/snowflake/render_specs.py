@@ -166,7 +166,7 @@ def main() -> None:
             f"❌ Kit file not found: {path}\n"
             "   Register the trust first:\n"
             f'     make new-trust TRUST_CODE={args.kit} TRUST_NAME="..."\n'
-            f"     make -C deploy/providers/AWS register-trusts KIT={args.kit} HUB={env}\n"
+            f"     make -C deploy/aws register-trusts KIT={args.kit} HUB={env}\n"
             f"     make sync-trust-kit KIT={args.kit} HUB={env}"
         )
     kit = read_env_vars(path)

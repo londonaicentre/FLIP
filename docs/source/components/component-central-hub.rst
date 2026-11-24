@@ -298,5 +298,5 @@ Further reading
 ***************
 
 - :gh:`flip-api/README.md` and :gh:`flip-ui/README.md`
-- :gh:`deploy/providers/AWS/README.md` — the Terraform, deploy and rollback runbook behind the deployment pages
+- :gh:`deploy/aws/README.md` — the Terraform, deploy and rollback runbook behind the deployment pages
 - :ref:`deploy-central-hub` and :ref:`security`

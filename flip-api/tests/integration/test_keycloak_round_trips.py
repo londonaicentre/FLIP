@@ -47,7 +47,7 @@ from flip_api.main import app
 from flip_api.utils.constants import ADMIN_EMAIL_1
 from tests.integration.conftest import admin_user, override_verify_token_as
 
-KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:26.7.4"  # keep in step with deploy/compose.development.yml
+KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:26.7.4"  # keep in step with deploy/compose/compose.development.yml
 REALM_FILE = Path(__file__).resolve().parents[3] / "deploy" / "keycloak" / "flip-realm.json"
 SEEDED_PASSWORD = "Round-Trip-Pa55word!"  # pragma: allowlist secret
 CHOSEN_PASSWORD = "Chosen-By-The-User-Pa55!"  # pragma: allowlist secret

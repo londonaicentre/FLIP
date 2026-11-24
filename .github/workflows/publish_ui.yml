@@ -103,7 +103,7 @@ jobs:
             [[ -n "${!key}" ]] || missing="${missing} ${key}"
           done
           [[ -z "${missing}" ]] ||
-            { echo "::error::${ENVIRONMENT} is missing the variable(s):${missing}. See deploy/providers/AWS/README.md, \"flip-ui on S3 + CloudFront\"."; exit 1; }
+            { echo "::error::${ENVIRONMENT} is missing the variable(s):${missing}. See deploy/aws/README.md, \"flip-ui on S3 + CloudFront\"."; exit 1; }
           # The site shares the API's origin, which the check after the publish
           # finds by dropping this suffix.
           [[ "${CENTRAL_HUB_API_URL}" == */api ]] ||
@@ -155,7 +155,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-          sparse-checkout: deploy/providers/AWS/scripts/publish-ui.sh
+          sparse-checkout: deploy/aws/scripts/publish-ui.sh
           sparse-checkout-cone-mode: false
 
       - name: Download the build
@@ -176,7 +176,7 @@ jobs:
       - name: Publish
         env:
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
-        run: deploy/providers/AWS/scripts/publish-ui.sh dist "${FLIP_UI_BUCKET_NAME}"
+        run: deploy/aws/scripts/publish-ui.sh dist "${FLIP_UI_BUCKET_NAME}"
 
       # index.html and window.js are no-cache, so the edge serves the new
       # window.js once it has re-fetched it. Reading it back proves the build

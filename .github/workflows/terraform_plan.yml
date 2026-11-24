@@ -27,7 +27,7 @@
 #   * Declaring an environment also changes the OIDC `sub` claim to
 #     `repo:ORG/REPO:environment:aws-stag`, which carries no ref. What keeps a PR
 #     from assuming the *apply* role is the `job_workflow_ref` condition in
-#     deploy/providers/AWS/modules/terraform_ci_bootstrap, not the ref in `sub`.
+#     deploy/aws/modules/terraform_ci_bootstrap, not the ref in `sub`.
 #
 # The image tags are resolved, not read from configuration. `vars.DOCKER_TAG` is
 # the mutable `:stag`, while an apply writes the immutable `sha-<short7>` pin
@@ -51,7 +51,7 @@ on:
   pull_request:
     branches: [main, develop]
     paths:
-      - "deploy/providers/AWS/**"
+      - "deploy/aws/**"
       - ".github/workflows/terraform_plan.yml"
 
 permissions:
@@ -104,7 +104,7 @@ jobs:
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
           RESOLVE_SHA_TAG: "false"
-        run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
+        run: deploy/aws/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
 
       # The Makefile reads its inputs from ../../../.env.stag. Composing that file
       # rather than exporting TF_VAR_* directly keeps the Makefile as the single
@@ -163,7 +163,7 @@ jobs:
           FL_API_KEY: ${{ secrets.FL_API_KEY }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
-        run: deploy/providers/AWS/scripts/compose-ci-env.sh
+        run: deploy/aws/scripts/compose-ci-env.sh
 
       # aws_key_pair.public_key is ForceNew and the keypair is not behind a
       # `count`, so a runner without this file plans a replacement of
@@ -178,7 +178,7 @@ jobs:
             --name /flip/ci/host_aws_public_key \
             --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
             echo "::error::/flip/ci/host_aws_public_key is missing. It is declared in" \
-                 "deploy/providers/AWS/parameter_store.tf and created by the first" \
+                 "deploy/aws/parameter_store.tf and created by the first" \
                  "laptop apply of that root in this account."
             exit 1
           fi
@@ -195,7 +195,7 @@ jobs:
       # selection). tf-via-pr calls terraform directly, so hand it those values
       # rather than re-deriving them here and drifting from a laptop plan.
       - name: Export the Terraform variables
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           # The compose step's HUB, so `make` reads the env file it wrote and maps
           # it onto TF_VAR_* exactly as a laptop plan would.
@@ -206,7 +206,7 @@ jobs:
         uses: op5dev/tf-via-pr@39ed2635c056ca408ed24cc5c2baf0ef4381a7a5 # v13.7.4
         with:
           command: plan
-          working-directory: deploy/providers/AWS
+          working-directory: deploy/aws
           arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
           # Never take the state lock for a PR plan: an operator mid-`make apply`
           # must not be blocked by someone else opening a pull request.
@@ -240,7 +240,7 @@ jobs:
       # the detail goes to the job summary.
       - name: Advisory — LZA FL ingress and FL impact
         continue-on-error: true
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           ADVISORY_ONLY: "true"
         run: |

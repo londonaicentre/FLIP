@@ -89,7 +89,7 @@ class JobCredentialContract(unittest.TestCase):
     def test_every_hub_fl_service_is_given_the_same_directory(self):
         for backend, directory in COMPOSES.items():
             for env in ("development", "prod"):
-                compose = (REPO / f"deploy/compose.{env}.{backend}.yml").read_text()
+                compose = (REPO / f"deploy/compose/compose.{env}.{backend}.yml").read_text()
                 services = re.findall(r"^  (fl-(?:api|server)-net-\d+):\n(.*?)(?=^  \S|\Z)", compose, re.M | re.S)
                 assert services, f"no FL service in compose.{env}.{backend}.yml"
                 for name, block in services:

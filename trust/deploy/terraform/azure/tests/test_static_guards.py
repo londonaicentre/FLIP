@@ -282,7 +282,7 @@ def test_outbound_ip_reports_parse_in_bash():
 
 
 def test_checkov_pin_matches_the_aws_lint():
-    aws = (REPO_ROOT / "deploy/providers/AWS/scripts/checkov_lint.sh").read_text()
+    aws = (REPO_ROOT / "deploy/aws/scripts/checkov_lint.sh").read_text()
     pin = re.search(r'^CHECKOV_VERSION="([^"]+)"', aws, re.M).group(1)
     assert f"CHECKOV_VERSION := {pin}\n" in MAKEFILES["."].read_text()
 

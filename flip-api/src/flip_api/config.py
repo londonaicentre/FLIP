@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     # Per-trust API key header name (for authenticating requests from trusts to the FLIP API)
     TRUST_API_KEY_HEADER: str
 
+    # Staged key rotation (FLIP#1714): how long a rotated trust key stays pending next to the live
+    # one. A site that never installs its new kit within this window keeps its old key, and the
+    # unused new key is dropped (audited as KEY_EXPIRED). Long enough to post a kit to a site.
+    TRUST_KEY_ROTATION_GRACE_DAYS: int = Field(default=14, ge=1)
+
     # FL API auth (flip-api → fl-api-net-N): sent on every FL API call, required by every FL API
     # route but /health. Dedicated to that hop. Dev: minted into the
     # env file by `make up`; prod: a `secrets` entry of the ECS task (FLIP_API secret, `fl_api_key`).
@@ -58,7 +63,7 @@ class Settings(BaseSettings):
 
     # Which identity provider verifies user tokens and holds the user directory
     # (FLIP#919). "cognito" is AWS Cognito; "keycloak" is the Keycloak container
-    # in deploy/compose.development.yml, which needs no AWS account. The value
+    # in deploy/compose/compose.development.yml, which needs no AWS account. The value
     # selects both halves of the auth seam — the claim rules the generic OIDC
     # verifier applies (auth/token_verifier.py) and the IdentityProvider that
     # lists, creates and disables users (auth/identity/) — so a new provider
@@ -403,11 +408,12 @@ class Settings(BaseSettings):
         "PICKLESCAN_TIMEOUT_SECONDS",
         "BANDIT_TIMEOUT_SECONDS",
         "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE",
+        "TRUST_KEY_ROTATION_GRACE_DAYS",
         mode="before",
     )
     @classmethod
     def coerce_empty_scan_int(cls, v: object, info: ValidationInfo) -> object:
-        """Treat an empty-string scan-timing setting as the field default.
+        """Treat an empty-string scan-timing or rotation-grace setting as the field default.
 
         Same rationale as ``coerce_empty_max_model_file_bytes``: these arrive
         as empty strings whenever the name appears in an env file at all —
@@ -467,6 +473,9 @@ class Settings(BaseSettings):
     TASK_STALE_TIMEOUT_MINUTES: int = 30  # Tasks older than this in IN_PROGRESS are considered stale
     TASK_MAX_RETRIES: int = 3  # Max times a stale task can be retried before being marked FAILED
     SCHEDULER_STALE_TASK_RECOVERY_RATE: int = 10  # How often to check for stale tasks (in minutes)
+    # How often to clear staged trust keys past their deadline (in minutes, FLIP#1714). Cleanup only:
+    # an expired staged key stops authenticating at its deadline whether or not this has run.
+    SCHEDULER_TRUST_KEY_EXPIRY_RATE: int = 15
     MAX_TASK_RESULT_LENGTH: int = 10_000_000  # Max size (in characters) for task result payloads
 
     # Variables only used in testing
@@ -488,7 +497,7 @@ class DevSettings(Settings):
     AUTH_BACKEND: Literal["keycloak"] = "keycloak"
 
     # Keycloak defaults that match the `keycloak` service in
-    # deploy/compose.development.yml, so a dev env file needs no KEYCLOAK_*
+    # deploy/compose/compose.development.yml, so a dev env file needs no KEYCLOAK_*
     # lines at all. The admin-client secret is a dev-only placeholder shared
     # with the realm import; it protects nothing outside a laptop and
     # ProdSettings cannot select this backend.
@@ -501,7 +510,7 @@ class DevSettings(Settings):
     KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = SecretStr("flip-dev-admin-secret")  # pragma: allowlist secret
 
     # The dev object store's published host port, matching the `object-store`
-    # service in deploy/compose.development.yml (FLIP#1291): what browser-bound
+    # service in deploy/compose/compose.development.yml (FLIP#1291): what browser-bound
     # presigned URLs are signed for.
     S3_PUBLIC_ENDPOINT_URL: str | None = "http://localhost:9000"
 

@@ -189,7 +189,7 @@ This reuses the network's existing root CA (loaded from the preserved
 already-onboarded participant's kit byte-identical — no re-provision, no CA rotation, no
 fleet-wide redeploy. The new kit lands in `workspace-<env>/net-N/services/<CLIENT_NAME>/`.
 
-**One-command path (stag/prod).** `make -C deploy/providers/AWS add-fl-kits N=<n>
+**One-command path (stag/prod).** `make -C deploy/aws add-fl-kits N=<n>
 HUB=stag|prod` runs this whole section end to end: it discovers the deployment's nets from
 S3, restores + fingerprint-verifies each net's CA workspace, mints the next `Trust_<n>`
 names on **every** net (slot names are global across nets — see the hub section below)

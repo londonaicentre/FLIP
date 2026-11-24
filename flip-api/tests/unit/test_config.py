@@ -86,6 +86,8 @@ def test_scan_int_settings_empty_string_falls_back_to_default():
     """
     assert Settings(PICKLESCAN_TIMEOUT_SECONDS="").PICKLESCAN_TIMEOUT_SECONDS == 120
     assert Settings(SCHEDULER_MALWARE_SCAN_RECONCILE_RATE="").SCHEDULER_MALWARE_SCAN_RECONCILE_RATE == 1
+    # Commented out in .env.development.example, so the Makefile exports it bare (FLIP#1714).
+    assert Settings(TRUST_KEY_ROTATION_GRACE_DAYS="").TRUST_KEY_ROTATION_GRACE_DAYS == 14
     assert Settings(PICKLESCAN_TIMEOUT_SECONDS="45").PICKLESCAN_TIMEOUT_SECONDS == 45
     assert Settings(BANDIT_TIMEOUT_SECONDS="").BANDIT_TIMEOUT_SECONDS == 60
     assert Settings(BANDIT_TIMEOUT_SECONDS="30").BANDIT_TIMEOUT_SECONDS == 30

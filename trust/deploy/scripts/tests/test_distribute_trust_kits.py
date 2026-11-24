@@ -15,7 +15,7 @@
 """Black-box tests for trust/deploy/scripts/distribute_trust_kits.py.
 
 Pins the ``--target PATH`` contract (one kit JSON on stdin → that kit file) that
-the dev register-trust pipe and deploy/providers/AWS/scripts/register-trusts.sh use.
+the dev register-trust pipe and deploy/aws/scripts/register-trusts.sh use.
 
 Usage:
     uv run --no-config trust/deploy/scripts/tests/test_distribute_trust_kits.py

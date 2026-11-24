@@ -256,7 +256,7 @@ class CognitoIdentityProvider(IdentityProvider):
 
         The same Cognito app client that authenticates UI logins already
         enumerates the trusted UI origins per environment (see
-        ``deploy/providers/AWS/services.tf``); reusing it keeps "where users
+        ``deploy/aws/services.tf``); reusing it keeps "where users
         can sign in" and "where the UI may call this API" in lockstep.
         """
         try:
