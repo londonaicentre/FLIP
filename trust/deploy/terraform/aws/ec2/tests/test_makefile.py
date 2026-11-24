@@ -167,8 +167,10 @@ def test_deploy_refuses_relative_host_paths(tmp_path):
 
 
 NODE_DIRS = (
-    "OMOP_DATA_DIR=/opt/flip/omop/db_data\nORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage\n"
-    "BASE_IMAGES_DOWNLOAD_DIR=/opt/flip/data/trust-3\nFL_KIT_DIR=/opt/flip/fl-kit\n"
+    "OMOP_DATA_DIR=/opt/flip/omop/db_data\n"
+    "ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage\n"  # pragma: allowlist secret
+    "BASE_IMAGES_DOWNLOAD_DIR=/opt/flip/data/trust-3\n"  # pragma: allowlist secret
+    "FL_KIT_DIR=/opt/flip/fl-kit\n"
 )
 
 
@@ -176,9 +178,9 @@ NODE_DIRS = (
     "line",
     [
         "OMOP_DATA_DIR=/data/flip/omop/db_data",
-        "ORTHANC_STORAGE_DIR=/data/flip/orthanc",
+        "ORTHANC_STORAGE_DIR=/data/flip/orthanc",  # pragma: allowlist secret
         "FL_KIT_DIR=/data/flip/fl-kit",
-        "BASE_IMAGES_DOWNLOAD_DIR=/opt/flip/data/trust-1",
+        "BASE_IMAGES_DOWNLOAD_DIR=/opt/flip/data/trust-1",  # pragma: allowlist secret
     ],
 )
 def test_deploy_refuses_a_path_the_node_is_not_provisioned_with(tmp_path, line):
@@ -209,7 +211,8 @@ def test_deploy_refuses_a_kit_without_an_fl_kit_dir(tmp_path):
 def test_deploy_takes_the_provisioned_paths_and_the_dirs_bring_up_prepares(tmp_path):
     """XNAT's tree and the membership store are created from the kit's own value at bring-up, wherever it points."""
     fine = tmp_path / ".env.TEST.stag"
-    fine.write_text(KIT + NODE_DIRS + "XNAT_DATA_DIR=/data/xnat\nCOHORT_SNAPSHOT_STORAGE_DIR=/data/snapshots\n")
+    elsewhere = "XNAT_DATA_DIR=/data/xnat\nCOHORT_SNAPSHOT_STORAGE_DIR=/data/snapshots\n"  # pragma: allowlist secret
+    fine.write_text(KIT + NODE_DIRS + elsewhere)
     env, calls = stub_tools(tmp_path, "uv", "docker", "ssh")
     result = make("deploy", fine, dry=False, env=env)
     assert "names host paths" not in result.stdout + result.stderr
@@ -241,7 +244,7 @@ def test_the_refused_paths_are_the_ones_the_roles_and_compose_use():
         assert default in compose
     for fixed in (
         "OMOP_DATA_DIR=/opt/flip/omop/db_data",
-        "ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage",
+        "ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage",  # pragma: allowlist secret
         "BASE_IMAGES_DOWNLOAD_DIR=/opt/flip/data/trust-$(KIT_SLOT)",
         "FL_KIT_DIR=/opt/flip/fl-kit",
     ):
