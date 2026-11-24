@@ -187,12 +187,18 @@ def is_filled(value: str | None) -> bool:
 
 
 def is_deployed_kit(kit_path: str) -> bool:
-    """Whether a kit path names a deployed site (``.stag`` / ``.prod``) rather than a dev kit.
+    """Whether the kit is a deployed site's rather than a development one: ``HUB``, as make decides it.
 
     A deployed kit publishes real services and holds real credentials, so some checks escalate
-    from WARN to FAIL for it.
+    from WARN to FAIL for it. The file name does not say: a prod kit may still be
+    ``.env.<CODE>.production``, a bare ``.env.<CODE>`` or any ``KIT_FILE=`` path (FLIP#2047).
+    `make onboard-onprem-trust` always passes HUB (empty for development). Run by hand without
+    it, only a ``.development`` kit is treated as a development one.
     """
-    return kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+    hub = os.environ.get("HUB")
+    if hub is None:
+        return not kit_path.endswith(".development")
+    return bool(hub.strip())
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1035,7 +1041,7 @@ def check_unrotated_passwords(
 
     `make new-trust` mints these, but a kit scaffolded from an older template, or edited by
     hand, can still carry trust/.env.example's mock-stack values. On a development kit that
-    is a WARN (the defaults are usable for testing); on a `.stag` / `.prod` kit it is a FAIL,
+    is a WARN (the defaults are usable for testing); on a deployed kit (`is_deployed_kit`) it is a FAIL,
     since the stack publishes Orthanc, Grafana and the OMOP database on the host.
     """
     kit_path = kit_path or f"trust/.env.{kit}"
@@ -1069,8 +1075,8 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     At DEBUG the trust APIs log request headers and bodies into Loki, which runs with auth
     disabled, shares the trust network with the FL client, and keeps 30 days of history — so the
     trust's hub API key, internal key and cohort-admin proof land where researcher FL code can read
-    them. On a `.stag` / `.prod` kit that is a FAIL; on a development kit it is a WARN (mock data,
-    throwaway credentials).
+    them. On a deployed kit (`is_deployed_kit`) that is a FAIL; on a development kit it is a WARN
+    (mock data, throwaway credentials).
     """
     label = "Trust log level"
     if not kit_present:
@@ -1143,7 +1149,20 @@ def check_data_dir(
         return Check(label, Status.PENDING, "pending — needs kit file")
     raw = kit_vars.get(var_name, "")
     if not raw:
-        return Check(label, Status.FAIL, f"{var_name} unset in kit file")
+        # Still required: the deployed fallback is one directory for every trust on the host.
+        shared = SHARED_DATA_DIR_FALLBACKS[var_name]
+        return Check(
+            label,
+            Status.FAIL,
+            f"{var_name} unset in kit file",
+            hints=[
+                f"Unset, a deployed trust (HUB=stag|prod) mounts {shared}: not per trust, so a second trust",
+                "  on this host that also leaves the line unset would share the directory.",
+                f"Set {var_name} in the kit file to an absolute path of this trust's own (trust/.env.example",
+                "  carries the line, with a development path relative to trust/).",
+                f"A site already running with the line unset keeps its data with {var_name}={shared}.",
+            ],
+        )
     # Resolve relative paths from trust/. Strip a leading "./" for a clean display.
     if raw.startswith("/"):
         resolved = Path(raw)
@@ -1208,9 +1227,10 @@ def check_data_dir(
 
 # Every host-side bind-mount source a kit sets, with the deployed default the Makefiles use when it
 # is unset (trust/Makefile IMAGES_BASE and COHORT_SNAPSHOT_DIR_HOST, trust/xnat/Makefile
-# XNAT_DATA_DIR). The OMOP and Orthanc dirs have no deployed default: `check_data_dir` fails them
-# unset. On an on-prem host every one is a plain mkdir as the invoking user; only over a remote
-# DOCKER_CONTEXT is the membership store prepared by a container.
+# XNAT_DATA_DIR). The OMOP and Orthanc dirs have none that is per slot (SHARED_DATA_DIR_FALLBACKS
+# below), so `check_data_dir` fails them unset and they are skipped here. On an on-prem host every
+# one is a plain mkdir as the invoking user; only over a remote DOCKER_CONTEXT is the membership
+# store prepared by a container.
 DATA_DIR_DEFAULTS: dict[str, str | None] = {
     "OMOP_DATA_DIR": None,
     "ORTHANC_STORAGE_DIR": None,
@@ -1219,6 +1239,13 @@ DATA_DIR_DEFAULTS: dict[str, str | None] = {
     "XNAT_DATA_DIR": "/opt/flip/xnat-trust{slot}",
 }
 DATA_DIR_VARS: tuple[str, ...] = tuple(DATA_DIR_DEFAULTS)
+# What a deployed kit mounts with the line unset: the prod compose's fallbacks, which trust/Makefile
+# resolves to as well (OMOP_DATA_ABS / ORTHANC_STORAGE_ABS). One directory for every trust on the
+# host, so the checklist names it rather than accepting it.
+SHARED_DATA_DIR_FALLBACKS = {
+    "OMOP_DATA_DIR": "/opt/flip/omop/db_data",
+    "ORTHANC_STORAGE_DIR": "/opt/flip/orthanc/orthanc-storage",
+}
 # The seeders write their markers beside these two dirs (trust/Makefile OMOP_SEED_MARKER /
 # ORTHANC_SEED_MARKER), as the invoking user, so that parent must be writable even when the dirs
 # themselves belong to a container uid.
