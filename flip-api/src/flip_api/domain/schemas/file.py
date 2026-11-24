@@ -37,7 +37,8 @@ def validate_safe_file_name(value: str) -> str:
 
     Raises:
         ValueError: If the value contains whitespace at the edges, path
-            separators, a path-traversal token, or control characters.
+            separators, a path-traversal token, control characters, or a
+            URL delimiter (``#``, ``?``).
     """
     if not value:
         raise ValueError("file name must not be empty")
@@ -49,6 +50,10 @@ def validate_safe_file_name(value: str) -> str:
         raise ValueError("file name must not be a path-traversal token")
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
         raise ValueError("file name must not contain control characters")
+    # Anything that reads the name as part of a URL ends it at the first of these, so the name
+    # that was checked (extension, scan) would not be the name that is stored or fetched.
+    if "#" in value or "?" in value:
+        raise ValueError("file name must not contain '#' or '?'")
     return value
 
 
