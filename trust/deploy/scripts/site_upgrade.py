@@ -527,18 +527,20 @@ def write_tags(kit_file: Path, tag: str, fl_tag: str | None = None) -> None:
 #: upgrade itself delivers them (no separate kit step). Only passwords a deploy *creates* belong here: one the
 #: running site already holds elsewhere (a database's) cannot be minted after the fact. The XNAT data account
 #: (FLIP#2011): configure-xnat.sh creates it, or resets its password, on the same upgrade.
-MINT_IF_MISSING = ("XNAT_DATA_PASSWORD",)
+KEYS_MINTED_ON_UPGRADE = ("XNAT_DATA_PASSWORD",)
 
 
-def mint_missing_passwords(kit_file: Path) -> list[str]:
-    """Add each of :data:`MINT_IF_MISSING` the kit has no value for; returns their names (never the values).
+def add_missing_kit_keys(kit_file: Path) -> list[str]:
+    """Add each of :data:`KEYS_MINTED_ON_UPGRADE` the kit has no value for, with a freshly minted value.
+
+    Returns the key names added, never a value: the caller prints them.
 
     A kit that already has one keeps it, whatever it is: rotating is the operator's step, not an upgrade's.
     """
     import secrets
 
     kit = read_kit(kit_file)
-    missing = [key for key in MINT_IF_MISSING if not kit.get(key, "").strip()]
+    missing = [key for key in KEYS_MINTED_ON_UPGRADE if not kit.get(key, "").strip()]
     if not missing:
         return []
     lines = kit_file.read_text().split("\n")
@@ -683,9 +685,10 @@ def plan(args: argparse.Namespace) -> int:
 
     write_tags(kit_file, target, fl_tag)
     print(f"✅ {kit_file.name}: {pins}")
-    minted = mint_missing_passwords(kit_file)
-    if minted:
-        print(f"✅ {kit_file.name}: minted {', '.join(minted)} (new in this release; created in XNAT on this deploy)")
+    added_keys = add_missing_kit_keys(kit_file)
+    if added_keys:
+        names = ", ".join(added_keys)
+        print(f"✅ {kit_file.name}: minted {names} (new in this release; created in XNAT on this deploy)")
     return 0
 
 
