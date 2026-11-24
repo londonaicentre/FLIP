@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -83,6 +84,14 @@ _FIELD_BY_ENV_KEY: dict[str, str] = {
     "FL_KIT_SLOT": "fl_kit_slot",
     "FL_KIT_SLOT_NUMBER": "fl_kit_slot_number",
 }
+
+# The kit file is read by make and by compose, which both expand `$`, and a value is one line of it.
+_UNSAFE_VALUE = re.compile(r"[\r\n$`\\]")
+
+
+def unsafe_value(value: object) -> bool:
+    """Whether ``value`` could not be written as one line of a kit file that make and compose read as it stands."""
+    return not isinstance(value, (str, int)) or bool(_UNSAFE_VALUE.search(str(value)))
 
 
 def trust_data_seed(kit: dict[str, str]) -> bool:
@@ -233,7 +242,22 @@ def write_kit(target: Path, kit: dict, example: Path | None = None, hub_shared_c
 
     Returns:
         None
+
+    Raises:
+        ValueError: If the kit sets a hub-shared key outside ``HUB_SHARED_KEYS``, or a value that is
+            not one plain line. The kit comes from the hub and the file is read by make, so nothing is
+            written.
     """
+    hub_shared = kit.get("hub_shared") or {}
+    unknown = sorted(set(hub_shared) - set(HUB_SHARED_KEYS))
+    if unknown:
+        raise ValueError(f"the kit sets hub-shared keys this checkout does not manage: {unknown!r}")
+    managed = {env_key: kit.get(field) for env_key, field in _FIELD_BY_ENV_KEY.items()} | hub_shared
+    unsafe = sorted(key for key, value in managed.items() if value is not None and unsafe_value(value))
+    if unsafe:
+        # The keys only: some of the values are credentials.
+        raise ValueError(f"the kit's value for {', '.join(unsafe)} is not one line without `$`, backquote or backslash")
+
     if not target.exists():
         write_secure(target, (example.read_text() if example and example.exists() else "").splitlines())
 
@@ -255,13 +279,11 @@ def write_kit(target: Path, kit: dict, example: Path | None = None, hub_shared_c
             lines.insert(lines.index(SENTINEL) + 1, HUB_SHARED_DEV_NOTE)
         for key in HUB_SHARED_KEYS:
             lines = comment_out(lines, key)
-    else:
-        hub_shared = kit.get("hub_shared") or {}
-        if hub_shared:
-            if SENTINEL not in lines:
-                lines.append("")
-                lines.append(SENTINEL)
-            for key, value in hub_shared.items():
-                lines = upsert(lines, key, str(value))
+    elif hub_shared:
+        if SENTINEL not in lines:
+            lines.append("")
+            lines.append(SENTINEL)
+        for key, value in hub_shared.items():
+            lines = upsert(lines, key, str(value))
 
     write_secure(target, lines)
