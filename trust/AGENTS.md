@@ -258,7 +258,11 @@ locally) from the published canonical tables at the pinned
 `trust/.data_version`: OMOP rows via `omop_db_tools.import_tables` (the DICOM vocabulary first,
 skipped if present) and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the same
 `source_trust` column, so a trust's OMOP rows and the studies in its PACS agree by construction. Each
-half leaves a marker beside its store (`volumes/Trust_<N>/.seeded`, `orthanc/.orthanc-storage-trust<N>.seeded`)
+half leaves a marker beside its store (in development `volumes/Trust_<N>/.seeded` and
+`orthanc/.orthanc-storage-trust<N>.seeded`; beside the kit's `OMOP_DATA_DIR` / `ORTHANC_STORAGE_DIR` when set; on a
+deployed kit that leaves them unset, `/opt/flip/omop/.seeded` and `/opt/flip/orthanc/.orthanc-storage.seeded`, beside
+the prod compose's fallbacks. The invoking user writes them, so `up-trust` refuses a marker folder it cannot write
+before starting anything)
 recording projects/partition/version; a matching marker means a later `up` fetches and uploads
 nothing and the volumes just persist on the host, a differing one (a `.data_version` bump, a changed
 `PROJECTS`) re-seeds those projects — rows replaced, studies cleared and re-uploaded. There is no

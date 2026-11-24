@@ -326,12 +326,16 @@ MONAI_LABEL_STATUS_MSG :=$(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — ser
 # (e.g. "Guy's and St Thomas' Trust") — unquoted it splits in the recipe's
 # `VAR=val cmd` shell prefix ("EC2: not found"); single-quoted it breaks on the
 # apostrophe. Double quotes handle both (trust names never contain $/backtick/").
+# The OMOP and Orthanc dirs are handed over only when the kit leaves the line unset (the
+# resolved default). A line the kit sets reaches compose through --env-file alone: the shell
+# environment beats --env-file, and make reads a kit line differently from compose (it keeps
+# quotes and does not expand ~), so passing make's reading could move a live site's mount.
 TRUST_VARS = \
 	TRUST_NETWORK_NAME=$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	COHORT_SNAPSHOT_STORAGE_DIR="$(COHORT_SNAPSHOT_DIR_HOST)" \
-	OMOP_DATA_DIR="$(OMOP_DATA_ABS)" \
-	ORTHANC_STORAGE_DIR="$(ORTHANC_STORAGE_ABS)" \
+	$(if $(KIT),$(if $(OMOP_DATA_DIR),,OMOP_DATA_DIR="$(OMOP_DATA_ABS)")) \
+	$(if $(KIT),$(if $(ORTHANC_STORAGE_DIR),,ORTHANC_STORAGE_DIR="$(ORTHANC_STORAGE_ABS)")) \
 	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
 # Non-KIT targets such as `make build` do not load a trust kit, but Docker
@@ -620,6 +624,7 @@ up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
+	$(if $(filter true,$(TRUST_DATA_SEED_EFFECTIVE)),$(require_seed_marker_dirs))
 	$(ensure_net_dirs)
 	$(ensure_snapshot_dir)
 	@echo "$(GPU_STATUS_MSG)"
@@ -1004,8 +1009,8 @@ down-fl-clients-kit:
 # The seed markers sit BESIDE each store (the store itself is owned by the container uid):
 # volumes/Trust_<N>/.seeded next to db_data, and orthanc/.orthanc-storage-trust<N>.seeded
 # next to the storage dir (the default storage dirs share a parent, hence the name).
-# ONE resolved value each, handed to compose in TRUST_VARS so the directory prepared, owned and
-# seed-marked here is the one compose mounts (FLIP#2047). The deployed defaults are the prod
+# ONE default each, handed to compose in TRUST_VARS when the kit leaves the line unset, so the
+# directory prepared, owned and seed-marked here is the one compose mounts (FLIP#2047). The deployed defaults are the prod
 # compose's own fallbacks, which a site that never set the line already mounts: never move them.
 # They are not per slot, so two trusts on one host must each set the line (the onboarding
 # checklist fails a kit that leaves it unset).
@@ -1013,6 +1018,17 @@ OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),$(if $(IS_DEPLOYED),/opt/flip/om
 ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),$(if $(IS_DEPLOYED),/opt/flip/orthanc/orthanc-storage,./orthanc/orthanc-storage-trust$(TRUST_NUM))))
 OMOP_SEED_MARKER = $(dir $(OMOP_DATA_ABS)).seeded
 ORTHANC_SEED_MARKER = $(dir $(ORTHANC_STORAGE_ABS)).$(notdir $(ORTHANC_STORAGE_ABS)).seeded
+# The seeders write those markers as the invoking user, after the data has loaded. Refuse a
+# folder they cannot write before anything starts: found afterwards, the bring-up fails on a
+# seeded trust and every later one seeds it again.
+define require_seed_marker_dirs
+	@for m in '$(OMOP_SEED_MARKER)' '$(ORTHANC_SEED_MARKER)'; do \
+	  d="$$(dirname "$$m")"; mkdir -p "$$d" 2>/dev/null; [ -w "$$d" ] || { \
+	    echo "❌ $$d is not writable by $$(id -un), and the seed marker is written there ($$m)."; \
+	    echo "   Make it yours (sudo chown $$(id -u) $$d), or set TRUST_DATA_SEED=false in $(KIT_FILE_LABEL) for a trust with real data."; \
+	    exit 1; }; \
+	done
+endef
 # The data version everything is seeded at: the pin, or HF_TRUST_DATA_REVISION to override
 # (main, a sha) — the same resolution the omop-db and orthanc Makefiles apply.
 TRUST_DATA_REVISION = $(or $(HF_TRUST_DATA_REVISION),$(shell tr -d ' \n\r\t' < .data_version))
@@ -1061,6 +1077,7 @@ ensure-seeded: $(if $(filter true,$(TRUST_DATA_SEED_EFFECTIVE)),wait-omop-db wai
 ifeq ($(TRUST_DATA_SEED_EFFECTIVE),false)
 	@echo "⏭️  Sample data is off for $(KIT) (TRUST_DATA_SEED=false): nothing loaded into OMOP or the PACS."
 else
+	$(require_seed_marker_dirs)
 	@want=$$(printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(TRUST_DATA_REVISION)"); \
 	if [ "$$(cat '$(OMOP_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
 	  echo "✅ OMOP ($(KIT)) already seeded: $(PROJECTS) @ $(TRUST_DATA_REVISION)"; \
@@ -1180,14 +1197,14 @@ unseed-omop:
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
 	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) \
-	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
+	  OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_ABS)
 
 unseed-orthanc:
 	$(refuse_seed_when_off)
 	$(ORTHANC_CMD) unseed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
-	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_DIR) PROJECTS="$(PROJECTS)" \
+	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_ABS) PROJECTS="$(PROJECTS)" \
 	  $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 unseed: unseed-orthanc unseed-omop

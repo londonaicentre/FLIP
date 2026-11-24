@@ -108,9 +108,44 @@ class UpgradeTrust(unittest.TestCase):
         assert f'OMOP_DATA_DIR="{omop}"' in up, up
         assert f'ORTHANC_STORAGE_DIR="{pacs}"' in up, up
         assert "/opt/flip/omop/.seeded" in out, out  # the seed marker sits beside the store compose mounts
-        up = next(line for line in dry_run("up-trust").splitlines() if "docker compose" in line and " up -d" in line)
-        assert 'OMOP_DATA_DIR="/nonexistent/omop"' in up, up
-        assert 'ORTHANC_STORAGE_DIR="/nonexistent/orthanc"' in up, up
+
+    def test_a_line_the_kit_sets_reaches_compose_from_the_kit_alone(self):
+        """Make and compose parse a kit line differently (make keeps quotes and does not expand ~), and the
+        shell environment beats --env-file: handing compose make's reading could move a live site's mount."""
+        quoted = kit_with("OMOP_DATA_DIR=/nonexistent/omop", 'OMOP_DATA_DIR="/srv/flip/omop"')
+        for kit in (KIT, quoted, kit_with("ORTHANC_STORAGE_DIR=/nonexistent/orthanc", "ORTHANC_STORAGE_DIR=~/pacs")):
+            for target in ("up-trust", "_upgrade-trust-apply"):
+                out = dry_run(target, kit=kit)
+                up = next(line for line in out.splitlines() if "docker compose" in line and " up -d" in line)
+                assert "--env-file" in up, up
+                for var in ("OMOP_DATA_DIR=", "ORTHANC_STORAGE_DIR="):
+                    assert var not in up, (var, up)
+
+    def test_the_seed_marker_folder_is_checked_before_anything_starts(self):
+        """The seeders write their markers beside the two stores as the invoking user; a folder they cannot
+        write would fail the bring-up after the data had loaded, and re-seed on every later one."""
+        out = dry_run("up-trust", kit=DATA_DIRS_UNSET)
+        check = out.index("the seed marker is written there")
+        assert "'/opt/flip/omop/.seeded' '/opt/flip/orthanc/.orthanc-storage.seeded'" in out, out
+        assert check < out.index(" up -d"), out
+        assert "the seed marker is written there" in dry_run("ensure-seeded", kit=DATA_DIRS_UNSET)
+        off = dry_run("up-trust", kit=KIT + "TRUST_DATA_SEED=false\n")
+        assert "the seed marker is written there" not in off, off
+
+    def test_unseed_names_the_same_dirs_as_seed(self):
+        for target in ("seed-omop", "unseed-omop"):
+            out = dry_run(target, "PROJECTS=cxr_project", "FORCE_SEED=1", kit=DATA_DIRS_UNSET)
+            assert "OMOP_DATA_DIR_TRUST_9=/opt/flip/omop/db_data" in out, (target, out)
+        for target in ("seed-orthanc", "unseed-orthanc"):
+            out = dry_run(target, "PROJECTS=cxr_project", "FORCE_SEED=1", kit=DATA_DIRS_UNSET)
+            assert "ORTHANC_STORAGE_DIR_TRUST_9=/opt/flip/orthanc/orthanc-storage" in out, (target, out)
+
+    def test_build_without_a_kit_gets_no_kit_data_dirs(self):
+        result = run_target("build", "KIT=", dry=True, hub="")
+        assert result.returncode == 0, result.stderr
+        build = next(line for line in result.stdout.splitlines() if "docker compose" in line)
+        assert "OMOP_DATA_DIR=" not in build, build
+        assert build.count("ORTHANC_STORAGE_DIR=") == 1, build
 
     def test_development_keeps_its_per_slot_dirs_inside_the_checkout(self):
         result = run_target("up-trust", kit=DATA_DIRS_UNSET, dry=True, hub="")
