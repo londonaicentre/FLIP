@@ -98,9 +98,7 @@ def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db
 
     An empty list grants nothing (returns False), matching :func:`has_any_permission`, so a caller
     cannot accidentally allow everyone by passing no permissions. That guard is explicit here
-    because the natural implementation fails *open*: ``all()`` over an empty sequence is True, and
-    the ``except`` below would not catch it — with nothing to check, the query succeeds and the
-    generator never runs.
+    because the natural implementation fails *open*: ``all()`` over an empty sequence is True.
 
     Args:
         user_id (UUID): The ID of the user to check permissions for.
@@ -116,15 +114,10 @@ def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db
         logger.error(f"Refusing to authorize user {user_id} against an empty required-permission list")
         return False
 
-    try:
-        user_permission_ids = _user_permission_ids(user_id, db)
+    user_permission_ids = _user_permission_ids(user_id, db)
 
-        # Check if user has all required permissions
-        return all(permission.value in user_permission_ids for permission in required_permissions)
-
-    except Exception as e:
-        logger.error(f"Error checking all-of permissions for user {user_id}: {str(e)}")
-        return False
+    # Check if user has all required permissions
+    return all(permission.value in user_permission_ids for permission in required_permissions)
 
 
 def has_any_permission(user_id: UUID, permissions: list[PermissionRef], db: Session) -> bool:
@@ -143,14 +136,9 @@ def has_any_permission(user_id: UUID, permissions: list[PermissionRef], db: Sess
     Returns:
         bool: True if the user holds any one of the given permissions, False otherwise.
     """
-    try:
-        user_permission_ids = _user_permission_ids(user_id, db)
+    user_permission_ids = _user_permission_ids(user_id, db)
 
-        return any(permission.value in user_permission_ids for permission in permissions)
-
-    except Exception as e:
-        logger.error(f"Error checking any-of permissions for user {user_id}: {str(e)}")
-        return False
+    return any(permission.value in user_permission_ids for permission in permissions)
 
 
 def has_trust_permissions(
@@ -200,11 +188,6 @@ def has_trust_permissions(
         )
         return False
 
-    try:
-        user_permission_ids = _user_trust_permission_ids(user_id, trust_id, db)
+    user_permission_ids = _user_trust_permission_ids(user_id, trust_id, db)
 
-        return all(permission.value in user_permission_ids for permission in required_permissions)
-
-    except Exception as e:
-        logger.error(f"Error checking trust permissions for user {user_id} at trust {trust_id}: {str(e)}")
-        return False
+    return all(permission.value in user_permission_ids for permission in required_permissions)
