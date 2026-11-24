@@ -192,10 +192,9 @@ jobs:
       id-token: write # mint the OIDC token
       packages: read # probe GHCR for the release image tag
       actions: read # read this commit's image build runs (the wait step)
-    # Not secrets: the UI serves both ids to every browser.
     outputs:
-      cognito_user_pool_id: ${{ steps.cognito.outputs.pool }}
-      cognito_app_client_id: ${{ steps.cognito.outputs.client }}
+      # match, mismatch, unreadable or unset: read by the ui-cognito-ids job.
+      ui_cognito_ids: ${{ steps.cognito.outputs.verdict }}
 
     steps:
       - name: Checkout code
@@ -495,58 +494,80 @@ jobs:
       # The UI build reads the Cognito ids from environment variables, because it
       # runs without the credentials to read Terraform state. They change only if
       # the pool or client is replaced; this is the run that would replace them,
-      # so it hands what Terraform now holds to the ui-cognito-ids job.
+      # so it compares them here, where both are in reach, and hands the verdict
+      # to the ui-cognito-ids job.
       #
       # This step never fails: the apply has happened, and failing its job here
-      # would also skip the staging restore and stop. A failed read leaves the
-      # output empty, which that job fails on; Terraform's error stays in this log.
-      - name: Read the Cognito ids Terraform holds
+      # would also skip the staging restore and stop. Terraform's own error stays
+      # in this log.
+      - name: Compare the UI's Cognito ids with Terraform
         id: cognito
         working-directory: deploy/aws
+        env:
+          UI_POOL_ID: ${{ vars.AWS_COGNITO_USER_POOL_ID }}
+          UI_CLIENT_ID: ${{ vars.AWS_COGNITO_APP_CLIENT_ID }}
         run: |
           set -uo pipefail
           pool="$(terraform output -raw CognitoUserPoolId)" || pool=""
           client="$(terraform output -raw CognitoAppClientId)" || client=""
-          echo "pool=${pool}" >> "$GITHUB_OUTPUT"
-          echo "client=${client}" >> "$GITHUB_OUTPUT"
+          if [[ -z "${pool}" || -z "${client}" ]]; then
+            verdict=unreadable
+            echo "terraform output CognitoUserPoolId / CognitoAppClientId could not be read."
+          elif [[ -z "${UI_POOL_ID}" && -z "${UI_CLIENT_ID}" ]]; then
+            # A new environment: the pool did not exist before its first apply, so
+            # nobody could have set these. publish_ui.yml refuses to build without them.
+            verdict="unset"
+            echo "AWS_COGNITO_USER_POOL_ID and AWS_COGNITO_APP_CLIENT_ID are not set on this environment."
+          else
+            verdict=match
+            if [[ "${pool}" != "${UI_POOL_ID}" ]]; then
+              verdict=mismatch
+              echo "AWS_COGNITO_USER_POOL_ID differs from terraform output CognitoUserPoolId."
+            fi
+            if [[ "${client}" != "${UI_CLIENT_ID}" ]]; then
+              verdict=mismatch
+              echo "AWS_COGNITO_APP_CLIENT_ID differs from terraform output CognitoAppClientId."
+            fi
+          fi
+          echo "verdict: ${verdict}"
+          echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
 
   # A mismatch used to be a warning on a green run, and the ui job then published
   # a UI nobody could sign in to (FLIP#2047). Its own job, so that it holds the UI
   # and turns the run red without failing the apply job the staging cycle keys on.
-  # It reads the variables when it starts, so correcting them and re-running the
-  # failed jobs is the whole recovery.
+  # It names no environment (aws-prod's reviewers would have to approve it on every
+  # production apply), so the comparison is the apply job's and only the verdict
+  # crosses over. The verdict is the apply run's: after correcting the variables,
+  # re-run all jobs or dispatch the apply again.
   ui-cognito-ids:
     name: Check the UI's Cognito ids against Terraform
     needs: apply
     if: always() && needs.apply.result == 'success'
     runs-on: ubuntu-latest
-    # For the environment's variables; this job requests no token.
-    environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
     permissions: {}
     steps:
-      - name: Compare the environment's variables with the Terraform outputs
+      - name: Act on the apply job's verdict
         env:
-          TF_POOL_ID: ${{ needs.apply.outputs.cognito_user_pool_id }}
-          TF_CLIENT_ID: ${{ needs.apply.outputs.cognito_app_client_id }}
-          UI_POOL_ID: ${{ vars.AWS_COGNITO_USER_POOL_ID }}
-          UI_CLIENT_ID: ${{ vars.AWS_COGNITO_APP_CLIENT_ID }}
+          VERDICT: ${{ needs.apply.outputs.ui_cognito_ids }}
         run: |
           set -euo pipefail
-          if [[ -z "${TF_POOL_ID}" || -z "${TF_CLIENT_ID}" ]]; then
-            echo "::error title=Cognito ids not read::terraform output CognitoUserPoolId / CognitoAppClientId could not be read after the apply (see the apply job's \"Read the Cognito ids Terraform holds\" step), so the UI's ids are unchecked and the UI is not published."
-            exit 1
-          fi
-          # A new environment: the pool did not exist before its first apply, so
-          # nobody could have set these. publish_ui.yml refuses to build without them.
-          if [[ -z "${UI_POOL_ID}" && -z "${UI_CLIENT_ID}" ]]; then
-            echo "::warning title=UI Cognito ids not set::AWS_COGNITO_USER_POOL_ID and AWS_COGNITO_APP_CLIENT_ID are not set on this environment, as on a first apply. Set them to ${TF_POOL_ID} and ${TF_CLIENT_ID} before the UI can be published."
-            exit 0
-          fi
-          if [[ "${TF_POOL_ID}" != "${UI_POOL_ID}" || "${TF_CLIENT_ID}" != "${UI_CLIENT_ID}" ]]; then
-            echo "::error title=UI Cognito ids differ::This environment's AWS_COGNITO_USER_POOL_ID (${UI_POOL_ID}) and AWS_COGNITO_APP_CLIENT_ID (${UI_CLIENT_ID}) do not match what Terraform holds (${TF_POOL_ID}, ${TF_CLIENT_ID}). A UI built from them cannot sign anyone in, so it is not published: set both variables to Terraform's values and re-run the failed jobs."
-            exit 1
-          fi
-          echo "The UI's Cognito ids match Terraform."
+          step="the apply job's step \"Compare the UI's Cognito ids with Terraform\""
+          case "${VERDICT}" in
+            match)
+              echo "The UI's Cognito ids match Terraform."
+              ;;
+            unset)
+              echo "::warning title=UI Cognito ids not set::AWS_COGNITO_USER_POOL_ID and AWS_COGNITO_APP_CLIENT_ID are not set on this environment, as on a first apply. Set them from terraform output CognitoUserPoolId / CognitoAppClientId before the UI can be published."
+              ;;
+            mismatch)
+              echo "::error title=UI Cognito ids differ::This environment's AWS_COGNITO_USER_POOL_ID / AWS_COGNITO_APP_CLIENT_ID do not match terraform output CognitoUserPoolId / CognitoAppClientId (${step} says which). A UI built from them cannot sign anyone in, so it is not published: set the variables to Terraform's values, then re-run all jobs or dispatch the apply again."
+              exit 1
+              ;;
+            *)
+              echo "::error title=Cognito ids not read::terraform output CognitoUserPoolId / CognitoAppClientId could not be read after the apply (verdict '${VERDICT}'; ${step} has Terraform's error), so the UI's ids are unchecked and the UI is not published."
+              exit 1
+              ;;
+          esac
 
   ui:
     name: Publish flip-ui (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
