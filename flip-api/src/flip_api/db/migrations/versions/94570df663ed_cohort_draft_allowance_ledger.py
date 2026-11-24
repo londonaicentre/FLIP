@@ -16,7 +16,7 @@ The monthly allowance for cohort SQL drafting (FLIP#1556): a per-user, per-UTC-m
 one row per drafting request (reserved, consumed or released), deduplicated by idempotency key.
 
 Revision ID: 94570df663ed
-Revises: c19960de1e7e
+Revises: c3e1d7a9b4f2
 Create Date: 2026-11-13 09:44:38.838964
 
 """
@@ -28,7 +28,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '94570df663ed'
-down_revision: str | None = 'c19960de1e7e'
+down_revision: str | None = 'c3e1d7a9b4f2'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
