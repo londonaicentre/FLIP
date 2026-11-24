@@ -102,3 +102,13 @@ def test_directories_without_dicoms_are_skipped(metadata_module: ModuleType, tmp
     frame = metadata_module.extract_dicom_metadata(str(tmp_path))
 
     assert set(frame["Subject"]) == {"spleen_2"}
+
+
+def test_an_unreadable_dicom_fails_the_table(metadata_module: ModuleType, tmp_path: Path) -> None:
+    """A subject must not drop out of a published table without anyone noticing."""
+    _write_dicom(tmp_path / "spleen_2" / "0000.dcm", "spleen_2", "111 222 333")
+    (tmp_path / "spleen_3").mkdir()
+    (tmp_path / "spleen_3" / "0000.dcm").write_bytes(b"not a dicom")
+
+    with pytest.raises(pydicom.errors.InvalidDicomError):
+        metadata_module.extract_dicom_metadata(str(tmp_path))
