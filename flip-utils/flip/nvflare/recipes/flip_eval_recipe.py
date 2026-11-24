@@ -88,6 +88,10 @@ class FlipEvalRecipe(FlipRecipe):
         params_exchange_format, params_transfer_type: FLARE param-exchange knobs for the Client API.
     """
 
+    job_name = "flip_evaluation"
+    # What the server's persistor instantiates; the app's own models.py.
+    server_model_path = "models.get_model"
+
     def __init__(
         self,
         *,
@@ -122,14 +126,14 @@ class FlipEvalRecipe(FlipRecipe):
         ``meta.json`` so the lazily-resolving components can find it.
         """
         job = FedJob(
-            name="flip_evaluation",
+            name=self.job_name,
             min_clients=self.min_clients,
             meta_props={FLIP_CUSTOM_PROPS_KEY: {FLIP_MODEL_ID_KEY: self.model_id}},
         )
 
         # Server: persistor (required by PersistToS3AndCleanup's inventory check — no model is trained
         # here, so its inventory stays empty and it simply zips the run dir).
-        persistor_id = job.to_server(PTFileModelPersistor(model={"path": "models.get_model"}), id="persistor")
+        persistor_id = job.to_server(PTFileModelPersistor(model={"path": self.server_model_path}), id="persistor")
 
         # Server: FLIP components — per-model checkpoint locator, results JSON, event handler, S3 persistor.
         job.to_server(EvaluationModelLocator(), id="model_locator")
@@ -205,3 +209,19 @@ class FlipEvalRecipe(FlipRecipe):
         config.setdefault("project_id", self.project_id)
         config.setdefault("query", self.query)
         client_cfg.write_text(json.dumps(config, indent=2))
+
+
+class FlipInferenceRecipe(FlipEvalRecipe):
+    """FLIP inference recipe: each trust runs a model on its data and keeps the output (FLIP#1945).
+
+    The evaluation pipeline with two differences. The client script is ``inference.py``, and the
+    server's persistor holds an empty module, so the app needs no ``models.py``. Each ``models``
+    entry in ``config.json`` may be empty, for a model whose weights are in the trust's FL image.
+    The script still replies with metrics (counts, say), which is what the hub records.
+    """
+
+    job_name = "flip_inference"
+    server_model_path = "torch.nn.Identity"
+
+    def __init__(self, *, eval_script: str = "inference.py", **kwargs: Any) -> None:
+        super().__init__(eval_script=eval_script, **kwargs)

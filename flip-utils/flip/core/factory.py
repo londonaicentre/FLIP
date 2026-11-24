@@ -74,7 +74,7 @@ def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs: Any) -> FL
             raise ValueError(f"Unknown job_type: {job_type}. Must be one of {valid_types}")
 
     # Map job types to their implementations
-    if job_type in (JobType.STANDARD, JobType.EVALUATION, JobType.FED_OPT):
+    if job_type in (JobType.STANDARD, JobType.EVALUATION, JobType.FED_OPT, JobType.INFERENCE):
         return _create_standard_flip(is_dev, **kwargs)
     else:
         valid_types = [t.value for t in JobType]

@@ -22,6 +22,7 @@ fl-apps/
 │   ├── standard/          # JOB_TYPE=standard        — FedAvg (Client API)
 │   ├── evaluation/        # JOB_TYPE=evaluation       — cross-site model evaluation
 │   ├── fed_opt/           # JOB_TYPE=fed_opt          — Adaptive Federated Optimization
+│   ├── inference/         # JOB_TYPE=inference        — a model run at each trust, no training or labels
 │   └── required_files.json
 ├── flower/
 │   ├── standard/          # job_type=standard         — FedAvg
@@ -34,7 +35,7 @@ Each `<backend>/<template>/` directory is a **job type**: the server-side orches
 a declaration of which files the researcher must upload alongside it. See each template's own
 README for what it does and what its `required_files.json` requires:
 [`nvflare/standard`](nvflare/standard/README.md), [`nvflare/evaluation`](nvflare/evaluation/README.md),
-[`nvflare/fed_opt`](nvflare/fed_opt/README.md),
+[`nvflare/fed_opt`](nvflare/fed_opt/README.md), [`nvflare/inference`](nvflare/inference/README.md),
 [`flower/standard`](flower/standard/README.md), [`flower/evaluation`](flower/evaluation/README.md).
 
 All FLARE templates are **Client API** apps (`ClientAPIExecutor`, in-process mode); the legacy

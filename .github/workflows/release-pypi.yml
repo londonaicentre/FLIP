@@ -81,7 +81,9 @@ jobs:
 
       - name: Install dependencies
         if: steps.check_tag.outputs.skip == 'false'
-        run: uv sync --all-extras
+        # Not the segmentation extra: only the FLARE client image needs TotalSegmentator, and
+        # a release must not wait on its packages.
+        run: uv sync --all-extras --no-extra segmentation
 
       - name: Run linter
         if: steps.check_tag.outputs.skip == 'false'

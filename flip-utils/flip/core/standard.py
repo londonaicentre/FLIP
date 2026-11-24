@@ -14,7 +14,7 @@
 Standard FLIP Implementation.
 
 This module contains the production and development implementations of FLIP
-for the standard, evaluation, and fed_opt job types.
+for the standard, evaluation, fed_opt and inference job types.
 """
 
 import atexit

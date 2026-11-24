@@ -24,7 +24,7 @@ image and is imported as `from flip import ...` by user-uploaded training code. 
 
 Sibling FL trees in the same mono-repo:
 
-- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,evaluation,fed_opt}`, `flower/{standard,evaluation}`)
+- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,evaluation,fed_opt,inference}`, `flower/{standard,evaluation}`)
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
 - **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
@@ -74,6 +74,7 @@ Each FL backend is an extra, so an install carries only the one it runs (FLIP#10
 | `nvflare` | NVFLARE, and the `kubernetes` client its K8s job launcher imports | `flip.nvflare` |
 | `flower` | flwr | `flip.flower` |
 | `full` | The ML stack (torch, MONAI, …); no FL backend | FL training and evaluation code, `flip.export` |
+| `segmentation` | TotalSegmentator, with nnU-Net and SimpleITK; install it with `full` | Jobs that run TotalSegmentator at a trust; in the FLARE client image |
 
 `import flip` and every module outside `flip.nvflare` / `flip.flower` need neither backend; importing a
 backend package without its extra fails with an `ImportError` naming the extra. A plain `flip-utils`
@@ -206,8 +207,9 @@ Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` 
 | `standard` | Federated training with FedAvg aggregation (default) |
 | `evaluation` | Distributed model evaluation without training |
 | `fed_opt` | Adaptive federated optimisation (FedOpt) |
+| `inference` | Running a model at each trust with no training and no labels (FLARE only) |
 
-The FLARE templates under `fl-apps/nvflare/` (`standard`, `evaluation`, `fed_opt`) are all
+The FLARE templates under `fl-apps/nvflare/` (`standard`, `evaluation`, `fed_opt`, `inference`) are all
 Client-API apps with recipe-generated configs. The corresponding configs live
 in `fl-apps/nvflare/<template>/app/config/`.
 
@@ -267,6 +269,7 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 | nvflare | `evaluation` | `nvflare/image_evaluation/3d_spleen_segmentation_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_baseline_classification_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_multimodel_classification_evaluation` |
+| nvflare | `inference` | `nvflare/image_inference/totalsegmentator_inference` |
 | nvflare | `standard` | `nvflare/image_generation/brain_mri_ldm_stage1_autoencoder` |
 | nvflare | `standard` | `nvflare/image_generation/xray_diffusion` (pixel-space) |
 | nvflare | `standard` | `nvflare/image_generation/brain_mri_ldm_stage2_diffusion` |

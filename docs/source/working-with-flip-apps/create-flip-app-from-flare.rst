@@ -715,6 +715,12 @@ API shape and change only what the script returns:
   The script handles ``flare.is_evaluate()`` only and returns aggregate metrics with
   ``flare.send(flare.FLModel(metrics={...}))`` — never per-patient values. Reference:
   ``fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation/``.
+- ``inference`` — no training and no labels. Upload ``inference.py`` and ``config.json``; there is no
+  ``models.py``. A ``models`` entry in ``config.json`` may be empty (``{}``) when the Trust's FL client image
+  already holds the model. The script handles ``flare.is_evaluate()`` only and replies with aggregate metrics,
+  such as counts. The job is built with the inference recipe (``FlipInferenceRecipe``). Reference:
+  ``fl-tutorials/nvflare/image_inference/totalsegmentator_inference/``. It imports TotalSegmentator inside the
+  function that uses it, because FLARE also loads app files on the server, whose image does not have it.
 
 :ref:`fl-required-files` is the authoritative list of required files per job type.
 

@@ -1,0 +1,13 @@
+{
+  "job_type": "inference",
+  "models": {
+    "totalsegmentator": {}
+  },
+  "totalsegmentator": {
+    "task": "total",
+    "roi_subset": null,
+    "fastest": false,
+    "device": "gpu"
+  },
+  "mask_resource": "TOTALSEG"
+}

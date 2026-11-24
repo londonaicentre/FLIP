@@ -7,6 +7,7 @@ built on the templates in `fl-apps/`; the images they run on are built from
 | Path | Purpose |
 |------|---------|
 | `nvflare/image_*` | FLARE imaging tutorials — all Client-API apps |
+| `nvflare/image_inference/totalsegmentator_inference` | FLARE-only tutorial of the `inference` job type: TotalSegmentator on CT, masks stored on each scan. No checkpoint and no labels. Runs in the flip-utils environment with the `segmentation` extra, on weights staged by `make download-weights` |
 | `nvflare/tabular_classification` | FLARE tabular (OMOP-only) EHR risk-prediction tutorial |
 | `nvflare/tabular_causal_discovery` | FLARE tabular (OMOP-only) biomarker causal-discovery tutorial: bootstrapped FCI federated through the ordinary FedAvg job (`federated_fci.py` — pooled sufficient statistics, or FedPC-style layer voting); the cohort is real ADNI data the user obtains under their own licence and converts with `datasets/ad_biomarkers/make_adni_cohort.py` (`convert-adni-cohort`) — ADNI is access-controlled, so the repo ships the converter, never rows |
 | `flower/{image_classification/xray_classification,image_segmentation/{3d_spleen_segmentation,3d_prostate_segmentation},image_evaluation/3d_spleen_segmentation_evaluation}` | Flower imaging tutorials (prostate: nnU-Net-planned DynUNet on PI-CAI, three scans per study, masks as enrichment — `prepare-prostate-local-data` for the simulator) |

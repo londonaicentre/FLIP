@@ -22,7 +22,8 @@ class JobType(StrEnum):
     STANDARD = "standard"
     EVALUATION = "evaluation"
     FED_OPT = "fed_opt"
+    INFERENCE = "inference"
 
 
 # Type alias for job type string literals
-JobTypeStr = Literal["standard", "evaluation", "fed_opt"]
+JobTypeStr = Literal["standard", "evaluation", "fed_opt", "inference"]

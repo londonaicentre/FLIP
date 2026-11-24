@@ -177,6 +177,12 @@ upload the tutorial matching `FL_BACKEND` (FLARE's `app_files/` by default, Flow
 `make download-checkpoints`. The enrichment step itself is backend-agnostic and runs out of the
 shared `fl-tutorials/datasets/spleen/` tree either way.)
 
+`make -C flip-api e2e_smoke_totalsegmentator_inference` runs the `inference` job type on the same spleen
+cohort: no labels, so no enrichment step, and no checkpoint, because TotalSegmentator and its weights are
+in the FLARE client image (FLIP#1945). FLARE only. Each mask is stored on its scan in the trust's XNAT as
+`pred_*.nii.gz` in a `TOTALSEG` resource, which refuses a second file of the same name, so a re-run on
+the same project reports `masks_saved` as 0.
+
 **Prostate.** `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` does the same for the PI-CAI
 tutorial (`fl-tutorials/flower/image_segmentation/3d_prostate_segmentation`, Flower only). The cohort is `prostate_project`
 (`make -C trust seed-trusts PROJECTS=prostate_project`), and enrichment uploads two masks per study with

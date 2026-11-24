@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from flip.nvflare.recipes import FlipEvalRecipe, FlipFedAvgRecipe, FlipFedOptRecipe
+from flip.nvflare.recipes import FlipEvalRecipe, FlipFedAvgRecipe, FlipFedOptRecipe, FlipInferenceRecipe
 
 _FL_APPS_NVFLARE = Path(__file__).resolve().parents[5] / "fl-apps" / "nvflare"
 
@@ -38,6 +38,7 @@ _TEMPLATES = [
     ("standard", FlipFedAvgRecipe),
     ("evaluation", FlipEvalRecipe),
     ("fed_opt", FlipFedOptRecipe),
+    ("inference", FlipInferenceRecipe),
 ]
 
 
@@ -83,5 +84,5 @@ def test_committed_aggregator_keeps_the_stock_weight_diff_default(template: str,
             f"fl-apps/nvflare/{template}: aggregator overrides expected_data_kind — client diffs "
             "would be rejected every round"
         )
-    if template != "evaluation":
+    if template not in ("evaluation", "inference"):
         assert aggregators, f"fl-apps/nvflare/{template}: no aggregator component found"

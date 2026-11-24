@@ -106,6 +106,11 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Checking how accurately an existing spleen-outlining model traces the spleen on each participating "
         "trust's abdominal CT scans, without retraining it.",
     ),
+    "totalsegmentator_inference": TutorialCopy(
+        "Segmenting CT scans with TotalSegmentator",
+        "Outlining the organs, bones, muscles and vessels on each participating trust's CT scans with the "
+        "TotalSegmentator model, and keeping the outlines beside the scans at the trust.",
+    ),
     "arkplus_fine_tuning": TutorialCopy(
         "Fine-tuning a chest X-ray foundation model (Ark+)",
         "Adapting the Ark+ chest X-ray foundation model to the participating trusts' own radiographs so it "

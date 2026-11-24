@@ -51,6 +51,8 @@ Decision table
      - **That framework**
    * - Federated optimisation with a server-side optimiser (``fed_opt`` job type)
      - **NVIDIA FLARE**
+   * - To run a model at each Trust with no labels and no training (``inference`` job type)
+     - **NVIDIA FLARE**
    * - A privacy filter each Trust enforces on its own side, which your app's configuration cannot switch off
      - **NVIDIA FLARE** — Flower has no site-side filter hook
    * - Differential-privacy noise on shared updates
@@ -79,7 +81,7 @@ How the two compare
      - NVIDIA FLARE
      - Flower
    * - Job types
-     - ``standard``, ``evaluation``, ``fed_opt``
+     - ``standard``, ``evaluation``, ``fed_opt``, ``inference``
      - ``standard``, ``evaluation``
    * - What you upload
      - ``trainer.py``, ``models.py``, ``config.json`` (+ helper modules)
