@@ -16,6 +16,7 @@ The chart's own targets are replaced by `echo make`, so these read what would be
 from __future__ import annotations
 
 import json
+import re
 from functools import partial
 
 import pytest
@@ -28,20 +29,30 @@ run_make = partial(run_any_make, root="aks")
 HELM = f"make -C {REPO_ROOT}/trust/deploy/helm KUBE_CONTEXT=flipaz-aks NAMESPACE=flip-trust"
 
 
-def test_deploy_layers_the_aks_overlays(tmp_path):
+def test_deploy_takes_the_overlays_join_recorded(tmp_path):
+    """A redeploy that passed the default overlays would drop the ones join was given."""
     result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == (
-        f"{HELM} deploy-trust-k8s KIT=Trust_3 HUB=stag PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"
+    assert result.stdout.strip() == f"{HELM} deploy-trust-k8s KIT=Trust_3 HUB=stag"
+
+
+def _recorded_overlays(tmp_path, **variables: str) -> list[str]:
+    """The K8S_PLATFORM_VALUES that `join` appends to the kit file."""
+    result, _ = run_make(
+        tmp_path, "-n", "join", MAKE="echo make", TARBALL="kit.tar.gz", KIT="Trust_3", HUB="stag", **variables
     )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return re.search(r"""K8S_PLATFORM_VALUES=%s\\n' "([^"]*)" >>""", result.stdout).group(1).split()
+
+
+def test_join_records_the_aks_overlays_in_the_kit(tmp_path):
+    assert _recorded_overlays(tmp_path) == ["values-aks.yaml", "values-small-node.yaml"]
 
 
 def test_mock_pacs_seeds_orthanc_last(tmp_path):
-    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS="1")
-
     overlay = AZURE_DIR / "aks" / "values-mock-pacs.yaml"
-    recorded = result.stdout.split()[-1]
+    recorded = _recorded_overlays(tmp_path, MOCK_PACS="1")[-1]
     assert not recorded.startswith("/"), "the kit file must not pin this checkout's location"
     assert (REPO_ROOT / "trust" / "deploy" / "helm" / recorded).resolve() == overlay.resolve()
     assert overlay.read_text().endswith("trustData:\n  seed:\n    orthanc: true\n")
@@ -49,10 +60,7 @@ def test_mock_pacs_seeds_orthanc_last(tmp_path):
 
 @pytest.mark.parametrize("value", ["0", "false"])
 def test_mock_pacs_off_values_add_no_overlay(tmp_path, value):
-    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS=value)
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "values-mock-pacs.yaml" not in result.stdout
+    assert "values-mock-pacs.yaml" not in " ".join(_recorded_overlays(tmp_path, MOCK_PACS=value))
 
 
 @pytest.mark.parametrize("target", ["deploy", "join"])

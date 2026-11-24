@@ -145,9 +145,11 @@ _fl-kit:
 	else mkdir -p -m 700 "$$s/certificates" "$$s/keys" && cp -p "$$k/certificates/ca.crt" "$$s/certificates/" && \
 	  for f in "$$k"/keys/supernode_credentials_*; do case "$$f" in *.pub) ;; *) cp -p "$$f" "$$s/keys/" ;; esac; done; fi
 
-deploy: ## Deploy or upgrade the trust on the cluster from its installed kit (KIT=<CODE> HUB=<env> [MOCK_PACS=1])
+# The overlays come from the kit file's K8S_PLATFORM_VALUES, which join recorded: passing AKS_VALUES
+# here would drop any join was given (MOCK_PACS=1, an operator's own).
+deploy: ## Deploy or upgrade the trust on the cluster from its installed kit (KIT=<CODE> HUB=<env>)
 	@[ -n "$(KIT)" ] && [ -n "$(HUB)" ] || { echo "❌ KIT=<trust code> HUB=<env> are required."; exit 1; }
-	$(CHART) deploy-trust-k8s KIT=$(KIT) HUB=$(HUB) PLATFORM_VALUES="$(AKS_VALUES)"
+	$(CHART) deploy-trust-k8s KIT=$(KIT) HUB=$(HUB)
 
 selftest: ## Run the trust self-test against the deployed release (report under build/selftest/ at the repo root)
 	$(CHART) selftest
