@@ -25,6 +25,8 @@ Stdlib-only and executable as a plain script, like the rest of ``scripts/tests``
 from __future__ import annotations
 
 import re
+import shlex
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -36,11 +38,37 @@ HELM = REPO / "trust" / "deploy" / "helm"
 # Everything a trust node runs, outside the chart: `image:` (compose, swarm) and `<name>_image:` (the
 # Ansible roles' defaults, the only place a role may name an image).
 ROLES = "trust/deploy/ansible/roles"
+
+
+def role_files(pattern: str) -> list[str]:
+    """The tracked role files: a machine that has run a play also holds gitignored Galaxy roles there."""
+    listed = subprocess.run(
+        ["git", "ls-files", "--", f"{ROLES}/{pattern}"], cwd=REPO, capture_output=True, text=True, check=True
+    )
+    return listed.stdout.split()
+
+
+ROLE_DEFAULTS = role_files("*/defaults/main.yml")
+# `docker run` options that take no value; every other option is followed by one.
+RUN_FLAGS = {"-d", "--rm"}
+
+
+def run_image(run: str) -> str:
+    """What a `docker run …` command names as its image: the first word that is no option or option value.
+
+    A `{{ name }}` is returned as `name`, any other Jinja expression as `<expr>`."""
+    run = re.sub(r"\{\{ *(\w+) *\}\}", r"\1", run)
+    words = shlex.split(re.sub(r"\{\{.*?\}\}", "<expr>", run))[2:]
+    while words and words[0].startswith("-"):
+        words = words[1 if words[0] in RUN_FLAGS or "=" in words[0] else 2 :]
+    return words[0] if words else ""
+
+
 PINNED_FILES = (
     "trust/deploy/compose/compose_trust.prod.yml",
     "trust/deploy/compose/compose_trust.development.yml",
     "trust/xnat/docker-compose-stack.yml",
-    *sorted(str(p.relative_to(REPO)) for p in (REPO / ROLES).glob("*/defaults/main.yml")),
+    *ROLE_DEFAULTS,
 )
 MANIFEST_LINE = re.compile(r"^([a-z0-9.-]+\.[a-z]+/[a-z0-9./_-]+):([A-Za-z0-9._-]+)\s+(sha256:[0-9a-f]{64})$")
 PIN = re.compile(r"^ghcr\.io/londonaicentre/mirror/([a-z0-9./_-]+):([A-Za-z0-9._-]+)@(sha256:[0-9a-f]{64})$")
@@ -107,19 +135,31 @@ class MirrorPins(unittest.TestCase):
                 assert "$(HOST_TOOLS_IMAGE)" in run, f"{rel}: {run[:120]} runs an image other than HOST_TOOLS_IMAGE"
 
     def test_the_ansible_roles_run_only_images_their_defaults_name(self):
-        """A literal in a task (`docker run … ubuntu:24.04`) is an image the pins above never see."""
+        """A literal in a task (`docker run … ubuntu:24.04`, `image: …`) is an image the pins above never see."""
         runs = 0
-        for tasks in sorted((REPO / ROLES).glob("*/tasks/*.yml")):
-            defaults = tasks.parents[1] / "defaults" / "main.yml"
+        for rel in role_files("*/tasks/*.yml"):
+            defaults = REPO / rel.split("/tasks/")[0] / "defaults" / "main.yml"
             named = set(re.findall(r"^(\w+_image):", defaults.read_text(), re.M)) if defaults.exists() else set()
-            # A run ends where its task's next key starts: the image and its command come last.
-            for run in re.findall(r"docker run\s+-.*?(?=\n\s*\w+:|\Z)", tasks.read_text(), re.S):
+            text = re.sub(r"^\s*#.*$", "", (REPO / rel).read_text(), flags=re.M)
+            # A run ends where its task's next key starts.
+            for run in re.findall(r"docker run\s.*?(?=\n\s*\w+:|\Z)", text, re.S):
                 runs += 1
-                image = re.search(r"\{\{ (\w+_image) \}\}", run)
-                where = f"{tasks.relative_to(REPO)}: {' '.join(run.split())[:120]}"
-                assert image, f"{where} names its image in the task, not in the role's defaults"
-                assert image.group(1) in named, f"{where}: {image.group(1)} is not in the role's defaults"
+                image = run_image(run)
+                assert image in named, f"{rel}: `docker run` names {image!r}, which the role's defaults do not define"
+            for image in re.findall(r"^\s*image:\s*(.*)$", text, re.M):
+                assert re.fullmatch(r'"?\{\{ *(\w+) *\}\}"?', image), f"{rel}: image: {image} is not a variable"
+                assert re.sub(r"[^\w]", "", image) in named, f"{rel}: image: {image} is not in the role's defaults"
         assert runs, f"{ROLES}: no docker run found (did the guard go stale?)"
+
+    def test_the_role_guard_reads_the_image_position(self):
+        for run, image in (
+            ("docker run --rm --gpus all {{ gpu_check_image }} nvidia-smi --format=csv", "gpu_check_image"),
+            ("docker run ubuntu:24.04 true", "ubuntu:24.04"),
+            ("docker run -d --name x -e A={{ a | quote }} ubuntu:24.04 {{ uv_image }}", "ubuntu:24.04"),
+            ('docker run --rm -e T="a @ b" -v {{ d }}:/seed {{ uv_image }} bash /seed/x.sh', "uv_image"),
+            ("docker run -d ghcr.io/x/{{ name }}:{{ tag }}", "ghcr.io/x/name:tag"),
+        ):
+            assert run_image(run) == image, run
 
     def test_mirrored_images_are_pinned_to_the_manifest(self):
         pins = manifest()
