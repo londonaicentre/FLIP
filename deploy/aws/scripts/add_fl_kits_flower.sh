@@ -37,7 +37,8 @@
 #   - never uses `upload-creds-to-s3` (`aws s3 sync --delete` over the whole net)
 #   - a slot's private key is uploaded only once the SuperLink has registered its public
 #     key (the task's exit code AND its log), so a slot is never claimable before its
-#     SuperNode is admitted
+#     SuperNode is admitted. The fl-api not taking the node → trust mappings does not hold
+#     a key back (the SuperLink admits it): the run releases the slots and then fails
 #   - a name is recorded before its key is minted, so it is never reused under this kit
 #     date: not after a failed run, and not after its key was deleted from S3 to withdraw
 #     it (the record is per kit date, so a new kit date starts from its own keys alone)
@@ -104,8 +105,8 @@ die() {
 # Run one of the hub's one-shot task definitions to completion, in the subnets and
 # security groups of a live service, as the Terraform apply does. The task's own
 # container, by name: describe-tasks also lists the GuardDuty sidecar (FLIP#1447).
-run_one_shot() { # <task family> <container> <service whose network to use> [overrides JSON]
-    local family="$1" container="$2" service="$3" overrides="${4:-}"
+run_one_shot() { # <task family> <container> <service whose network to use> [overrides JSON] [exit code accepted beside 0]
+    local family="$1" container="$2" service="$3" overrides="${4:-}" accepted="${5:-0}"
     local subnets groups public_ip run_output task_arn failure describe_output exit_code stopped_reason
     # shellcheck disable=SC2016 # the backticks are JMESPath literals, not a command
     read -r subnets groups public_ip < <(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${service}" \
@@ -132,9 +133,10 @@ run_one_shot() { # <task family> <container> <service whose network to use> [ove
         --query "tasks[0].[containers[?name=='${container}'].exitCode | [0], stoppedReason]" --output text)" ||
         describe_output=""
     IFS=$'\t' read -r exit_code stopped_reason <<< "${describe_output}" || true
-    [[ "${exit_code:-}" == "0" ]] ||
+    [[ "${exit_code:-}" == "0" || "${exit_code:-}" == "${accepted}" ]] ||
         die "❌ The ${family} task ${TASK_ID} failed (exit code '${exit_code:-unknown}': ${stopped_reason:-no reason given})" \
             "   — see its log in ${REGISTER_LOG_GROUP}."
+    TASK_EXIT_CODE="${exit_code}"
 }
 
 # --- 1. Check the kit date, discover the net + compute the new slot names --------
@@ -270,9 +272,12 @@ run_one_shot efs-provision-certs provision-efs-certs "fl-server-${NET}" \
     "{\"containerOverrides\":[{\"name\":\"provision-efs-certs\",\"command\":[\"${sync_command}\"]}]}"
 
 # The registration task as Terraform defines it: it registers every key on EFS (the
-# ones already registered are skipped) and maps the node ids on the fl-api.
+# ones already registered are skipped) and maps the node ids on the fl-api. Exit code 3 is
+# register-supernode-keys.sh's "every key registered, but the fl-api did not take the
+# mappings" (FLIP#2047): the SuperLink admits the new keys, so they are still released
+# below (the log checks decide that, as for exit 0) and the run fails at the end instead.
 log "${NET}: registering the keys with the running SuperLink (flower-register-supernode-keys task)..."
-run_one_shot flower-register-supernode-keys register-supernode-keys "fl-api-${NET}"
+run_one_shot flower-register-supernode-keys register-supernode-keys "fl-api-${NET}" "" 3
 
 # The exit code of a one-off Fargate task has been seen to read 0 for a failed container,
 # so the private keys below also wait on the task's own account of what it registered.
@@ -312,6 +317,17 @@ for number in "${MINT_NUMBERS[@]}"; do
     # Done with this slot: drop it from the abort report.
     UPLOADED=("${UPLOADED[@]:1}")
 done
+
+# An explicit exit, not die(): nothing is half-uploaded, so the abort report does not apply.
+if [[ "${TASK_EXIT_CODE}" == "3" || "${register_log}" == *"ERROR: FL API at "* ]]; then
+    echo "" >&2
+    echo "❌ ${MINT_NAMES[*]} is registered with the SuperLink and claimable, but the fl-api did not take" >&2
+    echo "   the node → trust name mappings (task ${TASK_ID}, log in ${REGISTER_LOG_GROUP}), so trusts" >&2
+    echo "   show as disconnected until it does. No public key is left to delete and no slot to mint" >&2
+    echo "   again. Check the fl-api is running with the FL_API_KEY the task holds, then run the" >&2
+    echo "   registration alone: terraform taint 'null_resource.flower_register_supernode_keys[0]' and apply." >&2
+    exit 1
+fi
 
 echo ""
 log "Minted ${MINT_NAMES[*]}: claimable at the next trust registration — no Terraform apply, no restart."

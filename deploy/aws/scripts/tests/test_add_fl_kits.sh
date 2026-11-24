@@ -460,6 +460,7 @@ if [[ "$1" == "logs" && "$2" == "get-log-events" ]]; then
         [[ -f "${fx}/no-ok" ]] || printf '    OK: %s node_id=1\t' "$n"
     done < "${fx}/efs"
     [[ -f "${fx}/no-success" ]] || printf 'All SuperNode keys registered successfully.'
+    [[ -f "${fx}/mapping-error" ]] && printf '\tERROR: FL API at http://fl-api did not take the mapping for: Trust_3'
     echo
     exit 0
 fi
@@ -587,6 +588,24 @@ check_calls "the private key never reached S3" \
 upload supernode_credentials_3.pub
 ${SYNC_TASK}
 ${REGISTER_TASK}"
+
+# The task registered every key but the fl-api did not take the node → trust mappings (exit
+# code 3, FLIP#2047): the SuperLink admits the new key, so its private key is still released,
+# and the run then fails saying what is left to redo. Nothing is to be deleted or minted again.
+for mapping_failure in "register.exit=3" "mapping-error=1"; do
+    YES_MODE=1
+    FLOWER_FIXTURES=("${mapping_failure}")
+    run_flower_case "flower: a mapping-only failure still releases the slot, then fails (${mapping_failure}, N=1)" 1 "net-1" "${PAIRS_1_2}"
+    check_contains "says the mappings are missing" 1 "Trust_3 is registered with the SuperLink and claimable, but the fl-api did not take"
+    check_contains "says how to redo the mapping alone" 1 "terraform taint 'null_resource.flower_register_supernode_keys[0]'"
+    check_contains "the abort advice for an orphan key is not given" 1 "No public key is left to delete"
+    check_calls "the private key reached S3" \
+"record Trust_1 Trust_2 Trust_3 
+upload supernode_credentials_3.pub
+${SYNC_TASK}
+${REGISTER_TASK}
+upload supernode_credentials_3"
+done
 
 # Exit code 0 is not enough (Fargate has reported it for a failed one-off container):
 # the task's log must say every key was registered.

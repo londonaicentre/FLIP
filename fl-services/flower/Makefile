@@ -114,8 +114,13 @@ _ensure-dev-dirs:
 up: _ensure-dev-dirs
 	$(DEV_COMPOSE) -p flwr up --remove-orphans
 
-# Standalone SECURE (TLS + SuperNode auth) stack. Needs `make provision` first.
+# Standalone SECURE (TLS + SuperNode auth) stack. Needs `make provision` first, and FL_API_KEY:
+# the SuperNodes wait on the key-registration one-shot, which an fl-api with no key answers 401.
 up-secure: _ensure-dev-dirs
+	@if [ -z "$(FL_API_KEY)" ]; then \
+		echo "❌ FL_API_KEY is not set: no SuperNode would start. Pass FL_API_KEY=<any value>, or set it in $(MAIN_ENV_FILE)."; \
+		exit 1; \
+	fi
 	@if [ ! -f "$(REPO_ROOT)/fl-services/flower/provision/creds/net-$(NET_NUMBER)/certificates/ca.crt" ]; then \
 		echo "❌ Flower TLS certs (net-$(NET_NUMBER)) not found. Run 'make provision NET_NUMBER=$(NET_NUMBER)' first."; \
 		exit 1; \

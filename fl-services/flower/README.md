@@ -195,8 +195,13 @@ keys. This is the Flower analogue of claiming a participant slot. With `TRUST_NA
 names its own slot, `supernode_credentials_<N>.pub` being `Trust_<N>` (the ECS hub and the prod
 compose); the dev compose stacks pass `TRUST_NAMES`, paired with the keys by position.
 Where `FL_API_ADDRESS` is set the script then posts each node id → trust name pair to the fl-api, which
-keeps them in memory for `/check_client_status`; it exits non-zero when the fl-api does not answer or
-refuses a pair (a wrong `FL_API_KEY`), naming the trusts left unmapped.
+keeps them in memory for `/check_client_status`; it exits with code 3 when the fl-api does not answer
+within `FL_API_READY_ATTEMPTS` tries (default 30, two seconds apart; the SuperLink's wait is
+`SUPERLINK_READY_ATTEMPTS`, default 60) or refuses a pair (a wrong `FL_API_KEY`), naming the trusts left
+unmapped. Every key is registered by then, so `add-fl-kits` still releases the new slots and then fails,
+saying how to run the registration alone. One case stays a warning: keys the SuperLink already holds whose
+node ids cannot be matched to them by position are left as the fl-api has them, so after an fl-api restart
+in that state the one-shot exits 0 with those trusts unmapped.
 
 ### Adding SuperNode keys to a deployed hub
 
