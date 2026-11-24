@@ -52,7 +52,7 @@ def test_render_override_emits_port_only_egress_rule():
     out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
     assert "networkPolicies:" in out
     assert "allowedEgressPorts:" in out
-    # FL-server gRPC port present as a {port, protocol} entry...
+    # FL-server port present as a {port, protocol} entry...
     assert "- port: 8002" in out
     # ...and no resolved-/32 CIDR pinning remains.
     assert "allowedEgressCIDRsWithPorts" not in out

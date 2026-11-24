@@ -1392,7 +1392,7 @@ page is [Trust node on Kubernetes](../../../docs/source/troubleshooting/trust-no
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Check the fl-client container requests `nvidia.com/gpu` (`flClient.gpu.allocation: devicePlugin`) and the node lists it in its allocatable, or, with `allocation: runtime`, that `NVIDIA_VISIBLE_DEVICES=0` is set and the node's default runtime is `nvidia`. `CUDA_VISIBLE_DEVICES=0` is set in both modes by `flClient.gpu.enabled: true`.
 5. **Jobs never start ("waiting for resources")**: the FL server logs `sites without the requested resources: {'<slot>': {'num_of_gpus': 1}}`. The trust offers fewer GPUs than the job asks for: `grep num_of_gpus` in the client's `local/resources.json` shows 0 while `flClient.gpu.enabled` is false. Enable the GPU, or use job pods (`flClient.nvflare.jobPods`) on a GPU pool.
-6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable endpoint and root certificates are in the kit.
 7. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic

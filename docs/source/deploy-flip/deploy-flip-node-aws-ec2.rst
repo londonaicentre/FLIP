@@ -56,7 +56,7 @@ Dashed boxes are optional: the own-VPC network mode, the SSM endpoints, the stop
    :alt: On the node: the trust stack under Docker Compose (trust-api, the FL client, imaging-api,
          data-access-api, the OMOP database and Orthanc), XNAT as a swarm stack (xnat-web and its database), and
          the observability stack (Alloy, Loki, Grafana). trust-api polls the hub over HTTPS, the FL client
-         connects to the hub's FL endpoint over mutual-TLS gRPC, and the host pulls images from GHCR and the
+         connects to the hub's FL endpoint over mutual TLS, and the host pulls images from GHCR and the
          seed data from Hugging Face.
 
    The services on the host, and what each connects out to.

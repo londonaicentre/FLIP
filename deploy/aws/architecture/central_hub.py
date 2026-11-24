@@ -296,8 +296,8 @@ def _draw_network(drawn: _Drawn) -> None:
     edge_cloudfront >> Edge(label="/api/*") >> relay_nlb
     trust_api >> Edge(label="poll tasks, heartbeat\nTRUST_API_KEY", style="dashed") >> edge_cloudfront
 
-    # FL: mTLS gRPC passes through both NLBs untouched to the FL server.
-    fl_client >> Edge(label="mTLS gRPC :8002") >> edge_nlb
+    # FL: mutual TLS passes through both NLBs untouched to the FL server.
+    fl_client >> Edge(label="mTLS :8002") >> edge_nlb
     relay_nlb >> firewall
     edge_nlb >> firewall
     firewall >> tgw >> Edge(label=":443 web · :8002 FL") >> internal_nlb

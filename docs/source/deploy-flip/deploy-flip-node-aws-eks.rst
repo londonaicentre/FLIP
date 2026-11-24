@@ -48,7 +48,7 @@ only when the root creates its own network.
          flip-trust: trust-api, the FL client, imaging-api, data-access-api, the OMOP database, Orthanc, XNAT
          (xnat-web and its database), the observability stack, the seed job, the FL kit Secret, the
          ReadWriteOnce volume claims and the NetworkPolicies. trust-api polls the hub over HTTPS, the FL client
-         connects to the hub's FL endpoint over mutual-TLS gRPC, the nodes pull images from GHCR and the seed
+         connects to the hub's FL endpoint over mutual TLS, the nodes pull images from GHCR and the seed
          job fetches the seed data from Hugging Face.
 
    The ``flip-trust`` chart on the cluster, and what each part connects out to.

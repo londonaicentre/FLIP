@@ -276,7 +276,7 @@ Install it as shown in [Direct usage](#onpremyml) (from `deploy/aws/`, where `uv
 The host/network firewall must allow outbound to **two separate Central Hub hosts** (different load balancers — both must be allowlisted):
 
 - **`app.flip.aicentre.co.uk`** — the edge CloudFront (HTTPS API, port 443).
-- **`fl.app.flip.aicentre.co.uk`** — the edge NLB (FL gRPC, default port 8002).
+- **`fl.app.flip.aicentre.co.uk`** — the edge NLB (FL traffic over TLS, default port 8002).
 
 ### Dynamic Public IP
 
@@ -287,7 +287,7 @@ The hub keeps no per-trust allowlist, so a changed public IP (common with reside
 | Symptom | Check |
 | --- | --- |
 | Trust not polling hub | Trust stack running? (`sudo docker ps` on trust host). Check trust-api logs for polling errors. |
-| `Connection timed out` (FL) or other outbound failures | Host/router firewall must allow outbound HTTPS (443) and gRPC (8002) to the two hosts in [Port Forwarding (NAT)](#port-forwarding-nat) |
+| `Connection timed out` (FL) or other outbound failures | Host/router firewall must allow outbound HTTPS (443) and the FL port (8002) to the two hosts in [Port Forwarding (NAT)](#port-forwarding-nat) |
 | Ansible `Permission denied` | SSH key correct? User has sudo? `ANSIBLE_BECOME_PASS` set for local mode? |
 
 ## Related Documentation
