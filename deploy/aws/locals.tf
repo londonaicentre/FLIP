@@ -129,7 +129,7 @@ locals {
       # Pin boto3 to the regional S3 endpoint: the legacy global endpoint's
       # ~24h DNS lag on freshly created non-us-east-1 buckets caused the
       # FLIP#24 500s. Same rationale as the matching block in
-      # deploy/compose.prod.yml; was compose-only until #566.
+      # deploy/compose/compose.prod.yml; was compose-only until #566.
       AWS_ENDPOINT_URL_S3       = "https://${local.s3_regional_endpoint_host}"
       AWS_COGNITO_USER_POOL_ID  = module.cognito.user_pool_id
       AWS_COGNITO_APP_CLIENT_ID = module.cognito.app_client_id

@@ -38,7 +38,7 @@ services:
   # flip-ui is NOT deployed as a container in stag/prod — it's served as a
   # static bundle from S3 via CloudFront (see deploy/aws/cloudfront.tf
   # and deploy/aws/Makefile's `deploy-ui` target). Dev still runs the
-  # Vite container (deploy/compose.development.yml).
+  # Vite container (deploy/compose/compose.development.yml).
 
   flip-api:
     image: ghcr.io/londonaicentre/flip-api:${DOCKER_TAG}

@@ -67,7 +67,7 @@ build:
 # FLARE writes every private key 0600. The FL server and clients run as the host uid in
 # dev and read theirs as owner, but the FL API runs as the image's user, so its admin key
 # is opened to the provisioning user's group and the container joins that group (group_add
-# in deploy/compose.development.nvflare.yml) — the 640 + group_add Flower's dev SuperNodes
+# in deploy/compose/compose.development.nvflare.yml) — the 640 + group_add Flower's dev SuperNodes
 # use (FLIP#1384). The root `make up` checks the key still matches.
 FL_API_ADMIN_KEY = $(DEV_WORKSPACE_DIR)/net-$(NET_NUMBER)/services/flip-fl-api-net-$(NET_NUMBER)/startup/client.key
 provision:

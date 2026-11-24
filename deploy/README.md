@@ -31,7 +31,7 @@ they are filed by two different rules:
 
 | I want to… | Go to |
 | ---------- | ----- |
-| Run/change the **Central Hub** container stack | `deploy/compose.*.yml` |
+| Run/change the **Central Hub** container stack | `deploy/compose/compose.*.yml` |
 | Run/change the **trust** container stack | [`trust/deploy/`](../trust/deploy/README.md) |
 | Run/change the **XNAT** swarm stack | `trust/xnat/docker-compose-stack*.yml` |
 | Build/populate the mock **OMOP** database | `trust/omop-db/compose.yml` |
@@ -122,7 +122,7 @@ SMS MFA is intentionally disabled — it would introduce an SNS dependency and r
 
 The MFA gate is controlled by `flip-api`'s `ENFORCE_MFA` setting. The Settings default is `true` — when active, `verify_token` returns 403 for any signed-in user without an active TOTP and the UI's router guard redirects them through enrolment.
 
-The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.prod.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.prod` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
+The dev override lives in `deploy/compose/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose/compose.prod.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.prod` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
 
 Only `false`, `0`, `no` or `off` (trimmed, any case) turn the gate off. `true`, `1`, `yes`, `on`, empty and unset keep it on, and so does any other value — a typo fails closed, with a warning naming the value in the flip-api log.
 

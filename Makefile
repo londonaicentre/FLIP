@@ -70,8 +70,8 @@ export DOCKER_GID := $(shell id -g)
 UID ?= $(shell id -u)
 export UID
 
-COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
-FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
+COMMON_COMPOSE_FILE := deploy/compose/compose.$(__DCKR_SUFFIX).yml
+FL_BACKEND_COMPOSE_FILE := deploy/compose/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
 # Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (from .env, or overridden at the CLI) to
 # absolute paths against the repo root — see abs_or_relative_to in deploy/fl_backend.mk.
@@ -100,13 +100,15 @@ endif
 export OBJECT_STORE_DIR
 
 export COMPOSE_BAKE=true
-DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+# --project-directory deploy: the compose files' relative paths, their .env lookup and the working_dir label
+# _check-compose-project-owner compares all stay at deploy/, where the files lived before deploy/compose/ (FLIP#1438).
+DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) --project-directory deploy -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 # FL_API_KEY is exported at parse time, before `up`'s generator can rewrite it,
 # so `up`/`up-no-trust` re-read it from KEY_ENV_FILE when compose runs (FLIP#1501).
 KEY_ENV_FILE = $(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE)))
 read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
 FRESH_FL_API_KEY = FL_API_KEY="$(call read_key_env,FL_API_KEY)"
-DEBUG_OVERRIDE_COMPOSE_COMMAND=$(DOCKER_COMMAND) -f deploy/compose.development.debug.override.yml
+DEBUG_OVERRIDE_COMPOSE_COMMAND=$(DOCKER_COMMAND) -f deploy/compose/compose.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
 #

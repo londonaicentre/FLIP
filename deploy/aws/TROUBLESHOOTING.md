@@ -199,7 +199,7 @@ sed -n '/^deploy-ui:/,/^$/p' deploy/aws/Makefile | grep -c '_AWS_ENV'
 
 **Symptom**: All authenticated API calls return `401 Unauthorized` or `403 Forbidden`. The UI shows "Something went wrong" but the login works.
 
-**Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The prod compose file (`deploy/compose.prod.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
+**Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The prod compose file (`deploy/compose/compose.prod.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
 
 **Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` (inheriting the secure default). To temporarily disable for testing, set in `.env.stag`:
 
@@ -251,7 +251,7 @@ UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id=
 
 **Symptom**: All authenticated routes return 401/403 despite `ENFORCE_MFA=false` in `.env.stag`.
 
-**Root cause**: The prod compose file (`deploy/compose.prod.yml`) did not include `ENFORCE_MFA` in the flip-api environment block. The Pydantic Settings default (`true`) was never overridden.
+**Root cause**: The prod compose file (`deploy/compose/compose.prod.yml`) did not include `ENFORCE_MFA` in the flip-api environment block. The Pydantic Settings default (`true`) was never overridden.
 
 **Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden. To disable MFA in staging, add `ENFORCE_MFA=false` to `.env.stag` and redeploy. Note: the default in compose is `true` (secure by default) — you must explicitly set `false` to disable.
 

@@ -331,5 +331,5 @@ make -C fl-services/flower up \
 (Run from the repo root; `data/` is gitignored. `up-secure` takes the same two variables.)
 
 The central-hub multi-net Flower topology is the separate
-[`deploy/compose.development.flower.yml`](../../deploy/compose.development.flower.yml), driven by the
+[`deploy/compose/compose.development.flower.yml`](../../deploy/compose/compose.development.flower.yml), driven by the
 root `make up FL_BACKEND=flower`.

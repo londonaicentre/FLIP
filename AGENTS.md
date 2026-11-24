@@ -302,8 +302,8 @@ docker swarm init                          # Initialize Swarm mode
 docker network rm deploy_trust-network-1   # Remove trust network
 docker network rm deploy_trust-network-2   # Remove trust network
 make create-networks                       # Create all networks
-docker compose -f deploy/compose.development.yml exec <service> <command>
-docker compose -f deploy/compose.development.yml run --rm <service>
+docker compose --project-directory deploy -f deploy/compose/compose.development.yml exec <service> <command>
+docker compose --project-directory deploy -f deploy/compose/compose.development.yml run --rm <service>
 ```
 
 ### Trust Registration & Key Setup

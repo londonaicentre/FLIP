@@ -14,7 +14,7 @@
 # build-fl here by FL_BACKEND; the run/provision/
 # submit targets are invoked here directly (make -C fl-services/flower <target>), which
 # is where Flower FL deployments are tested. The central-hub multi-net topology is the
-# separate deploy/compose.development.flower.yml (driven by the root `make up`).
+# separate deploy/compose/compose.development.flower.yml (driven by the root `make up`).
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 

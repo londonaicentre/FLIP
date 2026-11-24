@@ -279,7 +279,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Group | Required development values |
 | --- | --- |
 | AWS region | `AWS_REGION` — what SigV4 signs with; the dev object store accepts any. `AWS_PROFILE` stays commented out unless you run an AWS-backed target (below) |
-| Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
+| Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
 | FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and kit staging onto an AWS node; leave it commented out for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
@@ -292,7 +292,7 @@ it pre-creates `jobs/`. flip-api and both fl-servers reach it through boto3's na
 static dev keys, and the fl-apis through the presigned bundle URLs flip-api signs for it, so model uploads and
 scanning, FL app bundles, training and results download run the same code as production, against a local store. `ls object-store/<bucket>/` shows the key tree
 (each object in RustFS's own on-disk format); `http://localhost:9001` browses it (sign in with the two keys from
-`deploy/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
+`deploy/compose/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
 `OBJECT_STORE_SECRET_KEY` are set); `make clean-object-store` empties it; a second stack moves `OBJECT_STORE_PORT` and
 `OBJECT_STORE_CONSOLE_PORT` (and `OBJECT_STORE_DIR` if it must not share the directory). One detail is worth knowing: presigned URLs are signed for the host they will be
 opened from — the browser's for `localhost:9000` (`S3_PUBLIC_ENDPOINT_URL`), the fl-api's for `object-store:9000`,
@@ -1142,7 +1142,7 @@ A candidate proves the **push** path. The real release goes through the **dispat
 To extend the platform with a new service, add a definition to the appropriate Docker Compose file:
 
 ```yml
-# deploy/compose.development.yml
+# deploy/compose/compose.development.yml
 services:
   new-service:
     build:
@@ -1175,7 +1175,7 @@ Optionally add Makefile shortcuts at the repository root:
 
 ```makefile
 new-service:
-    docker compose -f deploy/compose.development.yml up -d new-service
+    docker compose --project-directory deploy -f deploy/compose/compose.development.yml up -d new-service
 ```
 
 ## Creating test data for manual testing

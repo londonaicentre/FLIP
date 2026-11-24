@@ -53,7 +53,7 @@ def hub_only_networks() -> set[str]:
     names: dict[str, str] = {}
     section = entry = None
     in_networks = False
-    for line in (REPO / "deploy" / "compose.development.yml").read_text().splitlines():
+    for line in (REPO / "deploy" / "compose" / "compose.development.yml").read_text().splitlines():
         if top := re.match(r"^([\w-]+):", line):
             section, entry = top[1], None
         elif key := re.match(r"^  ([\w-]+):\s*$", line):
@@ -89,7 +89,7 @@ class BuildTrue(unittest.TestCase):
 
     def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
         services = {
-            **repo_built_services("deploy/compose.development.yml"),
+            **repo_built_services("deploy/compose/compose.development.yml"),
             **repo_built_services("trust/deploy/compose/compose_trust.development.yml"),
         }
         assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()

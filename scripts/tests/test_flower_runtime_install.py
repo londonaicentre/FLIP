@@ -71,8 +71,8 @@ FLOWER_COMPOSE_GLOBS = (
 # The composes known to run a Flower SuperLink today. Each must still yield at least one, or the
 # check below would pass by asserting over nothing after a rename.
 SUPERLINK_COMPOSES = (
-    "deploy/compose.development.flower.yml",
-    "deploy/compose.prod.flower.yml",
+    "deploy/compose/compose.development.flower.yml",
+    "deploy/compose/compose.prod.flower.yml",
     "fl-services/flower/compose.dev.yml",
     "fl-services/flower/compose.secure.yml",
 )

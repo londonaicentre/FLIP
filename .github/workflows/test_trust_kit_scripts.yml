@@ -42,7 +42,7 @@ on:
       # is where those gates are checked.
       - ".github/workflows/test_*.yml"
       - ".github/workflows/pr_paths_changed.yml"
-      - "deploy/compose*.yml"
+      - "deploy/compose/*.yml"
       - "trust/deploy/compose/*.yml"
       - "fl-services/nvflare/compose.dev.yml"
       # test_flower_runtime_install.py asserts on the Flower composes, the Helm chart and the FL

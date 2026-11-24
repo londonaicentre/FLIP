@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-# Local development image — used by deploy/compose.development.yml with a bind
+# Local development image — used by deploy/compose/compose.development.yml with a bind
 # mount of the repo into /app. Stag/prod do not run flip-ui as a container;
 # the UI is served as a static bundle from S3 + CloudFront (see
 # deploy/aws/cloudfront.tf and `make deploy-ui`).

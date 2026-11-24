@@ -37,7 +37,7 @@ created or on infrastructure the site already has. Keep the two axes apart when 
 ## The Central Hub
 
 The Central Hub has exactly one supported production target: AWS ECS Fargate. Hub-on-EC2 was deprecated in
-[#936](https://github.com/londonaicentre/FLIP/issues/936). `deploy/compose.prod.yml` is a local prod-image
+[#936](https://github.com/londonaicentre/FLIP/issues/936). `deploy/compose/compose.prod.yml` is a local prod-image
 harness, not a deploy target. With a single target there is no provider abstraction for the hub: its Terraform
 is simply the `AWS/` root.
 

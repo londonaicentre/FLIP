@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y gettext-base \
 # the full rationale; in short, this identity used to be the building developer's and
 # the dev composes reused it as runtime config, so published images and local ones
 # behaved differently. Whether the runtime uid is re-pointed depends on what the
-# compose bind-mounts: the deploy composes (deploy/compose.development.nvflare.yml)
+# compose bind-mounts: the deploy composes (deploy/compose/compose.development.nvflare.yml)
 # give this image only the kit's read-only admin/local and admin/startup, so they
 # set no `user:` and it keeps running as `flip`; the standalone harness
 # (fl-services/nvflare/compose.dev.yml) also mounts the host-provisioned
