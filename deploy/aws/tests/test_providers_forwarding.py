@@ -66,4 +66,4 @@ def test_forwards_command_line_variables() -> None:
 def test_a_failing_goal_fails_the_forward() -> None:
     result = _make(STUB_DIR, "no-such-target-1438")
     assert result.returncode != 0
-    assert "[_forward] Error" in result.stderr
+    assert "_forward] Error" in result.stderr  # make 3.81: [_forward]; make 4: [GNUmakefile:24: _forward]
