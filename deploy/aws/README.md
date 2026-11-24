@@ -15,7 +15,7 @@
 
 > **Deploys: Central Hub only.** One Terraform root, one state file, and no trust (FLIP#1438): a trust on AWS is
 > its own root under [`trust/deploy/terraform/aws/`](../../trust/deploy/terraform/aws/). See
-> [`../README.md`](../README.md) for how a trust node's deployment shape relates to the infrastructure it runs on.
+> [`../README.md`](../README.md#where-things-live) for how a trust node's deployment shape relates to the infrastructure it runs on.
 
 Terraform/OpenTofu and Ansible Infrastructure as Code to deploy the FLIP application stack to AWS.
 

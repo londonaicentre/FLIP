@@ -52,7 +52,7 @@ SUPERLINK_ENV = "FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION"
 # compose `command:` and Helm `args:` is appended to. Globs rather than a list, so a new compose,
 # chart template or image is covered without anyone remembering to add it here.
 FLAG_SCAN_GLOBS = (
-    "deploy/compose*.yml",
+    "deploy/compose/compose*.yml",
     "trust/deploy/compose/*.yml",
     "fl-services/flower/compose*.yml",
     "trust/deploy/helm/templates/*",
@@ -64,7 +64,7 @@ FLAG_SCAN_GLOBS = (
 # The FLARE composes are left out because they name their own server through the same
 # DOCKER_FL_SERVER_NAME variable.
 FLOWER_COMPOSE_GLOBS = (
-    "deploy/compose*flower*.yml",
+    "deploy/compose/compose*flower*.yml",
     "fl-services/flower/compose*.yml",
 )
 
