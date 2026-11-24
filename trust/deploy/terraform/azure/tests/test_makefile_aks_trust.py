@@ -31,10 +31,39 @@ HELM = f"make -C {REPO_ROOT}/trust/deploy/helm KUBE_CONTEXT=flipaz-aks NAMESPACE
 
 def test_deploy_takes_the_overlays_join_recorded(tmp_path):
     """A redeploy that passed the default overlays would drop the ones join was given."""
-    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag")
+    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", KIT_FILE=_kit_file(tmp_path))
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == f"{HELM} deploy-trust-k8s KIT=Trust_3 HUB=stag"
+
+
+def _kit_file(tmp_path, text: str = "K8S_PLATFORM_VALUES=values-aks.yaml values-small-node.yaml\n") -> str:
+    path = tmp_path / ".env.Trust_3.stag"
+    path.write_text(text)
+    return str(path)
+
+
+@pytest.mark.parametrize("typed", [{"MOCK_PACS": "1"}, {"AKS_VALUES": "values-aks.yaml mine.yaml"}])
+def test_deploy_refuses_an_overlay_it_would_ignore(tmp_path, typed):
+    """The kit's K8S_PLATFORM_VALUES is the only source: an argument that changed nothing would exit 0."""
+    result, _ = run_make(
+        tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", KIT_FILE=_kit_file(tmp_path), **typed
+    )
+
+    assert result.returncode != 0
+    assert "K8S_PLATFORM_VALUES in the kit file" in result.stdout
+    assert "deploy-trust-k8s" not in result.stdout
+
+
+@pytest.mark.parametrize("text", ["", "K8S_PLATFORM_VALUES=\n", None])
+def test_deploy_refuses_a_kit_that_records_no_overlays(tmp_path, text):
+    """Without values-aks.yaml the chart moves PGDATA back to the volume root and the FL kit back to the node."""
+    kit_file = str(tmp_path / "absent") if text is None else _kit_file(tmp_path, text)
+    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", KIT_FILE=kit_file)
+
+    assert result.returncode != 0
+    assert "records no K8S_PLATFORM_VALUES" in result.stdout
+    assert "deploy-trust-k8s" not in result.stdout
 
 
 def _recorded_overlays(tmp_path, **variables: str) -> list[str]:
@@ -88,7 +117,8 @@ def test_join_installs_the_kit_then_its_secrets_then_deploys(tmp_path):
         "make _fl-kit",
         "s/^FL_KIT_SLOT=//p",
         f'{HELM} kit-secret KIT_SRC="{AZURE_DIR}/aks/{kit_dir}/fl-kit-secret"',
-        "make deploy KIT=Trust_3 HUB=stag",
+        "grep -q '^K8S_PLATFORM_VALUES=.'",
+        f"{HELM} deploy-trust-k8s KIT=Trust_3 HUB=stag",
     ]
     positions = [out.find(s) for s in steps]
     assert -1 not in positions, (steps[positions.index(-1)], out)
