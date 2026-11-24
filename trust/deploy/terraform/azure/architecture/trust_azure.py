@@ -292,7 +292,7 @@ def _draw_vm(drawn: _Drawn) -> None:
 
     # Outbound only, through the NAT gateway (or the site's routes on a site subnet).
     trust_api >> Edge(label="HTTPS :443\nTRUST_API_KEY") >> nat
-    fl_client >> Edge(label="FL mTLS\n:8002 / :8003") >> nat
+    fl_client >> Edge(label="FL TLS\n:8002 / :8003") >> nat
     vm >> Edge(label="git, images,\nseed data :443") >> nat
     nat - Edge(style="dashed") - pip
     pip >> Edge(label="hub API :443\nFL :8002 / :8003") >> hub
@@ -341,7 +341,7 @@ def _draw_aks(drawn: _Drawn) -> None:
     identity - Edge(style="dotted") - api
 
     trust_api >> Edge(label="HTTPS :443\nTRUST_API_KEY") >> nat
-    fl_client >> Edge(label="FL mTLS\n:8002 / :8003") >> nat
+    fl_client >> Edge(label="FL TLS\n:8002 / :8003") >> nat
     nat - Edge(style="dashed", label="userAssignedNATGateway\n(or userDefinedRouting)") - pip
     pip >> Edge(label="hub API :443\nFL :8002 / :8003") >> hub
     pip >> Edge(label="image pulls :443") >> ghcr

@@ -48,7 +48,7 @@ only when the root creates its own network.
          flip-trust: trust-api, the FL client, imaging-api, data-access-api, the OMOP database, Orthanc, XNAT
          (xnat-web and its database), the observability stack, the seed job, the FL kit Secret, the
          ReadWriteOnce volume claims and the NetworkPolicies. trust-api polls the hub over HTTPS, the FL client
-         connects to the hub's FL endpoint over mutual TLS, the nodes pull images from GHCR and the seed
+         connects to the hub's FL endpoint over TLS, the nodes pull images from GHCR and the seed
          job fetches the seed data from Hugging Face.
 
    The ``flip-trust`` chart on the cluster, and what each part connects out to.
@@ -60,8 +60,8 @@ Network and security
 - **Nothing inbound.** The nodes sit in a private subnet with no public IP. Without ``SUBNET_IDS`` the
   root creates a VPC that leaves through its own NAT gateway, whose Elastic IP is destroyed with the
   stack. With ``SUBNET_IDS`` (two or more, in different zones) the cluster uses the site's subnets and
-  routes, and the root creates no network. The hub admits a trust by its API key and the kit's mTLS
-  certificates, never by IP, so no fixed address is needed.
+  routes, and the root creates no network. The hub admits a trust by its API key and the credentials
+  in its FL kit, never by IP, so no fixed address is needed.
 - **The API endpoint admits the operator only.** The public endpoint takes the address ``make plan``
   looks up (``OPERATOR_IP=`` overrides it) and refuses ``0.0.0.0/0``; the nodes reach the API server
   through the private endpoint. After your IP changes, plan and apply again.

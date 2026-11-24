@@ -305,7 +305,7 @@ def _draw_network(drawn: _Drawn) -> None:
     control_plane >> Edge(label="control-plane logs") >> logs
 
     # Outbound only: the nodes dial everything; nothing dials them.
-    nodes >> Edge(label="trust-api HTTPS :443\nFL mTLS :8002 / :8003\nimages, seed data :443") >> nat
+    nodes >> Edge(label="trust-api HTTPS :443\nFL TLS :8002 / :8003\nimages, seed data :443") >> nat
     nat >> Edge(style="dashed") >> igw
     igw >> Edge(label="hub API :443\nFL :8002 / :8003") >> hub
     igw >> Edge(label=":443") >> ghcr
@@ -370,7 +370,7 @@ def _draw_workload(drawn: _Drawn) -> None:
     seed >> Edge(label="load") >> orthanc
 
     trust_api >> Edge(label="HTTPS :443 poll tasks, heartbeat\nTRUST_API_KEY") >> hub
-    fl_client >> Edge(label="FL mTLS\n:8002 prod / :8003 stag") >> hub
+    fl_client >> Edge(label="FL TLS\n:8002 prod / :8003 stag") >> hub
     nodes >> Edge(label="image pulls :443") >> ghcr
     seed >> Edge(label="seed data :443") >> hf
 

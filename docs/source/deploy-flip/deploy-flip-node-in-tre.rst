@@ -265,7 +265,7 @@ The two FL frameworks look different on the wire:
 
 An appliance that classifies traffic by port and protocol sees both as TLS on a non-default
 port. An appliance that understands only HTTP/1.1 can tell them apart only by decrypting the
-traffic, and decryption breaks mutual TLS on any port.
+traffic, and decryption breaks the FL connection on any port.
 
 Data
 ----

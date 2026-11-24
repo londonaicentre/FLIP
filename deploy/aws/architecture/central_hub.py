@@ -296,13 +296,13 @@ def _draw_network(drawn: _Drawn) -> None:
     edge_cloudfront >> Edge(label="/api/*") >> relay_nlb
     trust_api >> Edge(label="poll tasks, heartbeat\nTRUST_API_KEY", style="dashed") >> edge_cloudfront
 
-    # FL: mutual TLS passes through both NLBs untouched to the FL server.
-    fl_client >> Edge(label="mTLS :8002") >> edge_nlb
+    # FL: TLS passes through both NLBs untouched to the FL server.
+    fl_client >> Edge(label="TLS :8002") >> edge_nlb
     relay_nlb >> firewall
     edge_nlb >> firewall
     firewall >> tgw >> Edge(label=":443 web · :8002 FL") >> internal_nlb
     internal_nlb >> Edge(label=":443 → ecs-flip-api-lza") >> flip_api
-    internal_nlb >> Edge(label=":8002 → ecs-fl-server-lza\n(mTLS pass-through)") >> fl_server
+    internal_nlb >> Edge(label=":8002 → ecs-fl-server-lza\n(TLS pass-through)") >> fl_server
     zone - Edge(style="dotted", label="A → NLB IPs") - internal_nlb
     # Hub-internal control edges.
     fl_server >> Edge(label="logs, metrics, status\nper-job credential", style="dashed") >> flip_api
