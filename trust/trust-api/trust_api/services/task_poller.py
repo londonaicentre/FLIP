@@ -80,7 +80,13 @@ def _maybe_announce_identity(body: dict) -> None:
     if not trust_id or not trust_name:
         return  # not an identity-bearing response (e.g. an error body)
 
-    if EXPECTED_TRUST_ID and trust_id != EXPECTED_TRUST_ID:
+    if EXPECTED_TRUST_ID.startswith("<") and EXPECTED_TRUST_ID.endswith(">"):
+        # A kit registration has not filled yet (`<run-make-register-trust>`) names no trust.
+        logger.warning(
+            "EXPECTED_TRUST_ID is still the kit's placeholder %s: the wrong-host self-check is off.",
+            EXPECTED_TRUST_ID,
+        )
+    elif EXPECTED_TRUST_ID and trust_id != EXPECTED_TRUST_ID:
         # Loud, fatal: this host has been deployed with the wrong kit.
         logger.error(
             "Hub identifies this host as trust %r (%s); kit declares "
