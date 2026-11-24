@@ -412,10 +412,9 @@ restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-stor
 	$(MAKE) -C trust up-fl-clients
 	@echo "✅ FL services restarted successfully!"
 
-# Recreate the flip-api container alone, as restart-fl's step 2 does: flip-db, the FL services
-# and the trusts stay up. Not `make -C flip-api restart`, which names this project with the
-# common compose file only, so its --remove-orphans removes every FL overlay service, and
-# which takes flip-db down with flip-api.
+# Recreate flip-api alone, as restart-fl's step 2 does. Not `make -C flip-api restart`: it names
+# this project with the common compose file only, so its --remove-orphans removes every FL
+# overlay service, and it takes flip-db down too.
 restart-no-trust: _check-compose-project-owner
 	@echo "🔄 Recreating flip-api (DEBUG='$(DEBUG)')..."
 	${DOCKER_COMMAND} rm -fsv flip-api

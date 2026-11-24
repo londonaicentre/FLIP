@@ -253,17 +253,11 @@ class RestartNoTrustIsFlipApiAlone(unittest.TestCase):
 class DebugOffTakesWhatDebugTakes(unittest.TestCase):
     """``debug-off`` accepts the FL API under the name ``debug`` starts it by (FLIP#2047)."""
 
-    def compose_calls(self, target: str, backend: str) -> list[dict]:
+    def compose_calls(self, target: str, backend: str) -> list[str]:
+        """Each ``docker compose`` call the target really makes, as the stub docker prints it."""
         with tempfile.TemporaryDirectory() as tmp:
-            bin_dir = Path(tmp).resolve()
-            seen = bin_dir / "calls.jsonl"
-            docker = bin_dir / "docker"
-            docker.write_text(
-                f"#!{sys.executable}\nimport json, os, sys\n"
-                "if sys.argv[1:2] == ['compose']:\n"
-                f"    with open({str(seen)!r}, 'a') as calls:\n"
-                "        calls.write(json.dumps({'argv': sys.argv[1:], 'debug': os.environ.get('DEBUG')}) + '\\n')\n"
-            )
+            docker = Path(tmp).resolve() / "docker"
+            docker.write_text('#!/bin/sh\ncase "$1" in compose) echo "docker DEBUG=$DEBUG $*";; esac\n')
             docker.chmod(0o755)
             result = run_target(
                 target,
@@ -271,19 +265,19 @@ class DebugOffTakesWhatDebugTakes(unittest.TestCase):
                 f"FL_BACKEND={backend}",
                 subdir=".",
                 hub="",
-                env={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+                env={"PATH": f"{docker.parent}:{os.environ['PATH']}"},
             )
             assert result.returncode == 0, result.stdout + result.stderr
-            return [json.loads(line) for line in seen.read_text().splitlines()]
+            return [line for line in result.stdout.splitlines() if line.startswith("docker ")]
 
     def test_the_fl_api_goes_into_debug_mode_and_out_of_it(self):
         for backend in ("flower", "nvflare"):
             for target, debug in (("debug", "true"), ("debug-off", "false")):
                 with self.subTest(backend=backend, target=target):
                     (call,) = self.compose_calls(target, backend)
-                    assert call["debug"] == debug, call
-                    assert f"deploy/compose/compose.development.{backend}.yml" in call["argv"], call
-                    assert call["argv"][-4:] == ["up", "--remove-orphans", "-d", "fl-api-net-1"], call
+                    assert call.startswith(f"docker DEBUG={debug} compose "), call
+                    assert f" -f deploy/compose/compose.development.{backend}.yml " in call, call
+                    assert call.endswith(" up --remove-orphans -d fl-api-net-1"), call
 
 
 class HubScratchVolumes(unittest.TestCase):
