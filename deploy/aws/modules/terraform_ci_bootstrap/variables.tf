@@ -159,9 +159,6 @@ variable "managed_role_names" {
     "ec2-role",
     # main.tf, flip_db enhanced monitoring (RDS.6, FLIP#1796)
     "flip-rds-monitoring-role",
-    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
-    # allowed; remove once stag and prod have applied that change.
-    "trust-ec2-role",
   ]
 }
 
@@ -171,9 +168,6 @@ variable "managed_instance_profile_names" {
   type        = list(string)
   default = [
     "ec2-role-profile",
-    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
-    # allowed; remove once stag and prod have applied that change.
-    "trust-ec2-role-profile",
   ]
 }
 
@@ -187,7 +181,6 @@ variable "attachable_managed_policies" {
     "service-role/AmazonECSTaskExecutionRolePolicy", # iam_ecs.tf, execution role
     "AmazonSSMManagedInstanceCore",                  # main.tf, the bastion role
     "service-role/AmazonRDSEnhancedMonitoringRole",  # main.tf, flip_db enhanced monitoring (RDS.6, FLIP#1796)
-    "CloudWatchAgentServerPolicy",                   # retiring with trust-ec2-role (FLIP#1438)
   ]
 }
 

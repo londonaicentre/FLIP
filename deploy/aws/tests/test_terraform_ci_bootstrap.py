@@ -733,12 +733,6 @@ def test_the_service_allowlist_is_exactly_what_the_flip_root_uses() -> None:
     )
 
 
-# Granted only so the apply that deletes them is allowed (FLIP#1438). Drop with the bootstrap entries
-# once stag and prod have applied the removal.
-RETIRING_ROLES = {"trust-ec2-role"}
-RETIRING_PROFILES = {"trust-ec2-role-profile"}
-RETIRING_POLICIES = {"CloudWatchAgentServerPolicy"}
-
 RDS_MONITORING_POLICY = "service-role/AmazonRDSEnhancedMonitoringRole"
 
 
@@ -770,8 +764,8 @@ def test_the_named_roles_and_profiles_are_the_ones_the_flip_root_declares() -> N
                 roles.add(arguments["role_name"].strip('"'))
             elif monitoring_role := _rds_monitoring_role(header, arguments):
                 roles.add(monitoring_role)
-    assert set(_string_list_default("managed_role_names")) == roles | RETIRING_ROLES
-    assert set(_string_list_default("managed_instance_profile_names")) == profiles | RETIRING_PROFILES
+    assert set(_string_list_default("managed_role_names")) == roles
+    assert set(_string_list_default("managed_instance_profile_names")) == profiles
 
 
 def test_the_attachable_policies_are_the_ones_the_flip_root_attaches() -> None:
@@ -782,7 +776,7 @@ def test_the_attachable_policies_are_the_ones_the_flip_root_attaches() -> None:
         for header, body in _parse(source)[1]:
             if _rds_monitoring_role(header, _arguments(body)):
                 policies.add(RDS_MONITORING_POLICY)
-    assert set(_string_list_default("attachable_managed_policies")) == policies | RETIRING_POLICIES
+    assert set(_string_list_default("attachable_managed_policies")) == policies
 
 
 def test_the_plan_role_cannot_read_the_accounts_data() -> None:
