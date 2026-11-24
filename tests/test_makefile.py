@@ -1064,6 +1064,16 @@ class E2eSmokeSpleenBackend(unittest.TestCase):
                 for rel in (model_dir, query):
                     assert (REPO / "flip-api" / rel).exists(), (target, backend, rel)
 
+    def test_the_inference_smoke_uploads_the_flare_app_with_the_spleen_cohort_and_no_enrichment(self):
+        out = dry_run("e2e_smoke_totalsegmentator_inference", "FL_BACKEND=nvflare", subdir="flip-api")
+        model_dir = re.search(r'--model-files-dir "([^"]+)"', out)[1]
+        query = re.search(r'--query-file "([^"]+)"', out)[1]
+        assert model_dir.endswith("/fl-tutorials/nvflare/image_inference/totalsegmentator_inference/app_files"), out
+        assert query.endswith("/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql"), out
+        assert "upload_spleen_labels_to_xnat.py" not in out
+        for rel in (model_dir, query):
+            assert (REPO / "flip-api" / rel).exists(), rel
+
 
 HUB_MAKEFILES = ("Makefile", "deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk")
 

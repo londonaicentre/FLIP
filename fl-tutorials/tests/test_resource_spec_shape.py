@@ -54,6 +54,7 @@ def test_the_arkplus_tutorials_declare_their_gpu_need():
         "arkplus_fine_tuning": 1,
         "arkplus_baseline_classification_evaluation": 1,
         "arkplus_multimodel_classification_evaluation": 1,
+        "totalsegmentator_inference": 1,
     }
 
 

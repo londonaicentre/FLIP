@@ -20,12 +20,12 @@ the model-file contract, run an application locally, or provide the inputs to th
 
 | Backend | Examples |
 | --- | --- |
-| [`nvflare/`](nvflare/) | Chest X-ray classification, Ark+ fine-tuning and the two Ark+ evaluations (baseline and multi-model), spleen segmentation and evaluation, [image generation](nvflare/image_generation/README.md) (brain MRI latent diffusion in two jobs, chest X-ray diffusion), EHR risk prediction (tabular/OMOP-only), biomarker causal discovery (`biomarker_causal_discovery`: federated bootstrapped FCI, tabular/OMOP-only) |
+| [`nvflare/`](nvflare/) | Chest X-ray classification, Ark+ fine-tuning and the two Ark+ evaluations (baseline and multi-model), spleen segmentation and evaluation, TotalSegmentator inference on CT, [image generation](nvflare/image_generation/README.md) (brain MRI latent diffusion in two jobs, chest X-ray diffusion), EHR risk prediction (tabular/OMOP-only), biomarker causal discovery (`biomarker_causal_discovery`: federated bootstrapped FCI, tabular/OMOP-only) |
 | [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, prostate zonal segmentation (PI-CAI, nnU-Net-planned), EHR risk prediction (tabular/OMOP-only), biomarker causal discovery (`biomarker_causal_discovery`: federated bootstrapped FCI, tabular/OMOP-only) |
 
 Both trees are laid out as `fl-tutorials/<backend>/<category>/<name>/` (#1500). A tutorial's two copies sit at the
 same relative path. The category names the task family (`image_classification`, `image_segmentation`,
-`image_evaluation`, `image_generation`, `tabular_classification`, …), and every `make` target addresses a tutorial by
+`image_evaluation`, `image_inference`, `image_generation`, `tabular_classification`, …), and every `make` target addresses a tutorial by
 `<name>` alone.
 
 `fl-tutorials/Makefile` targets FLARE by default (`FL_BACKEND=nvflare`); select Flower with `FL_BACKEND=flower`.
@@ -55,6 +55,7 @@ Each example needs its data step first, in place of `download-xray-data` above:
 | --- | --- | --- |
 | Chest X-ray classification | both | `download-xray-data` |
 | Spleen segmentation and evaluation | both | `download-spleen-data` |
+| TotalSegmentator inference on CT | FLARE only | `download-spleen-data`, plus `make download-weights` in the tutorial directory |
 | EHR risk prediction (tabular/OMOP-only, no imaging; CPU is enough) | both | `download-synthea-data` |
 | Biomarker causal discovery (tabular/OMOP-only) | both | `convert-adni-cohort ADNI_DIR=<your IDA download>` |
 | Ark+ fine-tuning | FLARE only | `download-arkplus-finetuning-data`, plus the raw Ark+ checkpoint |

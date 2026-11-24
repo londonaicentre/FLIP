@@ -236,6 +236,14 @@ e2e_smoke_spleen_evaluation: QUERY_FILE := $(SPLEEN_QUERY_FILE)
 e2e_smoke_spleen_evaluation: ENRICHMENT_ARGS := $(SPLEEN_ENRICHMENT_ARGS)
 e2e_smoke_spleen_evaluation: e2e_smoke
 
+# TotalSegmentator inference on the spleen cohort's CTs: the same cohort query, no labels and so no
+# data-enrichment step, and no checkpoint to stage (the model is in the FLARE client image). FLARE
+# only: there is no Flower `inference` template.
+TOTALSEG_INFERENCE_NVFLARE_DIR := ../fl-tutorials/nvflare/image_inference/totalsegmentator_inference
+e2e_smoke_totalsegmentator_inference: MODEL_FILES_DIR := $(TOTALSEG_INFERENCE_NVFLARE_DIR)/app_files
+e2e_smoke_totalsegmentator_inference: QUERY_FILE := $(SPLEEN_NVFLARE_DIR)/query.sql
+e2e_smoke_totalsegmentator_inference: e2e_smoke
+
 # EHR risk-prediction (tabular-only) variant of e2e_smoke: the tutorial matching FL_BACKEND,
 # created with has_imaging=false so the hub skips the imaging stage and the smoke skips the
 # image-pull wait (FLIP#1071). TARGET_ARGS rather than EXTRA_ARGS so a command-line EXTRA_ARGS
