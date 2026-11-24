@@ -381,7 +381,11 @@ again and deliver the newer kit. A kit lost in transit is recovered the same way
 lost one, and the site never stopped working.
 
 ``TRUST_KEY_ROTATION_GRACE_DAYS`` is a flip-api setting with no Terraform passthrough, so a deployed hub always uses
-the 14-day default; only a local hub reads it from ``.env.<hub>``.
+the 14-day default; only a local development hub reads it from ``.env.development``. The same holds for the other
+flip-api settings the env example lists as commented lines (upload size caps, presigned-URL lifetime, allowed file
+types, scan timings): a deployed hub runs the code defaults, except ``MAX_MODEL_FILE_BYTES``, which the ECS task
+definition fixes at 5,000,000,000 bytes. ``LOG_LEVEL``, ``NET_ENDPOINTS`` and ``DB_PORT`` in ``.env.<hub>`` are not
+read by a deployed hub either: it logs at ``INFO``, and Terraform sets the other two.
 
 **For a key known to be leaked, cut it off at once** with ``REVOKE_OLD=1``:
 

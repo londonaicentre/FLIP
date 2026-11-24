@@ -103,10 +103,51 @@ def check_dev_composes_are_covered(failures: list[str]) -> None:
             )
 
 
+# flip-api settings the example lists as commented lines with their code default (FLIP#2047):
+# the dev compose passes each as ``${NAME:-}``, and flip_api/config.py turns the empty value
+# of a line left commented back into the default.
+OFFERED_FLIP_API_SETTINGS = (
+    "MAX_MODEL_FILE_BYTES",
+    "MAX_RESULTS_FILE_BYTES",
+    "PRE_SIGNED_URL_EXPIRATION_SECONDS",
+    "ALLOWED_MODEL_FILE_EXTENSIONS",
+    "PICKLESCAN_FILE_SUFFIXES",
+    "PICKLESCAN_TIMEOUT_SECONDS",
+    "BANDIT_TIMEOUT_SECONDS",
+    "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE",
+    "TRUST_KEY_ROTATION_GRACE_DAYS",
+)
+# Code defaults no compose passes, and whose empty value config.py does not coerce: the
+# example must not offer them as a line to uncomment.
+NOT_PASSED_FLIP_API_SETTINGS = ("FL_APP_BASE_DIR", "FL_API_KEY_HEADER")
+
+
+def check_offered_settings_reach_flip_api(failures: list[str]) -> None:
+    example = ENV_EXAMPLE.read_text()
+    compose = (REPO_ROOT / DEV_COMPOSE_FILES[0]).read_text()
+    block = re.search(r"^  flip-api:\n((?:(?:    .*)?\n)+)", compose, re.MULTILINE)
+    if not block:
+        raise ValueError(f"{DEV_COMPOSE_FILES[0]}: no flip-api service block")
+    for name in OFFERED_FLIP_API_SETTINGS:
+        if not re.search(rf"^# {name}=", example, re.MULTILINE):
+            failures.append(
+                f"{ENV_EXAMPLE.name}: no commented `# {name}=` line; drop it from OFFERED_FLIP_API_SETTINGS"
+            )
+        if f"      - {name}=${{{name}:-}}\n" not in block[1]:
+            failures.append(
+                f"{DEV_COMPOSE_FILES[0]}: flip-api does not pass `{name}=${{{name}:-}}`, so the example's "
+                f"`# {name}=` line changes nothing when uncommented."
+            )
+    for name in NOT_PASSED_FLIP_API_SETTINGS:
+        if re.search(rf"^#?\s*{name}=", example, re.MULTILINE):
+            failures.append(f"{ENV_EXAMPLE.name}: offers `{name}=`, which no compose passes to flip-api.")
+
+
 def main() -> int:
     failures: list[str] = []
     try:
         check_dev_composes_are_covered(failures)
+        check_offered_settings_reach_flip_api(failures)
     except ValueError as exc:
         failures.append(str(exc))
 
