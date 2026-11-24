@@ -52,6 +52,11 @@ training loop, model architecture); for the server side, you choose a **job type
      - Federated optimisation. Same client contract as ``standard``; only the server-side optimiser differs.
      - Yes
      - No
+   * - ``inference``
+     - Runs a model at each Trust and collects what the script reports, such as counts. No training and no
+       labels. You upload ``inference.py`` and ``config.json``; no ``models.py`` and no checkpoint is needed.
+     - Yes
+     - No
 
 Every FLARE job type runs your code through the **FLARE Client API**: a plain training or evaluation script
 that uses ``nvflare.client``. Every Flower job type runs your ``client_app.py``.
@@ -144,8 +149,9 @@ bundled too, which is how apps ship helper modules and transforms, with these ex
 - **A Flower** ``pyproject.toml`` **always comes from the template.** One you upload is bundled but never used as
   the app's project file. Put per-run overrides in ``config.toml`` instead (see `Flower run configuration`_).
 - **On FLARE, a checkpoint declared for server-side use is not sent to the Trusts.** A file named by
-  ``SERVER_CHECKPOINT``, or by an evaluation job's ``models`` entries, is staged on the FL server instead. This
-  keeps large weights off the client deployment path.
+  ``SERVER_CHECKPOINT``, or by the ``models`` entries of an evaluation or inference job, is staged on the FL
+  server instead. This keeps large weights off the client deployment path. A ``models`` entry may be empty
+  (``{}``) to name a model the Trust's FL client image already holds. Nothing is then uploaded or broadcast.
 
 To see what a fully bundled app looks like, browse the per-job-type templates under :gh:`fl-apps/ <fl-apps>`.
 
@@ -237,7 +243,9 @@ Some further keys are used by FLIP's FLARE components but are **not validated**:
 
 - ``SERVER_CHECKPOINT``: a model file (string, or list of strings) to stage on the FL server instead of bundling
   it into the app (see `What ends up in the bundle`_).
-- ``models``: the checkpoints an evaluation job loads, each entry naming a ``checkpoint`` file.
+- ``models``: the models an evaluation or inference job runs. An entry names a ``checkpoint`` file, or is empty
+  (``{}``) for a model the Trust's FL client image already holds. The worked example of an empty entry is the
+  TotalSegmentator tutorial, ``fl-tutorials/nvflare/image_inference/totalsegmentator_inference/``.
 
 **Any other key is passed through untouched** for your code to read at run time, such as ``LEARNING_RATE`` or
 ``VAL_SPLIT`` in the tutorials. These are neither validated nor defaulted, so a misspelled key is simply absent.

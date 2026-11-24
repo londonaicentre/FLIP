@@ -57,7 +57,7 @@ Shmatikov, "Privacy-preserving deep learning", CCS '15). The filter:
 - truncates the remaining components to ``±gamma``.
 
 The templates use the FLARE defaults, ``percentile=10`` and ``gamma=0.01`` (share the top 90 %, clip at 0.01).
-The ``evaluation`` templates have no filter: they send metrics, not weights.
+The ``evaluation`` and ``inference`` templates have no filter: they train nothing and send metrics, not weights.
 
 The filter is set in the template's ``config_fed_client.json``, which an upload cannot replace, so every FLIP run
 uses these values. In your own FLARE runs (the simulator, or a job exported with

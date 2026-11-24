@@ -37,9 +37,10 @@ file set:
 
 1. **Backend(s).** New tutorials usually ship on both, under the same `<name>`; single-backend is
    fine when the user says so (prostate is Flower-only; the image-generation tutorials are NVFLARE-only).
-2. **Job type** — one of the three `fl-apps` templates: `standard` (FedAvg training), `evaluation`
-   (no training, an uploaded checkpoint), `fed_opt`. It fixes the required files and the recipe /
-   template.
+2. **Job type** — one of the four `fl-apps` templates: `standard` (FedAvg training), `evaluation`
+   (no training, an uploaded checkpoint), `fed_opt`, `inference` (NVFLARE only: no training and no
+   labels; the model is in the FL client image or uploaded, so no checkpoint is required). It fixes
+   the required files and the recipe / template.
 3. **Data.** 2-D DICOM through MONAI, 3-D NIfTI converted by XNAT with labels as enrichment, or
    tabular / OMOP-only (`has_imaging=false` project, CPU is enough).
 4. **Dataset.** Reuse one under `fl-tutorials/datasets/` when the cohort fits. A new dataset is a
@@ -72,6 +73,7 @@ comments in the copied structural files — each explains a trap that has bitten
 | 2-D imaging classification | `image_classification/xray_classification` | `xray_classification` |
 | 3-D segmentation (NIfTI via XNAT, labels as enrichment) | `image_segmentation/3d_spleen_segmentation` | `3d_spleen_segmentation`; `3d_prostate_segmentation` for multi-series studies + an nnU-Net plan |
 | Evaluation of an uploaded checkpoint | `image_evaluation/3d_spleen_segmentation_evaluation`; `arkplus_*_evaluation` for several checkpoints | `3d_spleen_segmentation_evaluation` |
+| Inference with a model the image holds (no labels) | `image_inference/totalsegmentator_inference` | — |
 | Fine-tuning from a shipped checkpoint | `image_classification/arkplus_fine_tuning` (`SERVER_CHECKPOINT`, `AGGREGATE_ONLY_REGEX`) | — |
 | Generative | `image_generation/xray_diffusion` (one job); `image_generation/brain_mri_ldm_stage1_autoencoder` then `brain_mri_ldm_stage2_diffusion` (two jobs: the second trains in the first's frozen latent space) | — |
 
@@ -85,7 +87,7 @@ Layout `fl-tutorials/nvflare/<category>/<name>/`. Discovery is `$(wildcard */*/.
 directory counts as a tutorial **iff** it sits two levels down and carries a `.env.app`.
 `run-tutorial` matches `TUTORIAL=` on the basename, so names are unique across categories and
 backends. Reuse a category (`image_classification`, `image_segmentation`, `image_evaluation`,
-`image_generation`, `tabular_classification`, `tabular_causal_discovery`); never put an `__init__.py` in `nvflare/` or a
+`image_inference`, `image_generation`, `tabular_classification`, `tabular_causal_discovery`); never put an `__init__.py` in `nvflare/` or a
 category dir — a package named `nvflare` shadows the real one.
 
 | File | Role / trap |
@@ -115,7 +117,8 @@ category dir — a package named `nvflare` shadows the real one.
 - Recipes (`flip-utils/flip/nvflare/recipes/`): `FlipFedAvgRecipe(num_rounds, min_clients,
   train_script, train_args, project_id, query, local_rounds, model_id, percentile_privacy, …,
   aggregate_only_regex, best_model_metric, best_model_metric_minimize)`; `FlipFedOptRecipe` adds
-  `optimizer_args` / `lr_scheduler_args`; `FlipEvalRecipe` takes `eval_script="evaluator.py"`.
+  `optimizer_args` / `lr_scheduler_args`; `FlipEvalRecipe` takes `eval_script="evaluator.py"`;
+  `FlipInferenceRecipe` takes `eval_script="inference.py"` and needs no `models.py`.
   All expose `.job` for `stage_app_files`.
 - Tests you add by hand: a 2-D DICOM app read through MONAI `LoadImaged` → `tests/tutorial_apps.py`
   `DICOM_APPS` (the orientation suite then covers it); app-file unit tests mirror the path
@@ -221,6 +224,14 @@ template, required files present, template files byte-identical), `test_flower_m
   at run time; the e2e target points `QUERY_FILE` at the training tutorial's query. The demo
   recorder's segments 4–5 assume a training job, so do not record one until an evaluation variant
   exists — say so instead.
+- **Inference.** `inference.py` + `FlipInferenceRecipe` / the `inference` template; NVFLARE only.
+  No training, no labels, no `models.py`. A `models` entry in `config.json` may be empty (`{}`) when
+  the FL client image already holds the model, and then no checkpoint is uploaded. Weights are staged
+  host-side (`download-weights`) for the simulator, never fetched at run time. Import a heavy
+  third-party package inside the function that uses it: FLARE loads app files on the server too,
+  and the server image may not have the package. Results are stored with `flip.add_resource` and the
+  reply is counts; the simulator keeps the masks under `DEV_MASKS_DIR`
+  (`image_inference/totalsegmentator_inference`).
 - **Fine-tune / two-stage.** Fine-tune: `SERVER_CHECKPOINT` seeds round 0, `AGGREGATE_ONLY_REGEX`
   keeps the frozen backbone out of aggregation (Ark+; `prepare-checkpoint` converts the upstream
   pickle host-side under `process_tools/`). Two-stage: two `standard` jobs, the second
