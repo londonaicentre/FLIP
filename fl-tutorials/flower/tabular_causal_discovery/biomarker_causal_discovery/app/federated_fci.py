@@ -106,6 +106,7 @@ import os
 import re
 import zlib
 from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 from causallearn.graph.Edge import Edge
@@ -116,6 +117,9 @@ from causallearn.search.ConstraintBased import FCI as fci_rules
 from causallearn.search.ConstraintBased.FCI import fci
 from causallearn.utils.cit import CIT, NO_SPECIFIED_PARAMETERS_MSG, CIT_Base, FisherZ, register_ci_test
 from causallearn.utils.PCUtils.BackgroundKnowledge import BackgroundKnowledge
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 try:  # the trust's NVFLARE site policy (percentile / gamma); stdlib-only module, absent on a bare Flower image
     from flip.nvflare.site_policy import resolve_policy
@@ -210,7 +214,9 @@ class RoundFailed(RuntimeError):
     ``cause`` on its next task so the job still ends in error.
     """
 
-    def __init__(self, target: dict[str, np.ndarray], weight: int, metrics: dict[str, float], cause: BaseException):
+    def __init__(
+        self, target: dict[str, np.ndarray], weight: int, metrics: dict[str, float], cause: BaseException
+    ) -> None:
         super().__init__(str(cause))
         self.target, self.weight, self.metrics, self.cause = target, weight, metrics, cause
 
@@ -494,7 +500,7 @@ def assert_site_may_release(
 # --- data ---------------------------------------------------------------------------------
 
 
-def prepare_cohort(dataframe, config: dict) -> tuple[np.ndarray, np.ndarray | None, int]:
+def prepare_cohort(dataframe: pd.DataFrame, config: dict) -> tuple[np.ndarray, np.ndarray | None, int]:
     """The analysis matrix (``VARIABLES`` columns, logged or divided by a constant as configured) and
     what the release floor needs: the kept rows' ``person_id`` and the drop count.
 
@@ -538,7 +544,7 @@ def prepare_cohort(dataframe, config: dict) -> tuple[np.ndarray, np.ndarray | No
     return matrix[keep], person_ids, int((~keep).sum())
 
 
-def partition_for_site(dataframe, site_name: str, num_partitions: int):
+def partition_for_site(dataframe: pd.DataFrame, site_name: str, num_partitions: int) -> pd.DataFrame:
     """LOCAL_DEV only: this site's ``person_id``-modulo slice of a shared dev cohort.
 
     The simulators hand every site the same CSV; a deployed trust already holds its own
@@ -665,13 +671,15 @@ class CorrelationFisherZ(FisherZ):
     evidence of dependence (p = 1).
     """
 
-    def __init__(self, data, correlation, never_condition=(), **kwargs):
+    def __init__(
+        self, data: np.ndarray, correlation: np.ndarray, never_condition: Iterable[int] = (), **kwargs
+    ) -> None:
         CIT_Base.__init__(self, data, **kwargs)  # no rows to correlate
         self.check_cache_method_consistent("fisherz", NO_SPECIFIED_PARAMETERS_MSG)
         self.correlation_matrix = np.asarray(correlation, dtype=np.float64)
         self.never_condition = frozenset(int(i) for i in never_condition)
 
-    def __call__(self, X, Y, condition_set=None):
+    def __call__(self, X: int, Y: int, condition_set: Iterable[int] | None = None) -> float:
         kept = [c for c in condition_set or () if int(c) not in self.never_condition]
         try:
             p_value = super().__call__(X, Y, kept)
