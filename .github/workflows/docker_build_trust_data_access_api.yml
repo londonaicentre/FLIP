@@ -44,6 +44,8 @@ jobs:
     # The event clause builds a commit once (FLIP#2020): the suite also runs for the
     # develop→main PR, whose head branch passes the `branches` filter above, and a second
     # build would replace the immutable sha-<short7> tag with a different image.
+    # A suite run started by hand is not a push either, so it no longer republishes: dispatch
+    # this workflow instead.
     if: >-
       (github.event_name == 'workflow_dispatch' ||
       github.event_name == 'push' ||

@@ -545,7 +545,9 @@ The eight service test workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the f
 
 ### Terraform runs in CI (FLIP#962)
 
-`validate_terraform.yml` does the credential-free `fmt`/`validate` pass. On top of that, three
+`validate_terraform.yml` does the credential-free `fmt`/`validate` pass for the hub tree, and
+`validate_terraform_azure.yml`, `validate_terraform_aws_node.yml` and `validate_terraform_snowflake.yml` do it
+for the trust roots, each on its own paths (FLIP#2021). On top of that, three
 OIDC-authenticated workflows drive real state — no long-lived AWS keys in GitHub: `terraform_plan.yml`
 (plan staging on every PR touching `deploy/providers/AWS/**`), `terraform_apply.yml` (every push to
 `develop` → stag, which starts staging first and stops it again after a hold; every push to `main` → **prod**),

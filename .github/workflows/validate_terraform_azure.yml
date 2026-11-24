@@ -18,11 +18,15 @@ on:
     branches: [main, develop]
     paths:
       - "trust/deploy/terraform/azure/**"
+      # tests/test_static_guards.py pins the Azure Makefile's CHECKOV_VERSION to this script's.
+      - "deploy/providers/AWS/scripts/checkov_lint.sh"
       - ".github/workflows/validate_terraform_azure.yml"
   pull_request:
     branches: [main, develop]
     paths:
       - "trust/deploy/terraform/azure/**"
+      # tests/test_static_guards.py pins the Azure Makefile's CHECKOV_VERSION to this script's.
+      - "deploy/providers/AWS/scripts/checkov_lint.sh"
       - ".github/workflows/validate_terraform_azure.yml"
 
 permissions:

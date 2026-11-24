@@ -45,7 +45,7 @@ EXEMPT = {
 
 
 def pr_workflows() -> list[Path]:
-    return [w for w in sorted(WORKFLOWS.glob("*.yml")) if re.search(r"^  pull_request:", w.read_text(), re.MULTILINE)]
+    return [w for w in sorted(WORKFLOWS.glob("*.yml")) if re.search(r"^\s+pull_request:", w.read_text(), re.MULTILINE)]
 
 
 class PrRunsCancelWhenSuperseded(unittest.TestCase):
