@@ -154,7 +154,8 @@ class TestConfigureFindsItsOwnStack:
 
         assert result.returncode == 0, f"xnat-configure failed:\n{result.stdout}{result.stderr}"
         execs = host.execs()
-        assert len(execs) == 2, f"expected configure-xnat.sh then configure-dcm2niix.sh, got {execs}"
+        # configure-xnat.sh, configure-dcm2niix.sh, then nifti_to_seg's presence check and its script.
+        assert len(execs) == 4, f"expected the three configure scripts and one presence check, got {execs}"
         for argv in execs:
             # `docker exec [-e K=V] <container> bash -c …` — one container, then the program.
             while argv[0] == "-e":
@@ -167,7 +168,7 @@ class TestConfigureFindsItsOwnStack:
         host = _Host(tmp_path, TWO_STACKS)
         host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
 
-        configure_xnat, configure_dcm2niix = host.execs()
+        configure_xnat, configure_dcm2niix, *_ = host.execs()
         assert configure_xnat[:3] == ["-e", "XNAT_PLUGIN_READINESS_ROSTER=1", WANTED_ID], configure_xnat
         assert "configure-xnat.sh" in configure_xnat[-1]
         assert "XNAT_PLUGIN_READINESS_ROSTER=1" not in configure_dcm2niix, "only configure-xnat.sh runs the wait"

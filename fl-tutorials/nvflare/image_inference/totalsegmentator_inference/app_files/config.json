@@ -5,7 +5,19 @@
   },
   "totalsegmentator": {
     "task": "total",
-    "roi_subset": null,
+    "roi_subset": [
+      "liver",
+      "gluteus_maximus_left",
+      "gluteus_maximus_right",
+      "gluteus_medius_left",
+      "gluteus_medius_right",
+      "gluteus_minimus_left",
+      "gluteus_minimus_right",
+      "iliopsoas_left",
+      "iliopsoas_right",
+      "autochthon_left",
+      "autochthon_right"
+    ],
     "fastest": false,
     "device": "gpu"
   },

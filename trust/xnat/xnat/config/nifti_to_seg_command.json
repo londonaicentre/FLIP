@@ -1,0 +1,74 @@
+{
+  "name": "nifti_to_seg",
+  "label": "nifti_to_seg",
+  "description": "Turn the NIfTI label masks an FL job stores on a scan into a DICOM-SEG ROI collection the OHIF viewer draws",
+  "version": "1.0",
+  "schema-version": "1.0",
+  "info-url": "https://github.com/londonaicentre/FLIP/tree/develop/trust/xnat/nifti-to-seg",
+  "type": "docker",
+  "image": "ghcr.io/londonaicentre/xnat-nifti-to-seg:1.0.0",
+  "network": "#PLACEHOLDER_NETWORK#",
+  "command-line": "python /app/src/nifti_to_seg.py -i /resource-in --resource-uri #RESOURCE_URI# --resource-label #RESOURCE_LABEL#",
+  "mounts": [
+    {
+      "name": "resource-in",
+      "writable": false,
+      "path": "/resource-in"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "resource-uri",
+      "description": "XNAT URI of the resource",
+      "type": "string",
+      "required": true,
+      "replacement-key": "#RESOURCE_URI#"
+    },
+    {
+      "name": "resource-label",
+      "description": "Label of the resource",
+      "type": "string",
+      "required": true,
+      "replacement-key": "#RESOURCE_LABEL#"
+    }
+  ],
+  "outputs": [],
+  "xnat": [
+    {
+      "name": "nifti_to_seg-resource",
+      "label": "nifti_to_seg",
+      "description": "Convert a scan resource's NIfTI masks to a DICOM-SEG ROI collection",
+      "contexts": [
+        "xnat:resourceCatalog"
+      ],
+      "external-inputs": [
+        {
+          "name": "resource",
+          "description": "Input resource",
+          "type": "Resource",
+          "required": true,
+          "provides-files-for-command-mount": "resource-in"
+        }
+      ],
+      "derived-inputs": [
+        {
+          "name": "uri",
+          "description": "The resource's URI",
+          "type": "string",
+          "derived-from-wrapper-input": "resource",
+          "derived-from-xnat-object-property": "uri",
+          "provides-value-for-command-input": "resource-uri"
+        },
+        {
+          "name": "label",
+          "description": "The resource's label",
+          "type": "string",
+          "derived-from-wrapper-input": "resource",
+          "derived-from-xnat-object-property": "label",
+          "provides-value-for-command-input": "resource-label"
+        }
+      ],
+      "output-handlers": []
+    }
+  ]
+}

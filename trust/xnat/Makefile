@@ -13,7 +13,7 @@
 .PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-backup-writable xnat-shell xnat-stack-down clean \
 	xnat-db-migrate-dump xnat-db-drop-unused-dump xnat-db-remove-old-cluster \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
-	xnat-configure-export-mask xnat-prepare-dirs xnat-web-dirs xnat-check-ports \
+	xnat-configure-export-mask xnat-configure-nifti-to-seg xnat-prepare-dirs xnat-web-dirs xnat-check-ports \
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_TAG,
@@ -834,6 +834,7 @@ xnat-configure:
 	bash -o pipefail -c "docker exec -e XNAT_PLUGIN_READINESS_ROSTER=1 $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-xnat.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log'" && \
 	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-dcm2niix.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log'"
 	$(MAKE) xnat-configure-export-mask XNAT_PROJECT=$(XNAT_PROJECT)
+	$(MAKE) xnat-configure-nifti-to-seg XNAT_PROJECT=$(XNAT_PROJECT)
 
 # export_mask (DICOM-SEG -> NIfTI) is registered ONLY when this trust runs MONAI Label.
 #
@@ -868,6 +869,22 @@ ifeq ($(strip $(MONAI_LABEL)),true)
 else
 	@echo "⏭️  MONAI_LABEL is not true — skipping export_mask registration."
 endif
+
+# nifti_to_seg (an FL job's NIfTI masks -> a DICOM-SEG the OHIF viewer draws, FLIP#1945) is registered on
+# every trust: its site-wide subscription fires only on a resource labelled TOTALSEG
+# (NIFTI_TO_SEG_RESOURCE), which only a job writes, so a trust that runs no such job never launches it.
+# Against an xnat-web image that predates it the script is absent; that skips, rather than failing the
+# bring-up, since nothing on such a trust depends on it.
+xnat-configure-nifti-to-seg:
+	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
+	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_PROJECT))); \
+	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found"; exit 1; }; \
+	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
+	if ! docker exec $$CONTAINER bash -c 'test -f /data/xnat/config/configure-nifti-to-seg.sh'; then \
+		echo "⏭️  configure-nifti-to-seg.sh is not in this xnat-web image — skipping nifti_to_seg registration."; \
+		exit 0; fi; \
+	rm -f "$(XNAT_CONFIGURE_LOG_DIR)/configure-nifti-to-seg-$(XNAT_PROJECT).log"; \
+	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-nifti-to-seg.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-nifti-to-seg-$(XNAT_PROJECT).log'"
 
 # Guard: XNAT and the trust core services must share one network. up-trust brings the trust
 # compose up before invoking us, so the trust's real attachment is observable — compare it

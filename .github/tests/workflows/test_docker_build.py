@@ -181,7 +181,7 @@ class XnatBuildTriggers(unittest.TestCase):
         A dispatch still republishes it (a base-image rebuild changes no source), and a failed registry
         lookup must fail the step: read as an absent tag, it would republish the pinned tag.
         """
-        for image in ("dcm2niix", "export_mask"):
+        for image in ("dcm2niix", "export_mask", "nifti_to_seg"):
             push = step_block(code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml"), "Push Docker image")
             with self.subTest(image=image):
                 assert "context-$(git rev-parse HEAD:./)" in push, image

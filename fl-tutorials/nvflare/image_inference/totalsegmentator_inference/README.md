@@ -103,7 +103,7 @@ The options in `app_files/config.json`:
 | Key | Meaning |
 |---|---|
 | `totalsegmentator.task` | `total`, the only task whose weights are in the image |
-| `totalsegmentator.roi_subset` | a list of structure names to predict, or `null` for all 117 |
+| `totalsegmentator.roi_subset` | a list of structure names to predict, or `null` for all 117. The tutorial predicts FLIP-SIDE's: the liver, the gluteal muscles, iliopsoas and autochthon, both sides |
 | `totalsegmentator.fastest` | `true` for the 6 mm model: quicker and coarser |
 | `totalsegmentator.device` | `gpu` or `cpu` |
 | `mask_resource` | the XNAT resource the masks are stored in, `TOTALSEG` by default |
@@ -130,11 +130,15 @@ To remove the exported job: `make clean` (deletes `./fl_job`).
 ## Where the masks go
 
 At a trust, each mask is stored on the scan it was predicted from, in the trust's XNAT, as `pred_*.nii.gz` in the
-`TOTALSEG` resource. The masks never leave the trust.
+`TOTALSEG` resource, followed by a `labels.json` naming each label (its SNOMED codes and colour, from TotalSegmentator's
+own maps). The masks never leave the trust.
 
+- **The OHIF viewer draws them.** XNAT's viewer shows DICOM segmentations, not NIfTI masks, so the trust's XNAT turns
+  each mask into one: the `nifti_to_seg` command (`trust/xnat/nifti-to-seg/`) runs when the resource holds both files,
+  and stores a DICOM-SEG ROI collection on the session, named `<session>_TOTALSEG_<scan>`. Import it from the viewer's
+  Masks panel.
 - **A second run on the same project does not replace them.** FLIP's imaging service refuses a file name the resource
   already holds, so the first run's mask stays and the second run reports `masks_saved` as 0.
-- **The viewer cannot draw these files as they are.** XNAT's viewer shows DICOM segmentations, not NIfTI masks.
 
 In the simulator the masks go to `DEV_MASKS_DIR`, and the two simulated sites each take half of the local scans.
 

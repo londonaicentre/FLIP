@@ -1,0 +1,14 @@
+{
+  "name": "",
+  "event-selector": "org.nrg.xnat.eventservice.events.ResourceEvent:",
+  "action-key": "",
+  "attributes": {},
+  "active": true,
+  "project-id": "",
+  "event-filter": {
+    "event-type": "org.nrg.xnat.eventservice.events.ResourceEvent",
+    "status": "",
+    "payload-filter": ""
+  },
+  "act-as-event-user": false
+}
