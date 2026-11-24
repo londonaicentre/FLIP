@@ -955,9 +955,14 @@ it and changes it to `xnat-admin-password`, and once XNAT refuses it, it signs i
   `XNAT_ADMIN_PASSWORD` in the kit, rerun `scripts/generate_values.py`, then
   `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>`. XNAT still accepts `admin`, so
   the hook changes it with no refused login.
-- **Changing it later:** change it in XNAT first, then put the same value in the kit, rerun
-  `scripts/generate_values.py` and deploy. A kit-only change fails the hook and counts towards
-  XNAT's lockout.
+- **Changing it later:** `make -C trust rotate-xnat-passwords KIT=<CODE> HUB=<env>` writes a new
+  `XNAT_ADMIN_PASSWORD` (and a new, different `XNAT_SERVICE_PASSWORD`) into the kit and keeps the
+  old admin value as `XNAT_ADMIN_PREVIOUS_PASSWORD`. Rerun `scripts/generate_values.py` and deploy:
+  the hook signs in with `xnat-admin-previous-password` once, changes the admin password, and sets
+  the service account's password from the kit (FLIP#1569). Then remove
+  `XNAT_ADMIN_PREVIOUS_PASSWORD` from the kit and regenerate the values. Changing
+  `XNAT_ADMIN_PASSWORD` in the kit alone, with no previous value, still fails the hook and counts
+  towards XNAT's lockout.
 
 ### xnat-db roles and credential rotation
 

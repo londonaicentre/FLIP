@@ -106,6 +106,7 @@ CHART_KEY_SLOTS = (
     ("ORTHANC_REGISTERED_USERS", "orthanc-registered-users"),
     ("XNAT_ADMIN_INITIAL_PASSWORD", "xnat-admin-initial-password"),  # pragma: allowlist secret
     ("XNAT_ADMIN_PASSWORD", "xnat-admin-password"),  # pragma: allowlist secret
+    ("XNAT_ADMIN_PREVIOUS_PASSWORD", "xnat-admin-previous-password"),  # pragma: allowlist secret
     ("XNAT_SERVICE_USER", "xnat-service-user"),
     ("XNAT_SERVICE_PASSWORD", "xnat-service-password"),  # pragma: allowlist secret
     ("XNAT_DATASOURCE_PASSWORD", "xnat-datasource-password"),  # pragma: allowlist secret

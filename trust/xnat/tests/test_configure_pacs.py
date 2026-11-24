@@ -261,6 +261,23 @@ if [ -n "${ADMIN_PASSWORD_FILE:-}" ] && [ "${creds%%:*}" = admin ]; then
   fi
 fi
 
+# With SERVICE_PASSWORD_FILE, the service account already exists (its create is a 409) and holds that
+# one password: any other is refused (logged to $SERVICE_PASSWORD_FILE.refused), and an admin's
+# PUT /xapi/users/flipServiceAccount replaces it, unless SWALLOW_SERVICE_PASSWORD_PUT answers it
+# with 200 and stores nothing.
+if [ -n "${SERVICE_PASSWORD_FILE:-}" ]; then
+  if [ "$method" = "POST" ] && [[ "$url" == */xapi/users ]]; then
+    status=409; body='{"error":"user exists"}'
+  fi
+  if [ "${creds%%:*}" = flipServiceAccount ] && [ "${creds#*:}" != "$(cat "$SERVICE_PASSWORD_FILE")" ]; then
+    status=401; body='{"error":"unauthorized"}'; echo "$creds" >> "$SERVICE_PASSWORD_FILE.refused"
+  fi
+  if [ "$method" = "PUT" ] && [[ "$url" == */xapi/users/flipServiceAccount ]] && [ "${creds%%:*}" = admin ] \
+    && [ "$status" = "200" ] && [ -z "${SWALLOW_SERVICE_PASSWORD_PUT:-}" ]; then
+    jq -j '.password' <<< "$data" > "$SERVICE_PASSWORD_FILE"
+  fi
+fi
+
 # A first boot still initialising its database: the first N logins fail whatever the password.
 # The count covers every authenticated request, so keep N below the number of probe logins.
 if [ -n "${UNREADY_LOGINS:-}" ] && [ -n "$creds" ]; then
@@ -1381,6 +1398,98 @@ def test_neither_password_working_stops_before_touching_xnat(tmp_path):
     assert code == 1, output
     assert "neither admin password authenticates" in output
     assert not any(m in {"POST", "PUT", "DELETE"} for m, _ in requests_made(payloads))
+
+
+# ── Rotating the admin and service passwords on a running XNAT (FLIP#1569) ────────────────────
+
+
+def test_a_rotated_kit_signs_in_with_the_previous_admin_password_and_moves_xnat_to_the_new_one(tmp_path):
+    """After `make rotate-xnat-passwords` the kit's admin password is one XNAT has never seen. The run
+    signs in with XNAT_ADMIN_PREVIOUS_PASSWORD, changes it before the plugin wait (which would refuse
+    the old one), and the next run converges on the new one without trying the previous again."""
+    held = tmp_path / "admin-password"
+    held.write_text("previous")
+    refused = tmp_path / "admin-password.refused"
+    env = {"ADMIN_PASSWORD_FILE": str(held), "INITIALIZED_BODY": "true", "XNAT_ADMIN_PREVIOUS_PASSWORD": "previous"}
+
+    code, payloads, output = run_configure(tmp_path / "rotate", env, pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert held.read_text() == "rotated"
+    assert credentials_used(tmp_path / "rotate", "POST", "/xapi/siteConfig")[0] == "admin:previous"  # activation
+    assert credentials_used(tmp_path / "rotate", "PUT", "/xapi/users/admin") == ["admin:previous"]
+    made = requests_made(payloads)
+    rotation = made.index(("PUT", "http://xnat-web:8080/xapi/users/admin"))
+    assert rotation < made.index(("GET", "http://xnat-web:8080/xapi/plugins")), "rotated after the plugin wait"
+    assert "admin:previous" not in refused.read_text().splitlines()
+
+    refused.unlink()
+    code, payloads, output = run_configure(tmp_path / "next", env, pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert "converging" in output
+    assert not any(m == "PUT" and u.endswith("/xapi/users/admin") for m, u in requests_made(payloads))
+    assert "admin:previous" not in credentials_used(tmp_path / "next", "GET", "/xapi/siteConfig/initialized")
+
+
+def test_a_previous_admin_password_xnat_also_refuses_stays_inside_the_lockout_budget(tmp_path):
+    """Three passwords probed per round: the run is capped at five rounds, 15 failed logins."""
+    code, payloads, output = run_configure(
+        tmp_path, {"WRONG_LOGINS": "initial,rotated,previous", "XNAT_ADMIN_PREVIOUS_PASSWORD": "previous"}
+    )
+    assert code == 1, output
+    assert "neither admin password authenticates" in output
+    assert "previous: HTTP 401" in output
+    assert "XNAT_ADMIN_PREVIOUS_PASSWORD" in output
+    assert logins_probed(tmp_path) == 15
+    assert not any(m in {"POST", "PUT", "DELETE"} for m, _ in requests_made(payloads))
+
+
+@pytest.mark.parametrize("previous", ["", "rotated", "initial"])
+def test_a_previous_admin_password_that_adds_nothing_is_never_probed(tmp_path, previous):
+    """Empty, or the same as a password already probed: no extra login, and the round cap stays at 6."""
+    code, _, output = run_configure(
+        tmp_path, {"WRONG_LOGINS": "initial,rotated", "XNAT_ADMIN_PREVIOUS_PASSWORD": previous}
+    )
+    assert code == 1, output
+    assert "previous: HTTP" not in output
+    assert logins_probed(tmp_path) == 12
+
+
+def test_an_existing_service_account_on_the_kits_password_is_left_alone(tmp_path):
+    held = tmp_path / "service-password"
+    held.write_text("service")
+    code, payloads, output = run_configure(
+        tmp_path / "run", {"SERVICE_PASSWORD_FILE": str(held)}, pacs_state=MOCK_PACS_REGISTRATION
+    )
+    assert code == 0, output
+    assert "matches the kit" in output
+    assert not any(m == "PUT" and u.endswith("/xapi/users/flipServiceAccount") for m, u in requests_made(payloads))
+    assert not (tmp_path / "service-password.refused").exists()
+
+
+def test_an_existing_service_account_on_an_old_password_moves_to_the_kits(tmp_path):
+    """The 409 used to end it: the new XNAT_SERVICE_PASSWORD never reached XNAT, and imaging-api got 401."""
+    held = tmp_path / "service-password"
+    held.write_text("old-service")
+    code, _, output = run_configure(
+        tmp_path / "run", {"SERVICE_PASSWORD_FILE": str(held)}, pacs_state=MOCK_PACS_REGISTRATION
+    )
+    assert code == 0, output
+    assert held.read_text() == "service"
+    assert credentials_used(tmp_path / "run", "PUT", "/xapi/users/flipServiceAccount") == ["admin:rotated"]
+    # One failed login, the probe that found the old password; the check after the change passes.
+    assert (tmp_path / "service-password.refused").read_text().splitlines() == ["flipServiceAccount:service"]
+
+
+def test_a_service_password_xnat_will_not_take_fails_the_run(tmp_path):
+    held = tmp_path / "service-password"
+    held.write_text("old-service")
+    code, _, output = run_configure(
+        tmp_path / "run",
+        {"SERVICE_PASSWORD_FILE": str(held), "SWALLOW_SERVICE_PASSWORD_PUT": "1"},
+        pacs_state=MOCK_PACS_REGISTRATION,
+    )
+    assert code == 1, output
+    assert "still refuses flipServiceAccount" in output
 
 
 # ── First boot: the login page answers before the database is ready (FLIP#1384) ──────────────

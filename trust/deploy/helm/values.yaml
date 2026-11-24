@@ -216,6 +216,10 @@ secrets:
     # still accepts it. Optional: left empty (or absent from an existing Secret), it is `admin`.
     xnat-admin-initial-password: ""
     xnat-admin-password: ""
+    # Set only while an admin password rotation is pending (make rotate-xnat-passwords, FLIP#1569): the
+    # admin password XNAT still holds. xnat-init signs in with it once and changes it to
+    # xnat-admin-password. Optional: empty or absent, no rotation is pending.
+    xnat-admin-previous-password: ""
     xnat-service-user: ""
     xnat-service-password: ""
     xnat-datasource-password: ""

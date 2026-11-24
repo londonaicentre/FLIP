@@ -314,6 +314,7 @@ make register-trusts                  # Register the shipped dev roster (trust/.
 make register-trust KIT=<CODE>        # Register one trust + fill its kit (creds + hub-shared block)
 make rotate-trust-keys KIT=<CODE>     # Reissue one trust's api + internal-service keys; staged (old key works until first use of the new one), REVOKE_OLD=1 cuts it off at once
 make -C trust rotate-internal-service-key KIT=<CODE> HUB=<env>  # Compose site only: rotate TRUST_INTERNAL_SERVICE_KEY alone (the hub never checks it)
+make -C trust rotate-xnat-passwords KIT=<CODE> HUB=<env> [SERVICE_ONLY=1]  # New, distinct XNAT admin + service passwords in the kit; the next deploy's configure-xnat.sh applies them to the running XNAT (FLIP#1569)
 make sync-trust-kit KIT=<CODE> HUB=<env>   # Rotation only: refresh hub-shared values in trust/.env.<CODE>.<env>
 make sync-trust-kits                  # Refresh every locally-present kit file
 ```
