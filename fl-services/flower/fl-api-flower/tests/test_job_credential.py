@@ -59,3 +59,27 @@ def test_a_credential_with_nowhere_to_go_fails_the_upload(monkeypatch):
 
     assert failed.value.status_code == 500
     assert CREDENTIAL not in failed.value.detail
+
+
+@pytest.mark.parametrize("model_id", ["../escaped", "/etc/passwd", "nested/name", "", "not-a-uuid"])
+def test_a_model_id_that_is_not_a_uuid_is_refused_before_anything_is_touched(tmp_path, monkeypatch, model_id):
+    directory = tmp_path / "credentials"
+    monkeypatch.setenv("JOB_CREDENTIAL_DIR", str(directory))
+    earlier = str(uuid4())
+    deliver_job_credential(earlier, "earlier")
+
+    with pytest.raises(HTTPException) as refused:
+        deliver_job_credential(model_id, CREDENTIAL)
+
+    assert refused.value.status_code == 400
+    assert [path.name for path in directory.iterdir()] == [earlier]
+    assert not any(CREDENTIAL in path.read_text() for path in tmp_path.rglob("*") if path.is_file())
+
+
+def test_the_file_is_named_by_the_canonical_uuid(tmp_path, monkeypatch):
+    monkeypatch.setenv("JOB_CREDENTIAL_DIR", str(tmp_path))
+    model_id = uuid4()
+
+    deliver_job_credential(str(model_id).upper(), CREDENTIAL)
+
+    assert (tmp_path / str(model_id)).read_text() == CREDENTIAL
