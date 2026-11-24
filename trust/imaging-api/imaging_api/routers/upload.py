@@ -19,14 +19,15 @@ from pydantic import ValidationError
 from imaging_api.routers.download import open_project_id
 from imaging_api.routers.schemas import UploadDataRequest
 from imaging_api.services.upload import stage_uploads, upload_data_to_xnat
-from imaging_api.utils.auth import get_xnat_auth_headers
+from imaging_api.utils.auth import get_xnat_data_auth_headers
 from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.internal_auth import authenticate_internal_service
 
 # Create router
 router = APIRouter(prefix="/upload", tags=["Upload"], dependencies=[Depends(authenticate_internal_service)])
 
-XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
+# The data account's session (FLIP#2011): a Member of FLIP projects, never the site administrator.
+XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_data_auth_headers)]
 
 
 @router.put("/images/{net_id}", summary="Upload data to XNAT")

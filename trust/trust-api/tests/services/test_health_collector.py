@@ -59,6 +59,55 @@ def _response(status_code=200, body=None, json_error=False):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("account", "expected"),
+    [
+        ("ready", "healthy"),
+        ("pending", "healthy"),  # the seconds after a start, before imaging-api's first check
+        (None, "healthy"),  # an imaging-api from before FLIP#2011 reports no such field
+        ("not configured", "degraded"),
+        ("refused by XNAT", "degraded"),
+    ],
+)
+async def test_imaging_api_is_degraded_while_its_xnat_data_account_cannot_serve_downloads(account, expected):
+    """FLIP#2011: imaging-api stays up without its data account (provisioning works), but downloads and uploads
+    are refused, which the hub should see."""
+    body = {"status": "ok", "version": "0.3.0"} | ({"xnat_data_account": account} if account else {})
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, body)
+
+    with patch("trust_api.services.health_collector.time.monotonic", side_effect=[10.0, 10.05]):
+        result = await _probe_health_endpoint(
+            mock_client,
+            "http://imaging-api:8000/health",
+            degraded_by=health_collector._imaging_data_account_unusable,
+        )
+
+    assert result == {"status": expected, "version": "0.3.0", "response_ms": 50}
+
+
+@pytest.mark.asyncio
+async def test_the_collector_checks_imaging_apis_data_account():
+    """The roster wires the check to imaging-api, and not to data-access-api."""
+    seen = {}
+
+    async def probe(client, url, **kwargs):
+        seen[url] = kwargs.get("degraded_by")
+        return health_collector._entry("healthy")
+
+    with (
+        patch.object(health_collector, "_probe_health_endpoint", side_effect=probe),
+        patch.object(health_collector, "_probe_xnat", AsyncMock(return_value=health_collector._entry("healthy"))),
+        patch.object(health_collector, "_probe_omop", AsyncMock(return_value=health_collector._entry("healthy"))),
+        patch.object(health_collector, "_probe_dicom", AsyncMock(return_value=health_collector._entry("healthy"))),
+    ):
+        await health_collector.collect_once(AsyncMock())
+
+    assert seen[f"{health_collector.IMAGING_API_URL}/health"] is health_collector._imaging_data_account_unusable
+    assert seen[f"{health_collector.DATA_ACCESS_API_URL}/health"] is None
+
+
+@pytest.mark.asyncio
 async def test_probe_health_endpoint_healthy_reports_latency_and_version():
     mock_client = AsyncMock()
     mock_client.get.return_value = _response(200, {"status": "ok", "version": "0.3.0"})

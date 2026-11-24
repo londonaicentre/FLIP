@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     XNAT_URL: str = "http://xnat-web:8080"
     XNAT_SERVICE_USER: str
     XNAT_SERVICE_PASSWORD: str
+    # The data account (FLIP#2011): no site role, a Member of each FLIP project, used by the download and upload
+    # routes only. Empty password = a kit that predates the account: imaging-api still starts, those routes answer
+    # 503 naming the account, and /health reports it.
+    XNAT_DATA_USER: str = "flip_data"
+    XNAT_DATA_PASSWORD: str = ""
 
     #
     DATA_ACCESS_API_URL: str = "http://data-access-api:8000"

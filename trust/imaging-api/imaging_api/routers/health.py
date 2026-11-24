@@ -17,6 +17,8 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from imaging_api.services import data_account
+
 router = APIRouter(prefix="/health", tags=["Health"])
 
 # The service is a uv "virtual" project (never installed as a distribution), so the
@@ -48,6 +50,13 @@ async def health_check() -> dict[str, str | None]:
     Returns:
         dict[str, str | None]: The status of the service and the build it runs — the
         CI-baked ``FLIP_RELEASE`` image tag (v<X.Y.Z> or sha-<short7>, FLIP#1204), or the
-        pyproject version for a local build that carries none.
+        pyproject version for a local build that carries none — and the XNAT data account's state
+        (FLIP#2011): ``ready``, ``pending``, ``not configured`` or ``refused by XNAT``. Still a 200 when the
+        account is not ready: provisioning works without it, and this is the liveness probe; trust-api reports
+        imaging-api as degraded instead.
     """
-    return {"status": "ok", "version": os.environ.get("FLIP_RELEASE") or _service_version()}
+    return {
+        "status": "ok",
+        "version": os.environ.get("FLIP_RELEASE") or _service_version(),
+        "xnat_data_account": data_account.state().value,
+    }
