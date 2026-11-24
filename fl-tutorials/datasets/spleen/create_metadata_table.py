@@ -57,7 +57,10 @@ def extract_dicom_metadata(base_dir: str) -> pd.DataFrame:
         # we're only interested in metadata at the subject level
         file_path = dicom_files[0]
 
-        ds = pydicom.dcmread(file_path, stop_before_pixels=True)  # Read DICOM without pixel data
+        try:
+            ds = pydicom.dcmread(file_path, stop_before_pixels=True)  # Read DICOM without pixel data
+        except pydicom.errors.InvalidDicomError as e:
+            raise pydicom.errors.InvalidDicomError(f"{file_path}: {e}") from e
         metadata = {
             "Subject": subject,
             "FileName": os.path.basename(file_path),

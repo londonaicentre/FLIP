@@ -110,5 +110,5 @@ def test_an_unreadable_dicom_fails_the_table(metadata_module: ModuleType, tmp_pa
     (tmp_path / "spleen_3").mkdir()
     (tmp_path / "spleen_3" / "0000.dcm").write_bytes(b"not a dicom")
 
-    with pytest.raises(pydicom.errors.InvalidDicomError):
+    with pytest.raises(pydicom.errors.InvalidDicomError, match="spleen_3"):
         metadata_module.extract_dicom_metadata(str(tmp_path))
