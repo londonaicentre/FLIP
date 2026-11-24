@@ -564,13 +564,31 @@ def test_make_passes_no_vocab_load_through_to_every_sync(target):
 def test_the_next_step_it_prints_keeps_the_kit(tmp_path, capsys, env, hub):
     """`up OVERRIDES_FILE=…` dropped the kit: no K8S_PLATFORM_VALUES, no TRUST_DATA_SEED=false, no
     patch-kit-secrets (FLIP#2047)."""
-    kit_file = tmp_path / f".env.Trust_K8s.{env}"
-    kit_file.write_text("TRUST_API_KEY=x\nAES_KEY_BASE64=x\nCENTRAL_HUB_API_URL=https://hub.example/api\n")
+    out = _next_step(tmp_path, capsys, env)
 
-    sync_k8s_kit.main(
-        "Trust_K8s", env, "flip-trust", "s", tmp_path, "eu-west-2", False, write_override=False, kit_file=kit_file
-    )
-
-    out = capsys.readouterr().out
     assert f"make -C trust/deploy/helm deploy-trust-k8s KIT=Trust_K8s{hub}\n" in out
     assert "OVERRIDES_FILE=" not in out
+
+
+_SECRET = "trust-release-flip-trust-secrets"  # pragma: allowlist secret
+
+
+def _next_step(tmp_path, capsys, env="stag", namespace="flip-trust", secret_name=_SECRET, **kwargs) -> str:
+    """What `main` prints for a kit that renders, with the Secret left alone."""
+    kit_file = tmp_path / f".env.Trust_K8s.{env}"
+    keys = {"TRUST_API_KEY": "x", "TRUST_INTERNAL_SERVICE_KEY": "x", "AES_KEY_BASE64": "x"}
+    kit_file.write_text("".join(f"{k}={v}\n" for k, v in {**_FL_KIT, **keys}.items()))
+    sync_k8s_kit.main(
+        "Trust_K8s", env, namespace, secret_name, tmp_path, "eu-west-2", False, kit_file=kit_file, **kwargs
+    )
+    return capsys.readouterr().out
+
+
+def test_the_next_step_names_the_cluster_namespace_and_release_it_was_given(tmp_path, capsys):
+    out = _next_step(tmp_path, capsys, namespace="ns", secret_name="rel-flip-trust-secrets", kube_context="kind-x")
+
+    assert "deploy-trust-k8s KIT=Trust_K8s HUB=stag KUBE_CONTEXT=kind-x NAMESPACE=ns RELEASE_NAME=rel\n" in out
+
+
+def test_patch_kit_secrets_does_not_end_by_recommending_the_deploy_it_is_the_last_step_of(tmp_path, capsys):
+    assert "deploy-trust-k8s" not in _next_step(tmp_path, capsys, write_override=False)

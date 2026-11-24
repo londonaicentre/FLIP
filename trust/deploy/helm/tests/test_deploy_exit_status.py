@@ -50,7 +50,7 @@ case "$1" in
     printf 'pacs:\\n  host: site-pacs\\n' ;;
   template)
     for a in "$@"; do
-      if grep -qs site-pacs -- "$a"; then echo 'template read the release values' >> "$CALL_LOG"; fi
+      if grep -qs site-pacs -- "$a"; then echo "template read the release values from $a" >> "$CALL_LOG"; fi
     done
     cat "$HELM_RENDER" ;;
   upgrade) exit "${HELM_UPGRADE_RC:-0}" ;;
@@ -207,16 +207,50 @@ def test_a_bare_xnat_init_renders_the_job_from_the_releases_own_values(tmp_path)
     assert calls.index("helm get values") < calls.index("helm template")
 
 
-@pytest.mark.parametrize(
-    "values", ["OVERRIDES_FILE=k8s-trust-ABC.yaml", "TAG=v1.2.3", "PLATFORM_VALUES=values-aks.yaml"]
-)
-def test_values_handed_to_xnat_init_are_the_ones_it_renders_with(tmp_path, values):
-    """deploy-trust-k8s and upgrade-trust-k8s pass the override (and the tag) they just deployed."""
-    result, calls = _make(tmp_path, "xnat-init", values)
+def test_an_override_file_handed_to_xnat_init_is_what_it_renders_with(tmp_path):
+    """deploy-trust-k8s and upgrade-trust-k8s pass the override they just deployed."""
+    result, calls = _make(tmp_path, "xnat-init", "OVERRIDES_FILE=k8s-trust-ABC.yaml", "TAG=v1.2.3")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "helm get values" not in calls
     assert "template read the release values" not in calls
+
+
+def _template_args(calls: str) -> tuple[list[str], str]:
+    """The `helm template` arguments, and the file among them that holds the release's values."""
+    template = next(line for line in calls.splitlines() if line.startswith("helm template ")).split()
+    release_values = next(line for line in calls.splitlines() if line.startswith("template read")).split()[-1]
+    return template, release_values
+
+
+@pytest.mark.parametrize(
+    ("given", "rendered_after"),
+    [
+        ("KIT=ABC", None),
+        ("TAG=v1.2.3", "global.image.tag=v1.2.3"),
+        ("PLATFORM_VALUES=values-aks.yaml", "values-aks.yaml"),
+        ("VALUES_FILE=site-values.yaml", "site-values.yaml"),
+    ],
+    ids=["kit", "tag", "platform-values", "values-file"],
+)
+def test_without_an_override_file_the_release_is_read_and_what_the_caller_passed_wins(tmp_path, given, rendered_after):
+    """`xnat-init KIT=<CODE> HUB=<env>` names no override file, so it too rendered the Job from the
+    chart defaults. Only an override file stands in for the release's values; anything else the
+    caller passes is applied on top of them."""
+    result, calls = _make(tmp_path, "xnat-init", given)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    template, release_values = _template_args(calls)
+    if rendered_after:
+        assert template.index(release_values) < template.index(rendered_after), template
+
+
+def test_the_charts_default_values_file_is_not_laid_over_the_releases_values(tmp_path):
+    """`-f values.yaml` after the release's values would reset every key to the chart default."""
+    _, calls = _make(tmp_path, "xnat-init")
+
+    template, release_values = _template_args(calls)
+    assert not any(arg.endswith("/values.yaml") for arg in template[template.index(release_values) :])
 
 
 def test_xnat_init_with_no_release_keeps_the_chart_defaults(tmp_path):

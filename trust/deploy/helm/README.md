@@ -99,10 +99,14 @@ images that exist.
   from the kit's `FL_KIT_DIR`). It stamps a newly created Secret with Helm ownership metadata so the
   first install can adopt it, and regenerates the FL-server egress port (and, for Flower,
   `flClient.flower.superlink`) on every run so upgrades never lose them. `sync-kit-override` writes only
-  the override; `patch-kit-secrets` only patches the Secret and restarts what reads it: the three API
-  deployments every time, and the release's FL clients only when the trust-internal service key in the Secret
-  changed (it says which), so a routine redeploy leaves a running FL job alone. An FL client that was not ready,
-  awaiting its kit or a free GPU, is restarted but not waited on.
+  the override; `patch-kit-secrets` only patches the Secret and restarts what reads it: the API
+  deployments the release has (trust-api, data-access-api, imaging-api) every time, and an FL client only when
+  the Secret's trust-internal service key or header name is no longer what that client was last restarted with
+  (it says which), so a routine redeploy leaves a running FL job alone. It tells by a sha256 of the two entries
+  kept in the annotation `flip/internal-service-key-sha256` on the client's Deployment, so a key that `sync-kit`
+  patched earlier still restarts the client here; a client with nothing recorded yet is restarted only if this
+  run changed the Secret. An FL client that was not ready, awaiting its kit or a free GPU, is restarted but not
+  waited on. A Secret that cannot be read stops the target before anything is restarted.
 - **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy-release` and `xnat-init` with that
   override, then `patch-kit-secrets` — even when a step failed, so trust-api never polls with a stale key
   (#595) — and fails if any of the three did, naming which one. Without `KIT=` it is plain `deploy`, which is also all the repo-root
@@ -999,7 +1003,7 @@ kubectl rollout restart deployment/<release>-flip-trust-xnat-web
 ```
 
 `make patch-kit-secrets` restarts `imaging-api`, `trust-api`,
-`data-access-api` (and the FL clients, when the trust-internal service key changed) but neither `xnat-db` nor `xnat-web`, so running it alone
+`data-access-api` (and an FL client whose trust-internal service key or header name changed) but neither `xnat-db` nor `xnat-web`, so running it alone
 during a rotation still leaves those two on the old password — restart
 `xnat-db` and `xnat-web` yourself, in that order, around it.
 
@@ -1339,13 +1343,16 @@ xnat.initJob.enabled=true`, applied with the
 `app.kubernetes.io/component=xnat-init` selector), waits up to `HELM_TIMEOUT` (default
 `30m`) for it to complete or fail, and on failure tails the job's logs before exiting non-zero.
 
-Run like that, with no `KIT`, `OVERRIDES_FILE`, `PLATFORM_VALUES` or `TAG`, the job is rendered from
-the values the release was deployed with (`helm get values`), so XNAT is configured for the same
-PACS, schedule and image tag as the deploy that preceded it. Add `KUBE_CONTEXT`, `NAMESPACE` or
-`RELEASE_NAME` if the deploy named them; the failure messages print the command with them. If the
-release's values cannot be read the target stops rather than render from the chart defaults, which
-would point XNAT at the mocked PACS; only when no such release exists does it use the defaults.
-Pass values yourself (as `deploy-trust-k8s` and `upgrade-trust-k8s` do) and those are used instead.
+Run without `OVERRIDES_FILE` (like that, or with `KIT=<CODE> HUB=<env>`, which names no override
+file), the job is rendered from the values the release was deployed with (`helm get values`), so
+XNAT is configured for the same PACS, schedule and image tag as the deploy that preceded it.
+Anything else you pass is applied over the release's values and wins: a `VALUES_FILE`,
+`PLATFORM_VALUES` (with `KIT`, the kit's `K8S_PLATFORM_VALUES`), then `TAG`. Add `KUBE_CONTEXT`,
+`NAMESPACE` or `RELEASE_NAME` if the deploy named them; the failure messages print the command with
+them. If the release's values cannot be read the target stops rather than render from the chart
+defaults, which would point XNAT at the mocked PACS; only when no such release exists does it use
+the defaults. With `OVERRIDES_FILE` (as `deploy-trust-k8s` and `upgrade-trust-k8s` call it) the
+release is not read and the job is rendered from that file and the rest of what was passed.
 
 Two things worth knowing now that `make deploy` calls this target itself:
 

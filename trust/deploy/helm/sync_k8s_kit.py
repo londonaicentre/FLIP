@@ -941,6 +941,7 @@ def main(
     release_name: str | None = None,
     kit_file: Path | None = None,
     vocab_load: bool = True,
+    kube_context: str = "",
 ) -> None:
     release_name = release_name or derive_release_name(secret_name)
     repo_root = REPO_ROOT
@@ -1035,14 +1036,23 @@ def main(
         override_path.write_text(override)
         print(f"  ✓ Wrote values override: {override_path}")
         print()
+        # The cluster, namespace and release this run was pointed at, so the line works as printed.
+        selectors = "".join(
+            f" {name}={value}"
+            for name, value, default in (
+                ("KUBE_CONTEXT", kube_context, ""),
+                ("NAMESPACE", namespace, "flip-trust"),
+                ("RELEASE_NAME", release_name, "trust-release"),
+            )
+            if value != default
+        )
+        print("─" * 64)
+        print("📦 Deploy the chart (KIT= keeps the kit's platform values and seed switch, and patches its keys):")
+        print(f"     make -C trust/deploy/helm deploy-trust-k8s KIT={code}{hub}{selectors}")
+        print("─" * 64)
     else:
+        # patch-kit-secrets: the last step of the deploy-trust-k8s the banner above recommends.
         print(f"ⓘ  --no-write-override: skipping override file write (existing {rel_override} preserved).")
-        print()
-
-    print("─" * 64)
-    print("📦 Deploy the chart (KIT= keeps the kit's platform values and seed switch, and patches its keys):")
-    print(f"     make -C trust/deploy/helm deploy-trust-k8s KIT={code}{hub}")
-    print("─" * 64)
 
 
 if __name__ == "__main__":
@@ -1122,4 +1132,5 @@ if __name__ == "__main__":
         release_name=args.release_name,
         kit_file=args.kit_file,
         vocab_load=args.vocab_load,
+        kube_context=args.kube_context,
     )

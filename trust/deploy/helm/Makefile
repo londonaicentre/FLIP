@@ -355,8 +355,10 @@ ifdef KIT
 	elif [ $$rc -ne 0 ]; then \
 		echo "❌ the release did not land (helm or the rollout wait failed). Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then failing."; \
 	fi; \
-	$(MAKE) patch-kit-secrets KIT=$(KIT) || { rc=1; \
-		echo "❌ patch-kit-secrets failed: the trust may not be running on the kit's keys. Re-run: $(strip make -C trust/deploy/helm patch-kit-secrets KIT=$(KIT) $(if $(HUB),HUB=$(HUB)) $(RELEASE_ARGS))"; }; \
+	$(MAKE) patch-kit-secrets KIT=$(KIT) || { \
+		if [ $$rc -eq 0 ] || [ $$step = xnat-init ]; then \
+			echo "❌ patch-kit-secrets failed: the trust may not be running on the kit's keys. Re-run: $(strip make -C trust/deploy/helm patch-kit-secrets KIT=$(KIT) $(if $(HUB),HUB=$(HUB)) $(RELEASE_ARGS))"; \
+		fi; rc=1; }; \
 	exit $$rc
 else
 	@$(MAKE) deploy
@@ -555,6 +557,11 @@ template-egress-variants: ## Render the egress NetworkPolicy in default / harden
 clean: ## Clean up rendered output
 	@rm -f $(CHART_DIR)/*.rendered.yaml
 
+# $(VALUES_OPTS) for a render that starts from a release's own values: without its leading
+# `-f <chart values.yaml>`, which laid over them would reset every key to the chart default (Helm
+# starts from that file anyway). A VALUES_FILE the caller named is kept.
+VALUES_OPTS_OVER_RELEASE = $(if $(filter command environment,$(origin VALUES_FILE)),$(VALUES_OPTS),$(wordlist 3,$(words $(VALUES_OPTS)),$(VALUES_OPTS)))
+
 xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=false)
 	@# One shell for the whole target: the "nothing to do" case must skip the wait too, and a
 	@# bare `exit 0` in one recipe line would only end that line.
@@ -564,17 +571,19 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	@# trust that has no XNAT to configure into exit 3.
 	@# The wait ends on Complete or Failed, whichever comes first: a Job past its backoffLimit never
 	@# completes. Only a Failed condition fails it; a Failed-waiter that errors is dropped.
-	@# Handed no values (the re-run the failure messages print), the Job is rendered from the ones
-	@# the release was deployed with: from the chart defaults it would configure XNAT for the mocked
-	@# PACS on the default image tag and report success (FLIP#2047). A release that cannot be read
-	@# stops here for the same reason; only one that does not exist falls back to the defaults.
+	@# Handed no override file (the re-run the failure messages print, or KIT= alone, which names
+	@# none), the Job is rendered from the values the release was deployed with: from the chart
+	@# defaults it would configure XNAT for the mocked PACS on the default image tag and report
+	@# success (FLIP#2047). Whatever else the caller passed (VALUES_FILE, PLATFORM_VALUES, TAG) is
+	@# applied over them. A release that cannot be read stops here for the same reason; only one
+	@# that does not exist falls back to the defaults.
 	@echo "▶  Rendering XNAT init job from chart templates..."
 	@tmp=$$(mktemp); vals=$$(mktemp); \
 	trap 'rm -f "$$tmp" "$$vals"' EXIT; \
-	release_values=; \
-	if [ -z "$(strip $(OVERRIDES_FILE)$(KIT)$(PLATFORM_VALUES)$(TAG))" ]; then \
+	opts="$(VALUES_OPTS)"; \
+	if [ -z "$(strip $(OVERRIDES_FILE))" ]; then \
 		if $(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o yaml > $$vals 2> $$tmp; then \
-			release_values="-f $$vals"; \
+			opts="-f $$vals $(VALUES_OPTS_OVER_RELEASE)"; \
 			echo "   with the values release $(RELEASE_NAME) was deployed with."; \
 		elif grep -q 'release: not found' $$tmp; then \
 			echo "ⓘ  no release $(RELEASE_NAME) in $(NAMESPACE) — rendering from the chart defaults."; \
@@ -585,7 +594,7 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	fi; \
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
-		$(VALUES_OPTS) $$release_values \
+		$$opts \
 		--set xnat.initJob.enabled=true > $$tmp \
 		|| { echo "❌  could not render the chart — xnat-init not run."; exit 1; }; \
 	if ! grep -q 'app.kubernetes.io/component: xnat-init' $$tmp; then \
@@ -635,16 +644,27 @@ sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit 
 
 patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s HUB=stag"; exit 1)
-	@# One shell, so the Secret's trust-internal service key can be compared across the patch. The FL
-	@# clients read it from that Secret like the three APIs, but are restarted only when it changed
-	@# (FLIP#2047): this target runs on every deploy-trust-k8s, and a restart ends an in-flight FL job.
-	@# A Secret that was not there before counts as changed. The key stays in shell variables.
-	@# Each client is listed as <name>=<ready replicas>, and one that was not ready is not waited on:
-	@# awaiting its kit or a free GPU it stays Pending, and the wait could only time out
-	@# (scripts/rollout_wait.py). A release with flClient.enabled=false has none.
-	@key() { $(KUBECTL) get secret $(RELEASE_NAME)-flip-trust-secrets -n $(NAMESPACE) \
-		-o jsonpath='{.data.trust-internal-service-key}' 2>/dev/null; }; \
-	before=$$(key) || before=absent; \
+	@# The three APIs restart on every run. The FL clients read the trust-internal service key and its
+	@# header name from the same Secret, but a restart ends an in-flight FL job and this target runs
+	@# on every deploy-trust-k8s, so a client restarts only when the Secret no longer holds what it
+	@# was last restarted with (FLIP#2047). That is a sha256 of the two entries, kept as an annotation
+	@# on the client's Deployment (its own metadata: on the pod template it would roll the pods, and
+	@# Helm does not template it, so an upgrade leaves it). It holds whichever verb patched the
+	@# Secret: sync-kit patches it and restarts nothing. A client with nothing recorded yet restarts
+	@# only if this run changed the Secret. "pending" is written before a restart, so a run that
+	@# failed there is repaired by the next. A Secret that cannot be read stops the target; only
+	@# NotFound, before the patch, is "no Secret yet". The entries are only ever piped into the hash.
+	@# Deployments are listed as <component>=<name>=<ready replicas>=<recorded>; one the release does
+	@# not render is not restarted, and a client that was not ready is not waited on: awaiting its
+	@# kit or a free GPU it stays Pending, and the wait could only time out (scripts/rollout_wait.py).
+	@secret=$(RELEASE_NAME)-flip-trust-secrets; mark=flip/internal-service-key-sha256; \
+	fingerprint() { \
+		v=$$($(KUBECTL) get secret $$secret -n $(NAMESPACE) --ignore-not-found \
+			-o jsonpath='{.data.trust-internal-service-key}:{.data.trust-internal-service-key-header}') || return 1; \
+		[ -n "$$v" ] || return 0; \
+		printf '%s' "$$v" | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'; \
+	}; \
+	before=$$(fingerprint) || { echo "❌  could not read $$secret — nothing patched or restarted."; exit 1; }; \
 	uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \
 		--kit $(KIT) \
 		--env $(ENV) \
@@ -656,22 +676,34 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		$(if $(NO_VOCAB_LOAD),--no-vocab-load) \
 		$(KUBE_CONTEXT_ARG) \
 		--no-write-override || exit 1; \
-	after=$$(key) || { echo "❌  could not read $(RELEASE_NAME)-flip-trust-secrets after the patch — nothing restarted."; exit 1; }; \
-	restart="$(addprefix $(RELEASE_NAME)-flip-trust-,trust-api data-access-api imaging-api)"; wait=$$restart; \
-	if [ "$$before" = "$$after" ]; then \
-		echo "ⓘ  internal service key unchanged: FL client left running"; \
-	else \
-		echo "🔄 internal service key changed: restarting the FL client"; \
-		fl=$$($(KUBECTL) get deployment -n $(NAMESPACE) \
-			-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component=fl-client \
-			-o jsonpath='{range .items[*]}{.metadata.name}={.status.readyReplicas}{" "}{end}') || exit 1; \
-		for client in $$fl; do \
-			restart="$$restart $${client%%=*}"; \
-			case "$$client" in *=|*=0) ;; *) wait="$$wait $${client%%=*}" ;; esac; \
-		done; \
-	fi; \
-	for name in $$restart; do \
+	now=$$(fingerprint) && [ -n "$$now" ] || { echo "❌  could not read $$secret after the patch — nothing restarted."; exit 1; }; \
+	deployments=$$($(KUBECTL) get deployment -n $(NAMESPACE) -l app.kubernetes.io/instance=$(RELEASE_NAME) \
+		-o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/component}={.metadata.name}={.status.readyReplicas}={.metadata.annotations.flip/internal-service-key-sha256}{" "}{end}') || exit 1; \
+	apis=; clients=; record=; wait=; \
+	for d in $$deployments; do \
+		component=$${d%%=*}; d=$${d#*=}; name=$${d%%=*}; d=$${d#*=}; ready=$${d%%=*}; recorded=$${d#*=}; \
+		case "$$component" in \
+		trust-api|data-access-api|imaging-api) apis="$$apis $$name"; wait="$$wait $$name" ;; \
+		fl-client) \
+			if [ "$$recorded" = "$$now" ] || { [ -z "$$recorded" ] && [ "$$before" = "$$now" ]; }; then \
+				echo "ⓘ  $$name: internal service key unchanged: FL client left running"; \
+				[ -n "$$recorded" ] || record="$$record $$name"; \
+			else \
+				echo "🔄 $$name: internal service key changed: restarting the FL client"; \
+				clients="$$clients $$name"; \
+				case "$$ready" in ""|0) ;; *) wait="$$wait $$name" ;; esac; \
+			fi ;; \
+		esac; \
+	done; \
+	for name in $$apis; do \
 		$(KUBECTL) rollout restart deployment/$$name -n $(NAMESPACE) || exit 1; \
+	done; \
+	for name in $$clients; do \
+		$(KUBECTL) annotate deployment/$$name -n $(NAMESPACE) --overwrite $$mark=pending > /dev/null \
+		&& $(KUBECTL) rollout restart deployment/$$name -n $(NAMESPACE) || exit 1; \
+	done; \
+	for name in $$clients $$record; do \
+		$(KUBECTL) annotate deployment/$$name -n $(NAMESPACE) --overwrite $$mark=$$now > /dev/null || exit 1; \
 	done; \
 	for name in $$wait; do \
 		$(KUBECTL) rollout status deployment/$$name -n $(NAMESPACE) --timeout=120s || exit 1; \
