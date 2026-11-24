@@ -554,6 +554,8 @@ upgrade-xnat: xnat-check-ports create-xnat-network
 # labels, like xnat-web (FLIP#1210). The container runs as xnat-web's uid, the owner of the rest of
 # the tree, so the backups stay deletable by the operator under FLIP_UID and a later xnat-reset
 # still finds a tree it owns (FLIP#1731); xnat-backup-writable checks it can, before anything is dumped.
+# The dump holds every XNAT password hash and token secret, so backups/ and the dump are the owner's
+# alone (umask 077, and chmod for a backups/ an earlier upgrade left open).
 xnat-backup: SHELL := /bin/bash
 xnat-backup: xnat-backup-writable
 	$(require_kit)
@@ -567,8 +569,8 @@ xnat-backup: xnat-backup-writable
 	dump="backups/xnat-db-$$(date +%Y%m%d-%H%M%S).sql.gz"; \
 	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/$$dump ..."; \
 	if docker exec "$$db" sh -c 'set -o pipefail; pg_dumpall -U postgres | gzip -c' \
-	     | docker run --rm -i --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" $(HOST_TOOLS_IMAGE) sh -c "set -o pipefail; \
-	         mkdir -p /x/backups && cat > /x/$$dump \
+	     | docker run --rm -i --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" $(HOST_TOOLS_IMAGE) sh -c "set -o pipefail; umask 077; \
+	         mkdir -p /x/backups && chmod 700 /x/backups && cat > /x/$$dump \
 	         && gzip -dc /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
 	         && ls -l /x/$$dump"; then \
 	  exit 0; \

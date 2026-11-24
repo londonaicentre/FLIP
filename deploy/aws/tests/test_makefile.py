@@ -267,3 +267,24 @@ def test_register_trusts_never_rotates_the_xnat_credentials(tmp_path: Path) -> N
     assert result.returncode == 0, result.stderr
     assert "generate_xnat_credentials --env-file " in result.stdout
     assert "--force" not in result.stdout
+
+
+# ── provision-local-trust stages a Flower kit (FLIP-SR-074) ──────────────────────────────────
+
+
+def test_provision_local_trust_stages_only_this_trusts_flower_files_privately(tmp_path: Path) -> None:
+    """The kit prefix holds the SuperLink's TLS key and every slot's credential; the stage dir is on a shared /tmp."""
+    kit = tmp_path / ".env.AZ1.stag"
+    kit.write_text("TRUST_CODE=AZ1\nFL_BACKEND=flower\nFL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n")
+    env_file = _env_file(tmp_path, FL_BACKEND="flower", FLOWER_KIT_DATE="20261009")
+
+    result = _make_dry_run("provision-local-trust", "KIT=AZ1", f"KIT_FILE={kit}", tmp_path=tmp_path, env_file=env_file)
+
+    assert result.returncode == 0, result.stderr
+    staging = result.stdout.split("Downloading the FL participant kit", 1)[1].split("Flower kit staged", 1)[0]
+    sync = " ".join(staging.split("aws s3 sync", 1)[1].split("&&", 1)[0].split())
+    assert sync.endswith('--exclude "*" --include "certificates/ca.crt" --include "keys/supernode_credentials_3"'), (
+        f"the sync is not limited to the trust's own two files: {sync}"
+    )
+    assert "umask 077" in staging.split("aws s3 sync", 1)[0], "the staged credential is readable by other users"
+    assert "/tmp/AZ1_kit " not in staging, "a fixed path in /tmp can be prepared by another user"
