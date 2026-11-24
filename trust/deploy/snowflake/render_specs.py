@@ -45,7 +45,7 @@ if str(HERE) not in sys.path:
 import yaml_min  # noqa: E402
 from kitfile import kit_path, read_env_vars, resolve_env  # noqa: E402
 from mirror_images import source_tag  # noqa: E402
-from naming import Names, NamingError  # noqa: E402
+from naming import FL_CLIENT_IMAGES, Names, NamingError, fl_client_image  # noqa: E402
 from spec_templates import build_all  # noqa: E402
 
 REPO_ROOT = HERE.parents[2]
@@ -82,8 +82,12 @@ def load_digests(directory: Path, code: str, env: str, kit: dict[str, str]) -> d
         print(f"   ⚠  {IMAGE_LOCK} is for {data.get('code')} ({data.get('env')}), not {code} ({env}): not used.")
         print("      Run `make mirror-images` for this trust.")
         return {}
+    # A kit that switched FL backend keeps the old client's entry in the lock for good.
+    other_clients = set(FL_CLIENT_IMAGES.values()) - {fl_client_image(kit)}
     digests: dict[str, str] = {}
     for repo, entry in data.get("images", {}).items():
+        if repo in other_clients:
+            continue
         mirrored, asked = entry.get("tag"), source_tag(kit, repo)
         if mirrored == asked:
             digests[repo] = entry.get("digest", "")
@@ -172,8 +176,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # The Makefile refuses this at parse time; here for the script run on its own, where an
-    # ignored HUB_EGRESS=true would render a hubless trust.
+    # The kit is the one place that holds the switch: an ignored HUB_EGRESS=true would
+    # render a hubless trust. The Makefile refuses the make line; this also catches an
+    # exported one, and the script run on its own.
     if "HUB_EGRESS" in os.environ:
         sys.exit(
             "❌ HUB_EGRESS is set on the make line or in the environment. It is read from the kit file\n"
@@ -196,8 +201,8 @@ def main() -> None:
         )
     kit = read_env_vars(path)
     out_dir = args.out_dir or HERE / "rendered" / f"{names.code}.{env}"
-    digests = load_digests(HERE, names.code, env, kit)
     try:
+        digests = load_digests(HERE, names.code, env, kit)
         manifest = render(kit, args.kit, env, out_dir, digests)
     except ValueError as e:
         sys.exit(f"❌ {e}")

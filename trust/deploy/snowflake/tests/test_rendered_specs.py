@@ -708,3 +708,58 @@ def test_a_digest_mirrored_at_another_tag_is_dropped(kit: dict, tmp_path: Path) 
     }
     moved = {**kit, "DOCKER_FL_TAG": "v1.3.0", "ORTHANC_TAG": "v1.0.0"}
     assert load_digests(lock, "GSTT", "stag", moved) == {}
+
+
+def test_a_misspelt_site_privacy_name_is_refused(kit: dict) -> None:
+    """The client refuses any FL_SITE_PRIVACY_* name it does not know, so Compose stops on a typo.
+    Looking for the three known names only, this shape deployed with no filter."""
+    with pytest.raises(ValueError, match="FL_SITE_PRIVACY_POLCY"):
+        spec_templates.build_all({**kit, "FL_SITE_PRIVACY_POLCY": "percentile"}, "GSTT")
+
+
+def test_an_empty_site_privacy_table_asks_for_nothing(kit: dict, tmp_path: Path) -> None:
+    """As flip.nvflare.site_policy reads it: [fl_privacy.nvflare] with no keys is no policy."""
+    document = tmp_path / "governance.toml"
+    document.write_text("[disclosure]\nmin_cohort_size = 20\n\n[fl_privacy.nvflare]\n")
+    spec_templates.build_all({**kit, "ACCESS_POLICY_FILE": str(document)}, "GSTT")
+    # Keys directly under [fl_privacy] stop the client on Compose: still refused here.
+    document.write_text('[fl_privacy]\npolicy = "percentile"\n')
+    with pytest.raises(ValueError, match=r"\[fl_privacy\]"):
+        spec_templates.build_all({**kit, "ACCESS_POLICY_FILE": str(document)}, "GSTT")
+
+
+def test_the_other_backends_client_image_in_the_lock_is_ignored(kit: dict, tmp_path: Path, capsys) -> None:
+    """After a backend switch the old client's entry stays in the lock for good (a mirror merges
+    into it), and every render warned about an image this kit does not run."""
+    lock = _lock(tmp_path, **{"trust-api": "v1.2.3", "flower-supernode": "v1.0.0", "flare-fl-client": "v1.2.3"})
+    assert load_digests(lock, "GSTT", "stag", kit) == {
+        "trust-api": "sha256:trust-api",
+        "flare-fl-client": "sha256:flare-fl-client",
+    }
+    assert capsys.readouterr().out == ""
+
+
+def test_an_invalid_backend_is_a_message_not_a_traceback(kit: dict, tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+
+    kit_file = tmp_path / "kit.env"
+    kit_file.write_text("".join(f"{key}={value}\n" for key, value in {**kit, "FL_BACKEND": "flwr"}.items()))
+    here = Path(__file__).resolve().parents[1]
+    (tmp_path / "images.lock.json").write_text(json.dumps({"code": "GSTT", "env": "stag", "images": {"x": {}}}))
+    script = (
+        "import sys, pathlib, render_specs; render_specs.HERE = pathlib.Path(sys.argv[1]); "
+        "sys.argv = ['render_specs.py', '--kit', 'GSTT', '--env', 'stag', '--kit-file', sys.argv[2], "
+        "'--out-dir', sys.argv[3]]; render_specs.main()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), str(kit_file), str(tmp_path / "out")],
+        capture_output=True,
+        text=True,
+        cwd=here,
+        env={key: value for key, value in os.environ.items() if key != "HUB_EGRESS"},
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "FL_BACKEND" in result.stderr

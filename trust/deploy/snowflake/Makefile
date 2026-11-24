@@ -29,8 +29,10 @@ include $(REPO_ROOT)/deploy/env_mode.mk
 
 # The kit is the one place that holds HUB_EGRESS. Given on the make line it was stored
 # nowhere, and the next `make up` without it issued UNSET EXTERNAL_ACCESS_INTEGRATIONS:
-# the trust left the hub and the FL network with exit 0 (FLIP#2047).
-ifneq ($(origin HUB_EGRESS),undefined)
+# the trust left the hub and the FL network with exit 0 (FLIP#2047). Only the make line
+# stops every target: one left exported in a shell is refused by render_specs.py, so by
+# the targets that render, and `suspend`, `down` and `status` still run.
+ifeq ($(origin HUB_EGRESS),command line)
 $(error HUB_EGRESS is read from the kit file only: put HUB_EGRESS=true (or false) in trust/.env.<CODE>.<env> and run again without it)
 endif
 

@@ -586,10 +586,6 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
     )
 
 
-#: The kit's FL site privacy filter (FLIP#851), as Compose and Helm pass it to the FLARE client.
-SITE_PRIVACY_KEYS = ("FL_SITE_PRIVACY_POLICY", "FL_SITE_PRIVACY_PERCENTILE", "FL_SITE_PRIVACY_GAMMA")
-
-
 def governance_document(ref: str) -> Path:
     """The kit's ``ACCESS_POLICY_FILE`` on this host: relative to ``trust/``, as Compose's
     ``--project-directory trust`` resolves its own mount of the same file."""
@@ -604,7 +600,9 @@ def refuse_site_privacy(kit: dict[str, str]) -> None:
     the client's ``privacy.json`` before the client starts. Nothing does on SPCS, so the trust
     would come up with no site filter while its kit asks for one (fail closed, FLIP#2047).
     """
-    asked = next((key for key in SITE_PRIVACY_KEYS if kit.get(key, "").strip()), None)
+    # Any name with the prefix, not the three known ones: the client refuses a misspelt
+    # name, so on Compose a typo stops it, and here it must not deploy with no filter.
+    asked = next((key for key, value in kit.items() if key.startswith("FL_SITE_PRIVACY_") and value.strip()), None)
     ref = kit.get("ACCESS_POLICY_FILE", "").strip()
     if not asked and ref:
         try:
@@ -613,7 +611,8 @@ def refuse_site_privacy(kit: dict[str, str]) -> None:
             raise ValueError(
                 f"ACCESS_POLICY_FILE={ref!r} cannot be read ({e}), so it cannot be checked for a site privacy filter"
             ) from None
-        if section:
+        # An empty [fl_privacy.nvflare] is no policy, as flip.nvflare.site_policy reads it.
+        if any(section.values()) if isinstance(section, dict) else section:
             asked = f"[fl_privacy] in {ref}"
     if asked:
         raise ValueError(
