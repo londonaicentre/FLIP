@@ -336,8 +336,23 @@ class KeycloakIdentityProvider(IdentityProvider):
             raise IdentityProviderError("User created but could not get user ID")
         logger.info("User has been created successfully")
         if not suppress_invite:
-            self._invite(user_id, email)
+            try:
+                self._invite(user_id, email)
+            except IdentityProviderError:
+                # The caller is told the registration failed and records no profile, so remove the
+                # account: left behind, it would turn the retry into "already exists".
+                self._discard_created_user(user_id)
+                raise
         return UUID(user_id)
+
+    def _discard_created_user(self, user_id: str) -> None:
+        """Delete an account this call has just created; a failure here is logged, not raised."""
+        try:
+            deleted = self._request("DELETE", f"users/{user_id}").status_code < 400
+        except IdentityProviderError:
+            deleted = False
+        if not deleted:
+            logger.error(f"Could not remove Keycloak user {user_id} after its invitation failed; delete it by hand")
 
     def _invite(self, user_id: str, email: str) -> None:
         """Ask Keycloak to email a set-password link; in dev, stand in for the missing SMTP."""
