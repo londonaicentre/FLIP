@@ -104,7 +104,8 @@ def test_the_rollout_is_waited_for_before_the_deploy_reports_success():
     """
     recipe = deploy_recipe()
     assert "rollout_wait.py" in recipe, recipe
-    assert recipe.index("helm upgrade --install") < recipe.index("rollout_wait.py"), recipe
+    # rindex: the first rollout_wait.py call only notes which fl-clients are serving (FLIP#1984).
+    assert recipe.index("helm upgrade --install") < recipe.rindex("rollout_wait.py"), recipe
 
 
 @needs_make
@@ -120,7 +121,7 @@ def test_helms_own_all_or_nothing_wait_is_not_used():
 def test_a_failed_rollout_exits_1_not_0():
     """The scoped wait must be wired to fail the deploy, not merely print."""
     recipe = deploy_recipe()
-    tail = recipe[recipe.index("rollout_wait.py") :]
+    tail = recipe[recipe.rindex("rollout_wait.py") :]
     assert "exit 1" in tail, tail
 
 
