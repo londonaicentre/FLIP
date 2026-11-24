@@ -206,6 +206,30 @@ jobs:
 
           echo "✅ Built FL Client."
 
+      # A trust has no route to GitHub, so TotalSegmentator must run with what the image holds
+      # (FLIP#1945). No network, read-only root: every weights set of the `total` task is in place,
+      # since TotalSegmentator's own lookup would otherwise try to download it; and usage statistics
+      # are off in a config.json a job cannot change. Before the push, so a client that cannot run
+      # offline is never published.
+      - name: Check TotalSegmentator runs offline in the FL Client Image
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint python \
+            $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} -c "
+          import json, os, pathlib
+          import nnunetv2, SimpleITK, torch
+          from totalsegmentator.bin.totalseg_download_weights import TASK_TO_ID
+          from totalsegmentator.libs import download_pretrained_weights
+          from totalsegmentator.python_api import totalsegmentator
+          for task_id in TASK_TO_ID['total']:
+              download_pretrained_weights(task_id)
+          config = pathlib.Path(os.environ['TOTALSEG_HOME_DIR']) / 'config.json'
+          assert json.loads(config.read_text())['send_usage_stats'] is False, 'usage statistics are on'
+          st = config.stat()
+          assert st.st_uid == 0 and not st.st_mode & 0o022, 'a job can write config.json'
+          print(torch.__version__)"
+
+          echo "✅ TotalSegmentator runs offline."
+
       - name: Push FL Client Image
         env:
           TAGS: ${{ steps.tags.outputs.client_tags }}
