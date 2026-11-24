@@ -207,11 +207,16 @@ stage_fl_kit() {
     local backend="$1" src="$2"
     rm -rf "${FL_KIT_DIR}/net-1"
     mkdir -p "${FL_KIT_DIR}"
-    cp -R "${src}/net-1" "${FL_KIT_DIR}/net-1"
     if [ "${backend}" = nvflare ]; then
+        cp -R "${src}/net-1" "${FL_KIT_DIR}/net-1"
         chown -R 1000:1000 "${FL_KIT_DIR}/net-1"
     else
-        chmod 0644 "${FL_KIT_DIR}"/net-1/certificates/*
+        # The CA certificate and the node's credential, by name: a kit packed before the packager
+        # named its files also carries the SuperLink's TLS key in certificates/.
+        mkdir -p "${FL_KIT_DIR}/net-1/certificates"
+        cp "${src}/net-1/certificates/ca.crt" "${FL_KIT_DIR}/net-1/certificates/ca.crt"
+        chmod 0644 "${FL_KIT_DIR}/net-1/certificates/ca.crt"
+        cp -R "${src}/net-1/keys" "${FL_KIT_DIR}/net-1/keys"
         local key
         for key in "${FL_KIT_DIR}"/net-1/keys/*; do
             chgrp 49999 "${key}"

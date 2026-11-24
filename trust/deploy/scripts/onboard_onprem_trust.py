@@ -1045,8 +1045,11 @@ def check_unrotated_passwords(
     if not template.is_file():
         return Check("Trust-local passwords", Status.WARN, "not checked — trust/.env.example is missing")
     template_vars = read_kit_vars(template)
+    # A key set to nothing was not rotated either; one the kit does not carry at all is not this check's.
     unchanged = [
-        key for key in TRUST_LOCAL_PASSWORD_KEYS if kit_vars.get(key) and kit_vars[key] == template_vars.get(key)
+        key
+        for key in TRUST_LOCAL_PASSWORD_KEYS
+        if key in kit_vars and (not kit_vars[key] or kit_vars[key] == template_vars.get(key))
     ]
     if not unchanged:
         return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
@@ -1054,9 +1057,9 @@ def check_unrotated_passwords(
     return Check(
         "Trust-local passwords",
         Status.FAIL if deployed else Status.WARN,
-        f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} still match {template.name} defaults",
+        f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} are empty or still match {template.name} defaults",
         hints=[
-            f"Unchanged: {', '.join(unchanged)}",
+            f"Unchanged or empty: {', '.join(unchanged)}",
             f"Edit {kit_path} → Trust-local credentials section and replace each with a",
             "  random secret (`make new-trust` mints them for a fresh kit).",
         ],
@@ -1076,7 +1079,8 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
     level = (kit_vars.get("TRUST_LOG_LEVEL") or "").strip().upper()
-    if level and level != "DEBUG":
+    # Named, not "anything but DEBUG": NOTSET and a numeric level below 20 log everything too.
+    if level in ("INFO", "WARNING", "ERROR", "CRITICAL"):
         return Check(label, Status.PASS, f"TRUST_LOG_LEVEL={level}")
     if not level:
         # Unset falls back to each service's own default; name it rather than assume.
@@ -1085,7 +1089,9 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     return Check(
         label,
         Status.FAIL if deployed else Status.WARN,
-        "TRUST_LOG_LEVEL=DEBUG logs trust credentials into Loki (FLIP-SR-050)",
+        f"TRUST_LOG_LEVEL={level} logs trust credentials into Loki (FLIP-SR-050)"
+        if level == "DEBUG"
+        else f"TRUST_LOG_LEVEL={level} is not INFO, WARNING, ERROR or CRITICAL, and may log as DEBUG does",
         hints=[
             f"Edit {kit_path} → set TRUST_LOG_LEVEL=INFO, then recreate the trust APIs.",
             "A site that already ran at DEBUG should rotate both trust keys.",
