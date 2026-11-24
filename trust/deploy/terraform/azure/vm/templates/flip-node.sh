@@ -83,13 +83,23 @@ check_ref() {
 
 # Without a REF the node stays where its last checkout left it (a detached HEAD): FLIP_REF is first
 # boot's ref, and returning to it would undo every `reprovision REF=` under a running trust. A clone
-# still on its branch was never pinned, so it takes FLIP_REF.
+# still on its branch was never pinned, so it takes FLIP_REF. Detached is symbolic-ref's exit 1 on a
+# HEAD that resolves; any other answer (a damaged repo, one git refuses to open) stops here.
 checkout() {
     if [ ! -d "${REPO_DIR}/.git" ]; then
         git clone --quiet "${FLIP_REPO_URL}" "${REPO_DIR}"
     fi
-    if [ -z "${1:-}" ] && ! git -C "${REPO_DIR}" symbolic-ref --quiet HEAD >/dev/null; then
-        return 0
+    if [ -z "${1:-}" ] && git -C "${REPO_DIR}" rev-parse --verify --quiet HEAD >/dev/null; then
+        local on_branch=0
+        git -C "${REPO_DIR}" symbolic-ref --quiet HEAD >/dev/null || on_branch=$?
+        case "${on_branch}" in
+            0) ;;
+            1) return 0 ;;
+            *)
+                echo "ERROR: cannot tell which ref ${REPO_DIR} is at (git symbolic-ref exited ${on_branch}); not provisioning from it." >&2
+                exit 1
+                ;;
+        esac
     fi
     local ref="${1:-${FLIP_REF}}"
     check_ref "${ref}"

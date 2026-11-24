@@ -154,7 +154,7 @@ def test_a_bare_provision_keeps_the_ref_the_node_was_moved_to(tmp_path):
     """FLIP_REF is first boot's ref: returning to it would undo every `reprovision REF=`."""
     env, log = _setup(tmp_path, disk_present=True, has_fs=True)
     assert _run(env, "provision", "v0.12.0").returncode == 0
-    # From here the checkout is detached, as `checkout --detach` leaves it: symbolic-ref fails.
+    # From here the checkout is detached, as `checkout --detach` leaves it: symbolic-ref exits 1.
     _stub(tmp_path / "bin", "git", f'echo "git $*" >> "{log}"; [[ " $* " != *" symbolic-ref "* ]]')
     log.write_text("")
 
@@ -165,6 +165,25 @@ def test_a_bare_provision_keeps_the_ref_the_node_was_moved_to(tmp_path):
     assert "checkout" not in calls
     assert "fetch" not in calls
     assert "ansible-playbook" in calls, "the play still runs, on the code already there"
+
+
+@pytest.mark.parametrize(
+    ("git", "why"),
+    [
+        ('[[ " $* " != *" symbolic-ref "* ]] || exit 128', "symbolic-ref itself failed (dubious ownership)"),
+        ('case " $* " in *" rev-parse "*|*" fetch "*) exit 128 ;; esac', "HEAD does not resolve (a damaged repo)"),
+    ],
+)
+def test_a_bare_provision_stops_on_a_checkout_it_cannot_read(tmp_path, git, why):
+    """Only a HEAD git confirms as detached is kept: any other failure must not run the play on what is on disk."""
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    (Path(env["FLIP_DIR"]) / "FLIP" / ".git").mkdir(parents=True)
+    _stub(tmp_path / "bin", "git", f'echo "git $*" >> "{log}"; {git}')
+
+    result = _run(env, "provision")
+
+    assert result.returncode != 0, why
+    assert "ansible-playbook" not in log.read_text(), why
 
 
 def test_a_bare_provision_pins_a_clone_that_was_never_checked_out(tmp_path):
