@@ -134,6 +134,13 @@ HELM_TIMEOUT ?= 30m
 # keeps the recursion without that flag; `make -n` then prints the step like any other line.
 SUBMAKE := $(MAKE)
 
+# What the "xnat-init did not complete" messages tell the operator to run. It carries no values:
+# run bare, xnat-init renders the Job from the release's own (see the target). Only what selects
+# the release is repeated (RELEASE_ARGS), so the command works as printed.
+RELEASE_ARGS := $(strip $(if $(KUBE_CONTEXT),KUBE_CONTEXT=$(KUBE_CONTEXT)) $(foreach v,NAMESPACE RELEASE_NAME,$(if $(filter command environment,$(origin $(v))),$(v)=$($(v)))))
+XNAT_INIT_RERUN := make -C trust/deploy/helm xnat-init$(if $(RELEASE_ARGS), $(RELEASE_ARGS))
+XNAT_INIT_HELP := trust/deploy/helm/README.md, Running the XNAT init job by hand
+
 # Determine which values files to pass
 VALUES_OPTS := -f $(VALUES_FILE)
 ifneq ($(strip $(SECRETS_FILE)),)
@@ -310,8 +317,8 @@ deploy-release: preflight ## Apply the chart and wait for the core workloads to 
 deploy: deploy-release ## Deploy the Helm chart to the cluster (deploy-release, then xnat-init)
 	@$(SUBMAKE) --no-print-directory xnat-init || { \
 		printf '\033[0;33m%s\033[0m\n' \
-			"⚠️  the release is live and rolled out, but xnat-init did not complete (see #565)." \
-			"⚠️  Re-run: make -C trust/deploy/helm xnat-init (raise HELM_TIMEOUT if it just needed longer)."; \
+			"⚠️  the release is live and rolled out, but xnat-init did not complete (see $(XNAT_INIT_HELP))." \
+			"⚠️  Re-run: $(XNAT_INIT_RERUN) (raise HELM_TIMEOUT if it just needed longer)."; \
 		exit 1; }
 
 # Helm records every hook's outcome for the current revision, so when the upgrade fails the
@@ -344,11 +351,12 @@ ifdef KIT
 		$(MAKE) xnat-init OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=1; \
 	fi; \
 	if [ $$rc -ne 0 ] && [ $$step = xnat-init ]; then \
-		echo "⚠️  the release is live and rolled out, but xnat-init did not complete (see #565). Patching per-trust secrets, then failing."; \
+		echo "⚠️  the release is live and rolled out, but xnat-init did not complete (see $(XNAT_INIT_HELP)). Patching per-trust secrets, then failing. Afterwards re-run: $(XNAT_INIT_RERUN)"; \
 	elif [ $$rc -ne 0 ]; then \
 		echo "❌ the release did not land (helm or the rollout wait failed). Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then failing."; \
 	fi; \
-	$(MAKE) patch-kit-secrets KIT=$(KIT); \
+	$(MAKE) patch-kit-secrets KIT=$(KIT) || { rc=1; \
+		echo "❌ patch-kit-secrets failed: the trust may not be running on the kit's keys. Re-run: make -C trust/deploy/helm patch-kit-secrets KIT=$(KIT)$(if $(HUB), HUB=$(HUB))$(if $(RELEASE_ARGS), $(RELEASE_ARGS))"; }; \
 	exit $$rc
 else
 	@$(MAKE) deploy
@@ -405,7 +413,7 @@ _upgrade-trust-k8s-apply:
 	  || { $(MAKE) xnat-db-drop-unused-dump AFTER_FAILED_DEPLOY=1; exit 1; }
 	$(MAKE) xnat-db-drop-unused-dump
 	$(MAKE) xnat-init OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
-	  || { echo "⚠️  the release is live and rolled out, but xnat-init did not complete (see #565). Re-run: make -C trust/deploy/helm xnat-init"; exit 1; }
+	  || { echo "⚠️  the release is live and rolled out, but xnat-init did not complete (see $(XNAT_INIT_HELP)). Re-run: $(XNAT_INIT_RERUN)"; exit 1; }
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
 
 # The PostgreSQL major the xnat-db image runs, and the release's XNAT pods (FLIP#1812).
@@ -556,12 +564,28 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	@# trust that has no XNAT to configure into exit 3.
 	@# The wait ends on Complete or Failed, whichever comes first: a Job past its backoffLimit never
 	@# completes. Only a Failed condition fails it; a Failed-waiter that errors is dropped.
+	@# Handed no values (the re-run the failure messages print), the Job is rendered from the ones
+	@# the release was deployed with: from the chart defaults it would configure XNAT for the mocked
+	@# PACS on the default image tag and report success (FLIP#2047). A release that cannot be read
+	@# stops here for the same reason; only one that does not exist falls back to the defaults.
 	@echo "▶  Rendering XNAT init job from chart templates..."
-	@tmp=$$(mktemp); \
-	trap 'rm -f "$$tmp"' EXIT; \
+	@tmp=$$(mktemp); vals=$$(mktemp); \
+	trap 'rm -f "$$tmp" "$$vals"' EXIT; \
+	release_values=; \
+	if [ -z "$(strip $(OVERRIDES_FILE)$(KIT)$(PLATFORM_VALUES)$(TAG))" ]; then \
+		if $(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o yaml > $$vals 2> $$tmp; then \
+			release_values="-f $$vals"; \
+			echo "   with the values release $(RELEASE_NAME) was deployed with."; \
+		elif grep -q 'release: not found' $$tmp; then \
+			echo "ⓘ  no release $(RELEASE_NAME) in $(NAMESPACE) — rendering from the chart defaults."; \
+		else \
+			cat $$tmp; \
+			echo "❌  could not read the values of release $(RELEASE_NAME) — xnat-init not run."; exit 1; \
+		fi; \
+	fi; \
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
-		$(VALUES_OPTS) \
+		$(VALUES_OPTS) $$release_values \
 		--set xnat.initJob.enabled=true > $$tmp \
 		|| { echo "❌  could not render the chart — xnat-init not run."; exit 1; }; \
 	if ! grep -q 'app.kubernetes.io/component: xnat-init' $$tmp; then \
@@ -622,11 +646,25 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		$(if $(NO_VOCAB_LOAD),--no-vocab-load) \
 		$(KUBE_CONTEXT_ARG) \
 		--no-write-override
-	@for svc in trust-api data-access-api imaging-api; do \
-		$(KUBECTL) rollout restart deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE); \
-	done
-	@for svc in trust-api data-access-api imaging-api; do \
-		$(KUBECTL) rollout status deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE) --timeout=120s; \
+	@# The FL clients read TRUST_INTERNAL_SERVICE_KEY from the same Secret, so they restart with the
+	@# three APIs (FLIP#2047); a release with flClient.enabled=false has none. Each is listed as
+	@# <name>=<ready replicas>, and one that was not ready is not waited on: awaiting its kit or a
+	@# free GPU it stays Pending, and the wait could only time out (scripts/rollout_wait.py).
+	@fl=$$($(KUBECTL) get deployment -n $(NAMESPACE) \
+		-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component=fl-client \
+		-o jsonpath='{range .items[*]}{.metadata.name}={.status.readyReplicas}{" "}{end}') || exit 1; \
+	restart=; \
+	for svc in trust-api data-access-api imaging-api; do restart="$$restart $(RELEASE_NAME)-flip-trust-$$svc"; done; \
+	wait=$$restart; \
+	for client in $$fl; do \
+		restart="$$restart $${client%%=*}"; \
+		case "$$client" in *=|*=0) ;; *) wait="$$wait $${client%%=*}" ;; esac; \
+	done; \
+	for name in $$restart; do \
+		$(KUBECTL) rollout restart deployment/$$name -n $(NAMESPACE) || exit 1; \
+	done; \
+	for name in $$wait; do \
+		$(KUBECTL) rollout status deployment/$$name -n $(NAMESPACE) --timeout=120s || exit 1; \
 	done
 
 # Registration is done ONCE on the hub, not here:
@@ -635,7 +673,7 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 #   make sync-trust-kit KIT=<KIT> HUB=<env>           # fills the Hub-shared block
 # This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
-# `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
+# `make deploy-trust-k8s KIT=<KIT> HUB=<env>`, which keeps the kit's platform values. Env from $(HUB).
 sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s HUB=stag"; exit 1)
 	@uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \
