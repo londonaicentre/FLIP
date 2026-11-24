@@ -129,7 +129,7 @@ class HostDirsArePreparedNotEscalated(unittest.TestCase):
 
     def test_deployed_up_trust_runs_no_root_container_and_names_the_remedy(self):
         out = dry_run("up-trust")
-        assert "alpine:3.20 chown" not in out, out
+        assert not re.search(r"busybox:1\.36@sha256:[0-9a-f]{64} chown", out), out
         assert "make -C trust prepare-host-dirs KIT=SCR HUB=prod" in out, out
 
     def test_prepare_host_dirs_creates_every_mount_source(self):

@@ -12,6 +12,12 @@
 # Portability helpers for the trust Makefiles: a BSD/macOS dev host (FLIP#1609) and a host
 # where the operator has Docker but no root (FLIP#1723).
 
+# The throwaway container the trust Makefiles run where the host needs something they cannot do from
+# here: a chown without root, a directory on a remote docker host, the XNAT database dump. A trust host
+# reaches one registry (FLIP#1721), so it is GHCR's mirror of busybox at the digest
+# trust/deploy/mirror-images.manifest records, never a docker.io image (FLIP#1784).
+HOST_TOOLS_IMAGE := ghcr.io/londonaicentre/mirror/library/busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+
 # `stat` with a GNU format: `-c` on Linux, `-f` on a BSD/macOS dev host (whose octal mode is %Lp).
 ifeq ($(shell stat -c %u / 2>/dev/null),)
 stat_fmt = stat -f '$(subst %a,%Lp,$(1))'

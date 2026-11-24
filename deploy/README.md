@@ -241,7 +241,7 @@ runs `trust/Makefile`'s `ensure_data_dirs`, which chowns it to UID 999 first.
 > fails the write and aborts it, so the PACS reports a *network* fault (`Peer aborted Association`),
 > and the same EACCES stops XNAT writing the application logs that would name the cause.
 
-`ensure_data_dirs` chowns through a throwaway alpine container when the
+`ensure_data_dirs` chowns through a throwaway container (`HOST_TOOLS_IMAGE` in `deploy/portable.mk`, GHCR's busybox mirror) when the
 caller is not root, so a developer needs no `sudo` to seed the mock storage directory in dev.
 
 Unlike Orthanc's storage directory, XNAT's dev tree deliberately does **not** get that no-`sudo` treatment. `xnat-reset` creates
