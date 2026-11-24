@@ -87,7 +87,7 @@ make up-no-trust           # Start central hub only
 make up-trusts             # Start trust services only
 make down                  # Stop all services
 make restart               # Stop and restart all
-make restart-no-trust      # Restart flip-api only (forwards DEBUG to `make -C flip-api restart`)
+make restart-no-trust      # Recreate the flip-api container only (flip-db, FL services and trusts stay up; honours DEBUG)
 make build                 # Build all Docker images (standalone, --no-cache; does not start)
 make lock                  # Regenerate every uv.lock from its pyproject.toml
 make ui                    # Start UI only
@@ -238,12 +238,8 @@ provisioned on the node and never in a Run Command parameter. Detail: [`trust/de
 ```bash
 make debug SERVICE=flip-api        # Start a service in debug mode
 make debug SERVICE=trust-api       # Available: flip-api, trust-api, imaging-api, data-access-api, fl-api-net-1
-make debug-off SERVICE=flip-api    # Stop debug mode
+make debug-off SERVICE=flip-api    # Stop debug mode (same service names as `debug`)
 ```
-
-Quirk: `debug-off` does not accept `SERVICE=fl-api-net-1` — its case arm spells the FL API `fl-api`,
-a name no compose service carries — so `make debug-off SERVICE=fl-api-net-1` is rejected as unknown
-and the `fl-api` spelling fails in compose. Recreate `fl-api-net-1` with `DEBUG=false` directly.
 
 Debug ports (hub `API_DEBUG_PORT`, trust `TRUST/IMAGING/DATA_ACCESS_DEBUG_PORT`) publish on
 `127.0.0.1` only, so the debugger must attach from the same host — for a remote dev box, tunnel the

@@ -73,8 +73,9 @@ export UID
 COMMON_COMPOSE_FILE := deploy/compose/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
-# Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (from .env, or overridden at the CLI) to
-# absolute paths against the repo root — see abs_or_relative_to in deploy/fl_backend.mk.
+# Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (assigned in deploy/fl_backend.mk, which overrides
+# any .env value; only the command line outranks it) to absolute paths against the repo
+# root — see abs_or_relative_to in deploy/fl_backend.mk.
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR))
 override FL_JOBS_DIR := $(call abs_or_relative_to,$(FL_JOBS_DIR),$(MAKEFILE_DIR))
@@ -200,10 +201,10 @@ _ensure-fl-jobs-dir:
 		done; \
 	fi
 
-# Fail fast (FLARE) when the per-net startup kits are missing — delegated to
-# scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
-# come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir); the check is a no-op
-# for non-FLARE backends. In development it also checks that the FLARE FL API can read its
+# Fail fast when the selected backend's per-net credentials are missing (FLARE startup kits,
+# Flower TLS certs) — delegated to scripts/check-fl-provisioned.sh (see that script for the
+# why/how). Net IDs come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir).
+# In development it also checks that the FLARE FL API can read its
 # admin key through the host group (FL_API_KEY_GID, FLIP#1384).
 _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
@@ -378,6 +379,8 @@ restart: down up
 #       services depend on object-store, so compose recreates it from this tree; without
 #       ./object-store the bind mount is refused and make stops after step 1 has removed every
 #       FL client, leaving the stack with none. As a prerequisite it fails before anything stops.
+# NOTE: _check-fl-provisioned for the same reason: on a tree provisioned for the other backend
+#       alone, the servers would start on bind sources that are not there.
 # NOTE: On Flower the trusts dial `fl-server-net-<N>` on fl-net-<N>, which is the fleet proxy's
 #       alias there (FLIP#1517), so the proxies restart with the servers. Step 3's
 #       --remove-orphans drops the other backend's leftovers, as `up` and `down` do: on a switch
@@ -390,7 +393,7 @@ restart: down up
 #       other backend's /tmp. `rm -v` takes those anonymous volumes with the container.
 FL_SERVER_SERVICES := fl-server-net-1 fl-server-net-2 \
 	$(if $(filter flower,$(FL_BACKEND)),fl-fleet-proxy-net-1 fl-fleet-proxy-net-2)
-restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir
+restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
@@ -409,11 +412,14 @@ restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-stor
 	$(MAKE) -C trust up-fl-clients
 	@echo "✅ FL services restarted successfully!"
 
-# Stop and start all services except the trust services related services
+# Recreate the flip-api container alone, as restart-fl's step 2 does: flip-db, the FL services
+# and the trusts stay up. Not `make -C flip-api restart`, which names this project with the
+# common compose file only, so its --remove-orphans removes every FL overlay service, and
+# which takes flip-db down with flip-api.
 restart-no-trust: _check-compose-project-owner
-	@echo "Debug mode: '${DEBUG}'"
-	@echo "Passing DEBUG=${DEBUG} to the downstream $(MAKE) commands..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
+	@echo "🔄 Recreating flip-api (DEBUG='$(DEBUG)')..."
+	${DOCKER_COMMAND} rm -fsv flip-api
+	DEBUG=$(DEBUG) ${DOCKER_COMMAND} up -d --no-deps $(UP_PULL_FLAGS) flip-api
 ci:
 	act --env-file .env.development
 # Runs the script directly; `make -C deploy/aws lint` runs it too, with
@@ -528,9 +534,7 @@ debug-off: _check-compose-project-owner
 	@case "$(SERVICE)" in \
 		data-access-api|imaging-api|trust-api) \
 			DEBUG=false $(MAKE) -C trust debug-$(SERVICE)-off ;; \
-		flip-api) \
-			DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
-		fl-api) \
+		flip-api|fl-api-net-1) \
 			DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
 		*) \
 			echo "❌ Unknown service: $(SERVICE)"; exit 1 ;; \

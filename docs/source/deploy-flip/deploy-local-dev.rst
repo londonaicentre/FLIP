@@ -411,8 +411,8 @@ Day-to-day use
    * - ``make down``
      - Stop everything (data is kept)
    * - ``make restart-no-trust``
-     - Restart the hub API. Runs in the foreground, and removes the running
-       FL API and FL server containers; ``make up-no-trust`` brings them back.
+     - Recreate the hub API container alone, in the background. The database,
+       the FL services and the trusts keep running.
    * - ``make up BUILD=true``
      - Rebuild images after a dependency or Dockerfile change. Ordinary
        source edits are bind-mounted and reload live (see
