@@ -29,7 +29,9 @@ The list is derived from the test sources, not kept by hand. A static scan sees 
 
 It does not see a name joined on at run time (``WORKFLOWS / workflow``), a root-level file named
 without a ``/``, or what a Makefile a test runs goes on to include. Where the scan ends on such a
-directory the test fails until ``BY_HAND`` says which files are read there. The one input no list
+directory the test fails until ``BY_HAND`` says which files are read there. That entry is then the
+whole check for the directory: a later test reading another file there by a run-time name is not
+flagged, so a new such read means a new line in ``BY_HAND``. The one input no list
 can name is ``test_env_mode.py``'s sweep of every tracked Makefile and script for an old ``HUB``
 comparison.
 """
@@ -92,27 +94,36 @@ def _resolve(node: ast.AST, names: dict[str, Path], source: Path) -> Path | None
     return None
 
 
-def _outside_paths(source: Path) -> set[str]:
+def _outside_paths(source: Path, text: str | None = None) -> set[str]:
     """Repo-relative paths outside ``deploy/aws`` that the module ``source`` names."""
-    tree = ast.parse(source.read_text())
+    tree = ast.parse(source.read_text() if text is None else text)
+    assignments = sorted(
+        (n for n in ast.walk(tree) if isinstance(n, ast.Assign) and [type(t) for t in n.targets] == [ast.Name]),
+        key=lambda n: n.end_lineno,
+    )
+    # Each node is resolved with the names as they stand on its line, so a name two tests each
+    # assign means each test's own path. A path that only goes on to build a longer one, or to
+    # be given a name, is not where a read ends.
     names: dict[str, Path] = {}
-    # A path that only goes on to build a longer one, or to be given a name, is not where a read ends.
-    prefixes = set()
-    for node in sorted((n for n in ast.walk(tree) if isinstance(n, ast.Assign)), key=lambda n: n.lineno):
-        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            prefixes.add(node.value)
-            value = _resolve(node.value, names, source)
+    resolved: dict[ast.AST, Path] = {}
+    prefixes = {node.value for node in assignments}
+    for node in sorted((n for n in ast.walk(tree) if hasattr(n, "lineno")), key=lambda n: n.lineno):
+        while assignments and assignments[0].end_lineno < node.lineno:
+            assigned = assignments.pop(0)
+            value = _resolve(assigned.value, names, source)
+            names.pop(assigned.targets[0].id, None)
             if value:
-                names[node.targets[0].id] = value
-    for node in ast.walk(tree):
-        if _resolve(node, names, source):
+                names[assigned.targets[0].id] = value
+        path = _resolve(node, names, source)
+        if path:
+            resolved[node] = path
             prefixes.update(ast.iter_child_nodes(node))
 
     found = set()
     for node in ast.walk(tree):
         if node in prefixes:
             continue
-        path = _resolve(node, names, source)
+        path = resolved.get(node)
         if path is None and isinstance(node, ast.Constant) and isinstance(node.value, str):
             text = node.value
             if "/" in text and not text.startswith("/") and not set(text) & set(" \n*"):
@@ -151,6 +162,20 @@ def test_the_scan_sees_both_kinds_of_reference() -> None:
     """A scan that silently found nothing would pass every test below."""
     assert "fl-services/nvflare/Makefile" in SCANNED  # built with `/` from the root
     assert "flip-api/Dockerfile" in SCANNED  # a string literal joined on later
+
+
+def test_a_name_assigned_in_two_tests_keeps_both_paths() -> None:
+    module = (
+        "from pathlib import Path\n"
+        "REPO_ROOT = Path(__file__).resolve().parents[3]\n"
+        "def test_one():\n"
+        "    target = REPO_ROOT / 'flip-api' / 'Dockerfile'\n"
+        "    target.read_text()\n"
+        "def test_two():\n"
+        "    target = REPO_ROOT / 'flip-ui' / 'Makefile'\n"
+        "    target.read_text()\n"
+    )
+    assert _outside_paths(AWS_DIR / "tests" / "test_example.py", module) == {"flip-api/Dockerfile", "flip-ui/Makefile"}
 
 
 def test_every_directory_the_scan_ends_on_is_accounted_for() -> None:

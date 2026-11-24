@@ -32,8 +32,10 @@
 #     GitHub Release and send a re-run back through all fourteen image builds.
 #   * still queued when the budget expires -> a warning, not a failure. Queuing
 #     behind a long push apply is legitimate and the release is not wrong.
-#   * no run for this tag seen by then -> a failure: the dispatch produced nothing
-#     this step can vouch for.
+#   * the listing worked and shows no run for this tag by then -> a failure: the
+#     dispatch produced nothing this step can vouch for. Only that. A listing that
+#     errored, or a re-dispatch not listed yet, is a warning: the apply is most
+#     likely queued, and failing here would withhold the GitHub Release from it.
 #
 # WHICH RUN IS THE RELEASE APPLY. Only a dispatch that carries this release_tag,
 # which terraform_apply.yml's `run-name` puts in the run's title. An operator's
@@ -74,9 +76,11 @@ redispatched=0
 deadline=$((SECONDS + APPLY_CONFIRM_SECONDS))
 
 while :; do
+    listed=1
     if ! run="$(find_run 2>&1)"; then
         echo "⚠️  could not list terraform_apply runs (treating as not yet visible): ${run}"
         run=""
+        listed=0
     fi
 
     if [[ -n "${run}" ]]; then
@@ -89,6 +93,8 @@ while :; do
                 echo "::warning::the release apply at ${TAG} was cancelled before it ran (${url}) — almost always another run queued on main displacing it in the tf-apply-main group. Dispatching it once more."
                 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                 redispatched=1
+                # The new run gets a budget of its own, not what is left of the first one's.
+                deadline=$((SECONDS + APPLY_CONFIRM_SECONDS))
                 if ! gh workflow run terraform_apply.yml --repo "${REPO}" \
                     --ref refs/heads/main -f release_tag="${TAG}"; then
                     echo "::error::re-dispatch of terraform_apply.yml for ${TAG} failed — production was NOT re-pinned. ${manual_hint}"
@@ -101,7 +107,8 @@ while :; do
             exit 1
         fi
 
-        if [[ "${status}" != "queued" && "${status}" != "waiting" && "${status}" != "requested" ]]; then
+        # `pending` is a run held by the tf-apply-main group: not started, and still displaceable.
+        if [[ "${status}" != "queued" && "${status}" != "waiting" && "${status}" != "requested" && "${status}" != "pending" ]]; then
             echo "✅ the release apply at ${TAG} is running — ${url}"
             echo "   its outcome is reported by that run, not by this one."
             exit 0
@@ -112,6 +119,15 @@ while :; do
     fi
 
     if [[ "${SECONDS}" -ge "${deadline}" ]]; then
+        check="gh run list --repo ${REPO} --workflow terraform_apply.yml --branch main"
+        if [[ "${listed}" -eq 0 ]]; then
+            echo "::warning::the terraform_apply runs could not be listed when the ${APPLY_CONFIRM_SECONDS}s budget ran out, so the release apply at ${TAG} is unconfirmed. Check that a run titled '${RUN_TITLE}' started: ${check}"
+            exit 0
+        fi
+        if [[ -z "${run}" && "${redispatched}" -eq 1 ]]; then
+            echo "::warning::the re-dispatched release apply at ${TAG} was not listed within ${APPLY_CONFIRM_SECONDS}s. Check that a run titled '${RUN_TITLE}' started: ${check}"
+            exit 0
+        fi
         if [[ -z "${run}" ]]; then
             echo "::error::no terraform_apply run titled '${RUN_TITLE}' appeared within ${APPLY_CONFIRM_SECONDS}s of the dispatch, so nothing confirms production was re-pinned to ${TAG}. Look for it (gh run list --repo ${REPO} --workflow terraform_apply.yml --branch main); if no run carries the tag, ${manual_hint}"
             exit 1

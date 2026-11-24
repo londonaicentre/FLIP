@@ -532,6 +532,10 @@ jobs:
   # without failing the apply job the staging cycle keys on. No environment: aws-prod's
   # reviewers would have to approve it on every production apply, so the apply job
   # compares and only its verdict crosses over.
+  #
+  # The remedy it prints is "re-run all jobs", never a fresh dispatch: a re-run keeps
+  # the run's inputs, while a dispatch on main without release_tag would pin this
+  # commit's sha images over a release (see "Release applies" in the header).
   ui-cognito-ids:
     name: Check the UI's Cognito ids against Terraform
     needs: apply
@@ -553,7 +557,7 @@ jobs:
               echo "::warning title=UI Cognito ids not set::AWS_COGNITO_USER_POOL_ID and AWS_COGNITO_APP_CLIENT_ID are not set on this environment, as on a first apply. Set them from terraform output CognitoUserPoolId / CognitoAppClientId before the UI can be published."
               ;;
             mismatch)
-              echo "::error title=UI Cognito ids differ::This environment's AWS_COGNITO_USER_POOL_ID / AWS_COGNITO_APP_CLIENT_ID do not match terraform output CognitoUserPoolId / CognitoAppClientId (${step} says which). A UI built from them cannot sign anyone in, so it is not published: set the variables to Terraform's values, then re-run all jobs or dispatch the apply again."
+              echo "::error title=UI Cognito ids differ::This environment's AWS_COGNITO_USER_POOL_ID / AWS_COGNITO_APP_CLIENT_ID do not match terraform output CognitoUserPoolId / CognitoAppClientId (${step} says which). A UI built from them cannot sign anyone in, so it is not published: set the variables to Terraform's values, then re-run all jobs of this run, which keeps its inputs (if a release apply has run since, re-run that run instead). Do not dispatch a new apply on main without release_tag: it would take production off the release's images."
               exit 1
               ;;
             *)
