@@ -42,19 +42,53 @@ def _response(status: int, text: str = "") -> MagicMock:
     return MagicMock(status_code=status, text=text)
 
 
+def _members(*logins: str) -> list[dict[str, str]]:
+    return [{"login": "admin", "displayname": "Owners"}] + [{"login": x, "displayname": "Members"} for x in logins]
+
+
+def _answer(status: int, rows: list | None = None, text: str = "") -> MagicMock:
+    response = _response(status, text)
+    response.json.return_value = {"ResultSet": {"Result": rows or []}}
+    return response
+
+
 class TestGrant:
     def test_it_adds_the_data_account_as_a_member_on_the_callers_session(self):
-        with patch.object(data_account.requests, "put", return_value=_response(200)) as put:
+        with patch.object(data_account.requests, "put", return_value=_answer(200, _members("flip_data"))) as put:
             data_account.grant_data_access(FLIP_A, {"Cookie": "JSESSIONID=admin"})
         url = put.call_args.args[0]
         assert url.endswith(f"/data/projects/{FLIP_A}/users/Members/flip_data")
         assert put.call_args.kwargs["headers"] == {"Cookie": "JSESSIONID=admin"}
 
-    @pytest.mark.parametrize("response", [_response(404), _response(400, "Invalid user: flip_data")])
-    def test_a_user_xnat_does_not_have_is_named_as_missing(self, response):
+    def test_a_200_that_does_not_list_the_account_is_a_missing_account(self):
+        """XNAT 1.10.2.1 answers 200 to adding a user it does not have, adds nobody, and returns the member list."""
+        with (
+            patch.object(data_account.requests, "put", return_value=_answer(200, _members())),
+            pytest.raises(data_account.DataAccountMissingError),
+        ):
+            data_account.grant_data_access(FLIP_A, {})
+
+    def test_the_account_listed_under_another_role_is_not_a_member(self):
+        rows = [{"login": "flip_data", "displayname": "Owners"}]
+        with (
+            patch.object(data_account.requests, "put", return_value=_answer(200, rows)),
+            pytest.raises(data_account.DataAccountMissingError),
+        ):
+            data_account.grant_data_access(FLIP_A, {})
+
+    def test_a_404_is_a_missing_account(self):
+        with (
+            patch.object(data_account.requests, "put", return_value=_answer(404)),
+            pytest.raises(data_account.DataAccountMissingError),
+        ):
+            data_account.grant_data_access(FLIP_A, {})
+
+    def test_an_answer_that_is_not_a_member_list_is_an_error_not_a_success(self):
+        response = _response(200, "<html>")
+        response.json.side_effect = ValueError("not json")
         with (
             patch.object(data_account.requests, "put", return_value=response),
-            pytest.raises(data_account.DataAccountMissingError),
+            pytest.raises(Exception, match="not a member list"),
         ):
             data_account.grant_data_access(FLIP_A, {})
 
@@ -127,7 +161,8 @@ class TestRemedy:
         text = data_account.remedy()
         assert "'flip_data'" in text
         assert "XNAT_DATA_PASSWORD" in text
-        assert "sync-kit" in text
+        assert "upgrade command" in text
+        assert "generate-xnat-credentials" in text
 
     def test_a_refused_account_points_at_xnat_init(self):
         text = data_account.remedy()

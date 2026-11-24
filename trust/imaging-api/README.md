@@ -397,6 +397,13 @@ the fix, `/health` reports `xnat_data_account` (`ready`, `pending`, `not configu
 reports imaging-api as degraded to the hub. `tests/routers/test_xnat_identity.py` checks each route's dependency graph,
 so a route cannot change identity without a test failing.
 
+On a live XNAT, `trust/xnat/scripts/check_xnat_data_account.py` (stdlib only) drives XNAT as the data account through
+what the two routes need and through what they must not reach (delete a session, scan or project, read or write another
+project, create a user, give itself a role, call DQR), and exits non-zero if any of it holds. It creates two throwaway
+projects and removes them afterwards. XNAT 1.10.2.1 answers some refusals with a success status (201 to a non-admin
+creating a user, 200 to adding a user it does not have to a project), so the script, like imaging-api, judges by the
+state afterwards rather than by the status.
+
 ## Authentication
 
 imaging-api exposes privileged XNAT operations via a service account. To prevent any container on the trust Docker network — or any operator with SSM port-forward access — from acting as that service account, every router except `/health` requires callers to send `TRUST_INTERNAL_SERVICE_KEY` in the configured header. imaging-api compares the header against its own copy of the same per-trust key with a constant-time compare.

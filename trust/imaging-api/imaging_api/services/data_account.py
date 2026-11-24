@@ -77,8 +77,8 @@ def remedy() -> str:
     if state() == DataAccountState.NOT_CONFIGURED:
         return (
             f"imaging-api has no password for the XNAT data account '{user}' (XNAT_DATA_PASSWORD is empty). "
-            "Refresh the trust's kit (sync-kit, or onboard for an on-prem trust) so it carries XNAT_DATA_PASSWORD, "
-            "then redeploy; the deploy's xnat-init creates the account."
+            "Run the trust's upgrade command again (it adds XNAT_DATA_PASSWORD to the kit and creates the account), "
+            "or make generate-xnat-credentials KIT=<CODE> and redeploy."
         )
     return (
         f"XNAT refused the data account '{user}'. It is created by configure-xnat.sh (xnat-init), which runs on "
@@ -89,10 +89,11 @@ def remedy() -> str:
 def grant_data_access(project_id: str, headers: dict[str, str]) -> None:
     """Make the data account a Member of ``project_id``, on the provisioning account's ``headers``.
 
-    Idempotent: XNAT answers 200 for a user who is already a Member.
+    Idempotent: XNAT answers 200 for a user who is already a Member. XNAT also answers 200, and adds nobody, for a
+    user it does not have (seen on 1.10.2.1), so the answer's member list is what says it worked.
 
     Raises:
-        DataAccountMissingError: XNAT has no such user.
+        DataAccountMissingError: The account is not among the project's Members afterwards (XNAT has no such user).
         Exception: Any other refusal.
     """
     user = get_settings().XNAT_DATA_USER
@@ -101,11 +102,17 @@ def grant_data_access(project_id: str, headers: dict[str, str]) -> None:
         headers=headers,
         timeout=XNAT_REQUEST_TIMEOUT,
     )
-    if response.status_code == 200:
-        return
-    if response.status_code == 404 or "Invalid user" in response.text:
+    if response.status_code == 404:
         raise DataAccountMissingError(f"XNAT has no user '{user}'")
-    raise Exception(f"Adding '{user}' to project {project_id} failed: {response.status_code} - {response.text}")
+    if response.status_code != 200:
+        raise Exception(f"Adding '{user}' to project {project_id} failed: {response.status_code} - {response.text}")
+    try:
+        rows = response.json()["ResultSet"]["Result"]
+        members = {row.get("login") for row in rows if row.get("displayname") == "Members"}
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise Exception(f"Adding '{user}' to project {project_id}: XNAT's answer is not a member list") from None
+    if user not in members:
+        raise DataAccountMissingError(f"XNAT has no user '{user}' (project {project_id} does not list it)")
 
 
 def is_flip_project(project_id: str) -> bool:

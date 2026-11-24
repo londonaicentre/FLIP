@@ -396,21 +396,28 @@ else
       xnat_curl -X PUT "$XNAT_URL/xapi/users/${XNAT_DATA_USER}" \
         -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
         -H "Content-Type: application/json" \
-        -d "$(jq -n --arg p "${XNAT_DATA_PASSWORD}" '{password: $p, enabled: true, verified: true}')" ;;
+        -d "$(jq -n --arg p "${XNAT_DATA_PASSWORD}" '{password: $p, enabled: true, verified: true}')" >/dev/null ;;
     *)
       echo "ERROR: creating the data account failed (HTTP $xnat_status)" >&2
       printf '%s\n' "$xnat_body" >&2
       exit 1 ;;
   esac
+  # PUT on roles/ adds; it does not replace (XNAT 1.10.2.1), so any other role is deleted one by one.
   xnat_curl -X PUT "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/roles/" \
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
     -H "Content-Type: application/json" \
-    -d '["SiteUser", "non_expiring"]'
+    -d '["SiteUser", "non_expiring"]' >/dev/null
+  for role in $(xnat_curl "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/roles" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" | jq -r '.[] | select(. != "SiteUser" and . != "non_expiring")'); do
+    echo "Removing site role ${role} from the data account"
+    xnat_curl -X DELETE "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/roles/${role}" \
+      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" >/dev/null
+  done
   for group in $(xnat_curl "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/groups" \
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" | jq -r '.[] | select(startswith("ALL_DATA_"))'); do
     echo "Removing the data account from site-wide group ${group}"
     xnat_curl -X DELETE "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/groups/${group}" \
-      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}"
+      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" >/dev/null
   done
   # What it ends up holding, checked rather than assumed: a role XNAT kept from before is a site role.
   data_roles=$(xnat_curl "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/roles" -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}")
