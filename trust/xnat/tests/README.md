@@ -116,6 +116,6 @@ new value is exercised against both entrypoints automatically.
 
 ### Inputs outside this directory
 
-Many of these tests read files from outside `trust/xnat/tests/`, so
-`.github/workflows/test_trust_xnat.yml` lists each of them in its paths filter.
+The workflow's paths filter covers all of `trust/xnat/`. Many of these tests also read files from
+outside it, so `.github/workflows/test_trust_xnat.yml` lists each of those.
 A new input needs adding there too, or a change to it lands with its test unrun.

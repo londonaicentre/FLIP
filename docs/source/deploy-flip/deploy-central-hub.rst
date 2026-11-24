@@ -359,22 +359,50 @@ Rotating keys
 
 *Who: FLIP admin, with AWS access to the hub's account.* For a site on a Docker Compose host, the trust's Trust Admin
 or a FLIP admin can do this from the trust's card instead, with **Issue new keys** ("Later — issue new keys" on
-:doc:`onboarding-a-trust`); the three points below apply to both routes. From the command line, a trust's API key and
+:doc:`onboarding-a-trust`). That route is always an immediate cutover, like ``REVOKE_OLD=1`` below, and also drops
+any key a command-line rotation had staged; the points under "Two more things to plan for" apply to both routes. From the command line, a trust's API key and
 trust-internal service key are reissued in place, without re-registering it:
 
 .. code-block:: shell
 
    make -C deploy/providers/AWS rotate-trust-keys KIT=<CODE> HUB=<env>
 
-``KIT`` is required, and exactly one trust rotates per run. The trust keeps its id, its code and its FL kit slot;
-only ``api_key_hash`` changes, in one transaction with a ``ROTATED`` entry in the trust audit log. The new
-credentials are written into ``trust/.env.<CODE>.<suffix>``.
+``KIT`` is required, and exactly one trust rotates per run. The trust keeps its id, its code and its FL kit slot,
+and the change is recorded as a ``ROTATED`` entry in the trust audit log. The new credentials are written into
+``trust/.env.<CODE>.<suffix>``.
 
-Three things to plan for:
+**By default the new key is staged, and the site stays online.** The hub accepts both the old and the new key until
+the trust first calls it with the new one, which happens as soon as its containers are recreated from the new kit.
+That call promotes the new key: the old one is refused from then on, and the audit log records ``KEY_PROMOTED``.
+If the new key is never used within ``TRUST_KEY_ROTATION_GRACE_DAYS`` (14 by default), the hub stops accepting it
+at the deadline, later clears it and records ``KEY_EXPIRED``. A site that never switched carries on with its old key.
+A site that installs the new kit *after* the deadline is refused, because the key in that kit was dropped: rotate
+again and deliver the newer kit. A kit lost in transit is recovered the same way: the new pending key replaces the
+lost one, and the site never stopped working.
 
-- **The trust goes offline the moment the rotation commits.** The hub re-checks the live hash on every request, so
-  the old key is refused straight away; the trust comes back only once its containers are recreated from the new
-  kit. Plan the rotation as a short outage for that site, not as an overlap window.
+``TRUST_KEY_ROTATION_GRACE_DAYS`` is a flip-api setting with no Terraform passthrough, so a deployed hub always uses
+the 14-day default; only a local hub reads it from ``.env.<hub>``.
+
+**For a key known to be leaked, cut it off at once** with ``REVOKE_OLD=1``:
+
+.. code-block:: shell
+
+   make -C deploy/providers/AWS rotate-trust-keys KIT=<CODE> HUB=<env> REVOKE_OLD=1
+
+The hub then refuses the old key the moment the rotation commits, and the trust is offline until its containers are
+recreated from the new kit. Plan that as a short outage for the site.
+
+**Check that the old key is refused.** Once a staged rotation is promoted, or straight after ``REVOKE_OLD=1``, a call
+with the old key must get ``401``. Do not test with the *new* key while a rotation is staged: any authenticated call
+with it promotes it, and the site, still on the old key, is refused from then on.
+
+.. code-block:: shell
+
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: <old TRUST_API_KEY>" \
+     https://<hub>/api/trust/heartbeat
+
+Two more things to plan for:
+
 - **The trust-internal service key rotates with it**, so every trust-internal container has to restart together, not
   only ``trust-api``. Deliver the kit and recreate them in one step:
 
@@ -386,6 +414,13 @@ Three things to plan for:
        make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
   Do **not** use that root's ``deploy``: it is a first-install command that re-seeds the trust's data and resets XNAT.
+
+  The hub never checks the trust-internal service key, so a site on a Docker Compose host can also rotate it on its
+  own, without the hub and without touching its API key:
+  ``make -C trust rotate-internal-service-key KIT=<CODE> HUB=<env>``, then recreate every container the same way.
+  This is for Compose only. A Helm, AKS or Snowflake site runs from a copy synced from the kit, and the hub
+  operator's copy of the kit still holds the old key, so the next kit delivered from it puts the old key back.
+  There, rotate both keys from the hub with ``rotate-trust-keys`` and re-sync the kit.
 - **XNAT credentials do not rotate with it.** Their passwords live in the same kit, but changing them has its own
   caveat: Postgres applies ``XNAT_DATASOURCE_*`` only at the first initdb of the ``xnat-db`` volume, so a rotated value
   must also be applied to the live database. See ``make generate-xnat-credentials FORCE=1`` and the
@@ -725,4 +760,3 @@ old state would destroy it. Move the hub instead:
 5. **Destroy the old account's stack** once no trust points at it, from a checkout of a release that still has that mode
    (``v0.13.2`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
    the Cognito pool, the ``FLIP_API`` secret and the S3 buckets: delete them by hand, or close the account.
-

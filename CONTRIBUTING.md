@@ -358,9 +358,14 @@ carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `regis
 automatically once the hub is up.
 
 `make rotate-trust-keys KIT=<CODE>` reissues an already-registered trust's two keys in place and
-rewrites the same kit file. The trust keeps its id, its code and its FL kit slot. The hub refuses
-the old key as soon as the rotation commits, so the trust is offline until its containers are
-recreated from the new kit.
+rewrites the same kit file. The trust keeps its id, its code and its FL kit slot. The new API key is
+staged (FLIP#1714): the hub accepts the old and the new key until the trust first calls it with the
+new one, which retires the old one, so the trust stays online until its containers are recreated
+from the new kit. An unused new key stops working after `TRUST_KEY_ROTATION_GRACE_DAYS` (default
+14). `REVOKE_OLD=1` is the cutover for a leaked key: the hub refuses the old key as soon as the
+rotation commits, and the trust is offline until it runs on the new kit. On a Compose trust,
+`make -C trust rotate-internal-service-key KIT=<CODE> HUB=<env>` rotates only the
+trust-internal service key, which the hub never checks.
 
 A trust added with **Add Trust** in the UI has no keys until its kit is first downloaded from its
 card, by its Trust Admin or a hub admin (FLIP#1852). On a stag/prod Docker Compose trust host,
@@ -382,6 +387,8 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 **Authentication environment variables:**
 
 - `TRUST_API_KEY_HEADER` — HTTP header name for trust-to-hub authentication.
+- `TRUST_KEY_ROTATION_GRACE_DAYS` — how long a staged rotated trust key may stay unused before the
+  hub drops it (default 14). A deployed hub has no Terraform passthrough for it and uses the default.
 - `TRUST_API_KEY` — single per-trust plaintext API key. Lives only in that trust's kit file
   (`trust/.env.<CODE>.<env>`), written by `make register-trusts`; never on the hub.
 - `FL_API_KEY` — the key flip-api sends to every FL API (`fl-api-net-N`) in the `FL_API_KEY_HEADER` header
@@ -546,7 +553,7 @@ make -C trust/deploy/terraform/snowflake-platform apply    # prints a BREAK GLAS
 ```
 
 `lint` and `test` need nothing but `tofu` (or `terraform`), `tflint`, `uvx` and `uv`; they are what
-`validate_terraform.yml`'s `Snowflake <root> static checks` matrix runs. The guards pin the
+`validate_terraform_snowflake.yml`'s `Snowflake <root> static checks` matrix runs. The guards pin the
 invariants no plan can show without an account. In the workload root: no `snowflake_account_role`,
 no user, no integration, no network/password/session policy, no account parameter and no
 `on_account` grant (all of those belong to the platform root), plus no grant to `PUBLIC`,
@@ -581,7 +588,7 @@ against a canary fixture, and its guards are regression-tested by `scripts/tests
 runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
 `make -C trust/deploy/terraform/azure lint` runs `terraform fmt`, tflint with the azurerm ruleset, and checkov's full
 Azure check set (`make -C trust/deploy/terraform/azure checkov` alone, through `uvx` at the AWS lint's pinned version).
-CI runs both in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
+CI runs both in the "Azure node checks" job of `validate_terraform_azure.yml`. The static guards enforce the cost and safety
 rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
 subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
 always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS; a `checkov:skip` without

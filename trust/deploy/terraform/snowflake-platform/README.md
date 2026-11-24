@@ -343,7 +343,7 @@ read it before typing `yes`. If the old state file mixed both tiers, split it wi
 
 ## CI
 
-Static and credential-free, in `validate_terraform.yml`: `fmt`, `validate`, tflint (bundled
+Static and credential-free, in `validate_terraform_snowflake.yml`: `fmt`, `validate`, tflint (bundled
 terraform ruleset, there is no Snowflake plugin), checkov, and the pytest guards in `tests/`. No
 Snowflake credential exists in CI, and this tier is never applied there by design.
 

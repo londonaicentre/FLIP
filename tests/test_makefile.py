@@ -755,6 +755,33 @@ class RotateTrustKeys(unittest.TestCase):
         assert "--name" in line, line
         assert "--code" not in line, line
 
+    def test_it_stages_by_default_and_revokes_only_on_request(self):
+        """FLIP#1714: the old key keeps working unless REVOKE_OLD=1 asks for the immediate cutover."""
+        assert "--revoke-old" not in self.recipe()
+        out = dry_run("rotate-trust-keys", "REVOKE_OLD=1", subdir=".")
+        line = next((ln for ln in out.splitlines() if "flip_api.scripts.register_trust" in ln), "")
+        assert "--revoke-old" in line, out
+
+    def test_a_revoke_old_value_other_than_0_or_1_is_refused_before_anything_runs(self):
+        """`REVOKE_OLD=true` must not quietly stage and leave a leaked key valid (FLIP#1714)."""
+        for value in ("true", "yes", "2"):
+            with self.subTest(value=value):
+                result = run_target("rotate-trust-keys", f"REVOKE_OLD={value}", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+                assert result.returncode != 0, result.stdout
+                assert "REVOKE_OLD must be empty, 0 or 1" in result.stdout, result.stdout
+                assert "flip_api.scripts.register_trust" not in result.stdout, result.stdout
+                assert "Waiting for the hub" not in result.stdout, result.stdout
+        for value in ("", "0", "1"):
+            with self.subTest(value=value):
+                out = dry_run("rotate-trust-keys", f"REVOKE_OLD={value}", subdir=".")
+                assert "flip_api.scripts.register_trust" in out
+
+    def test_it_reports_which_mode_ran_from_the_kit(self):
+        """The closing line comes from the kit's `staged_until`, not from the flag the operator typed."""
+        out = dry_run("rotate-trust-keys", subdir=".")
+        assert "staged_until" in out, out
+        assert "Old key refused from now on" in out, out
+
     def test_it_does_not_call_a_separate_rotation_module(self):
         """Rotation is a flag on the registration CLI; there is no rotate_trust_keys module."""
         assert "rotate_trust_keys" not in dry_run("rotate-trust-keys", subdir=".")
@@ -788,6 +815,13 @@ class LocalRegistrationRefusesADeployedHub(unittest.TestCase):
                 assert result.returncode != 0, result.stdout
                 assert f"make -C deploy/providers/AWS {aws_target} KIT=SCR HUB=stag" in result.stdout, result.stdout
                 assert "Waiting for the hub" not in result.stdout, result.stdout
+
+    def test_the_deployed_hub_hint_keeps_revoke_old(self):
+        """An operator who copies the hint for a leaked key must get the cutover, not a staged rotation."""
+        result = run_target("rotate-trust-keys", "HUB=stag", "REVOKE_OLD=1", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+        assert result.returncode != 0, result.stdout
+        hint = "make -C deploy/providers/AWS rotate-trust-keys KIT=SCR HUB=stag REVOKE_OLD=1"
+        assert hint in result.stdout, result.stdout
 
     def test_development_still_registers_on_the_local_hub(self):
         for target in self.TARGETS:

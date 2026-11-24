@@ -863,16 +863,18 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	@for kit in $(REGISTER_KIT_FILES); do $(MAKE) -C ../../../flip-api generate-xnat-credentials ENV_FILE="$$kit" FORCE= || exit 1; done
 
 .PHONY: rotate-trust-keys
-rotate-trust-keys: ## Reissue one trust's api + internal-service keys in place (FLIP#1569)
+rotate-trust-keys: ## Reissue one trust's api + internal-service keys in place (FLIP#1569); staged by default (FLIP#1714)
 	## Same one-off ECS task + SSM handoff as register-trusts, with `--rotate`. KIT=<CODE> is
-	## required and exactly one trust is rotated per run: the hub refuses that trust's old key from
-	## the moment this commits, so the site is offline until its containers come back on the new
-	## kit, and this is never a fan-out. Writes the fresh credentials back into
+	## required and exactly one trust is rotated per run. The new key is STAGED: the hub accepts the
+	## old and the new key until the site first calls it with the new one, so the site stays online
+	## while its kit is delivered (an unused new key is dropped after TRUST_KEY_ROTATION_GRACE_DAYS).
+	## REVOKE_OLD=1 refuses the old key at once, for a leaked key: the site is offline until its
+	## containers come back on the new kit. Writes the fresh credentials back into
 	## trust/.env.<CODE>.<env>. Deliver it with `make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>` on
 	## EC2, or `package-onprem-trust-kit` for an on-prem site (copy the kit to trust/.env.<slot> first).
 	## NEVER that root's `deploy`: it is a first-install verb and re-seeds the site's data.
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=KCL)"; exit 1; }
-	@KIT=$(KIT) ENV_CLASS=$(ENV_CLASS) MAIN_ENV_FILE=$(abspath $(MAIN_ENV_FILE)) ROTATE_KEYS=1 KIT_FILES="$(KIT_FILE)" bash scripts/register-trusts.sh
+	@KIT=$(KIT) ENV_CLASS=$(ENV_CLASS) MAIN_ENV_FILE=$(abspath $(MAIN_ENV_FILE)) ROTATE_KEYS=1 REVOKE_OLD=$(REVOKE_OLD) KIT_FILES="$(KIT_FILE)" bash scripts/register-trusts.sh
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for an on-prem operator
