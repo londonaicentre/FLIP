@@ -133,6 +133,9 @@ HELM_TIMEOUT ?= 30m
 # spelled that way would make `make -n deploy` deploy for real. Indirecting through a variable
 # keeps the recursion without that flag; `make -n` then prints the step like any other line.
 SUBMAKE := $(MAKE)
+# Create the namespace only when it is missing: applying one that exists needs patch on the
+# Namespace, which an account limited to that namespace does not have (FLIP#1986).
+ENSURE_NAMESPACE = $(KUBECTL) get namespace $(NAMESPACE) >/dev/null 2>&1 || $(KUBECTL) create namespace $(NAMESPACE)
 
 # Determine which values files to pass
 VALUES_OPTS := -f $(VALUES_FILE)
@@ -207,11 +210,12 @@ preflight: ## Check all prerequisites before deploying (tools, cluster, files, k
 	 OVERRIDES_FILE="$(OVERRIDES_FILE)" \
 	 HELM="$(HELM_BIN)" \
 	 KUBE_CONTEXT="$(KUBE_CONTEXT)" \
+	 CHART_KINDS="$$($(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) 2>/dev/null | sed -n 's/^kind: //p' | sort -u | tr '\n' ' ')" \
 	 bash $(CHART_DIR)/scripts/preflight.sh
 
 kit-secret: ## Put this trust's FL kit in a Secret for flClient.kit.source=secret (managed node pools, e.g. AKS)
 	@[ -n "$(KIT_SRC)" ] || { echo "❌ KIT_SRC=<the slot's kit directory: local/ startup/ … or certificates/ keys/> is required"; exit 1; }
-	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(ENSURE_NAMESPACE)
 	python3 $(CHART_DIR)/scripts/kit_secret.py --kit-src $(KIT_SRC) \
 		--name $(RELEASE_NAME)-flip-trust-fl-kit --namespace $(NAMESPACE) | $(KUBECTL) apply -f -
 
@@ -288,7 +292,7 @@ stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vo
 # A Deployment the chart now renders as Recreate but the cluster still runs as RollingUpdate is
 # switched first, or Helm 4's server-side apply refuses it (FLIP#1524; scripts/migrate-strategy.sh).
 deploy-release: preflight ## Apply the chart and wait for the core workloads to roll out (no xnat-init)
-	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(ENSURE_NAMESPACE)
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) | \
 		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \

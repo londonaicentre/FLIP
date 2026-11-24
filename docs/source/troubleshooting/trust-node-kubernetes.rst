@@ -396,17 +396,21 @@ does not allow.
 Deploying with an account limited to one namespace
 ==================================================
 
-**Symptom.** With a kubeconfig that holds the built-in ``admin`` role in the trust's namespace only:
+**Symptom.** With a kubeconfig that holds the built-in ``admin`` role in the trust's namespace only, the
+preflight fails with::
 
-- ``make preflight`` fails with ``Cluster unreachable``, although ``kubectl get pods`` works in the namespace;
-- the deploy fails with ``resourcequotas "trust-release-flip-trust-xnat-container-jobs" is forbidden``, after
-  most of the release has been applied.
+   ✖  RBAC: cannot create ResourceQuota in '<namespace>' — the deploy would stop part-way
 
-**Cause.** The preflight tests reachability with ``kubectl cluster-info``, which lists Services in
-``kube-system``. The chart creates a ResourceQuota for XNAT's conversion jobs, and ``admin`` may read quotas but
-not write them. The make targets also read the nodes and the StorageClasses, and apply the namespace itself.
+On a checkout older than v0.17 the same account sees two other things instead: ``make preflight`` fails with
+``Cluster unreachable`` although ``kubectl get pods`` works in the namespace, and the deploy fails with
+``resourcequotas "trust-release-flip-trust-xnat-container-jobs" is forbidden`` after most of the release has been
+applied.
 
-**Fix.** Have a cluster administrator create the namespace and grant the account these rights beside ``admin``:
+**Cause.** The chart creates a ResourceQuota for XNAT's conversion jobs, and ``admin`` may read quotas but not
+write them. Before v0.17 the preflight also tested reachability with ``kubectl cluster-info``, which lists Services
+in ``kube-system``, and the deploy applied the namespace itself, which needs ``patch`` on it.
+
+**Fix.** Have a cluster administrator create the namespace and grant the account this right beside ``admin``:
 
 .. code-block:: yaml
 
@@ -415,17 +419,17 @@ not write them. The make targets also read the nodes and the StorageClasses, and
    metadata: {name: flip-operator-quota, namespace: <namespace>}
    rules:
      - apiGroups: [""]
-       resources: [resourcequotas, limitranges]
+       resources: [resourcequotas]
        verbs: [get, list, watch, create, update, patch, delete]
-   ---
-   apiVersion: rbac.authorization.k8s.io/v1
-   kind: Role
-   metadata: {name: flip-operator-cluster-info, namespace: kube-system}
-   rules:
-     - apiGroups: [""]
-       resources: [services]
-       verbs: [get, list]
-   ---
+
+Bind it to the account with a RoleBinding. If a deploy already failed on the quota, run it again: nothing needs
+removing.
+
+Two cluster-wide rights are optional. Without them the preflight warns that it could not check for a default
+StorageClass, and ``stage-kit`` and ``stage-vocab`` cannot pick the node, so the administrator stages the kit:
+
+.. code-block:: yaml
+
    apiVersion: rbac.authorization.k8s.io/v1
    kind: ClusterRole
    metadata: {name: flip-operator-cluster-read}
@@ -436,14 +440,9 @@ not write them. The make targets also read the nodes and the StorageClasses, and
      - apiGroups: [storage.k8s.io]
        resources: [storageclasses]
        verbs: [get, list]
-     - apiGroups: [""]
-       resources: [namespaces]
-       resourceNames: [<namespace>]
-       verbs: [get, patch]
 
-Bind each to the account (two RoleBindings and a ClusterRoleBinding). The preflight then passes with one warning,
-that the account cannot create namespaces, which is expected. If a deploy already failed on the quota, run it
-again: nothing needs removing.
+A checkout older than v0.17 also needs ``get`` and ``list`` on Services in ``kube-system``, and ``get`` and
+``patch`` on its own Namespace.
 
 .. _ts-k8s-second-release:
 
