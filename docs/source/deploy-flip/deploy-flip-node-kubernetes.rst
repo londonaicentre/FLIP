@@ -334,7 +334,9 @@ the FL client starts.
   and every deploy and upgrade of that kit mounts the same path. Any previous kit there is removed first. To use
   another path, set ``FL_KIT_DIR`` in the kit file before you stage. To move a deployed trust's kit, change
   ``FL_KIT_DIR``, stage again, and pass ``KIT_MOVED=1`` to the next deploy or upgrade: without it, a deploy that
-  would change the path a release mounts stops before it changes anything.
+  would change the path a release mounts stops before it changes anything. Once the FL client is running from the
+  new path, delete the old folder on the node yourself: ``stage-kit`` clears only the folder it copies to, and the
+  old one still holds the kit's private key.
 - ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
   to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
