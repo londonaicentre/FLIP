@@ -750,10 +750,6 @@ def render_override(
         "# Contains no secrets — the per-trust keys live in the Kubernetes Secret,",
         "# patched into the cluster by the same sync-kit run. Regenerate by re-running",
         "#   make -C trust/deploy/helm sync-kit KIT=" + code + " HUB=<env>",
-        "#",
-        "# TRUST_API_KEY_HEADER is intentionally NOT set here: the chart default",
-        "# (values.yaml) is 'Authorization', which is the platform default the hub",
-        "# validates against. Override it only for a hub configured with a custom header.",
         "",
         f"trustName: {trust_name}",
     ]
@@ -797,8 +793,14 @@ def render_override(
         "trustApi:",
         "  env:",
         f"    CENTRAL_HUB_API_URL: {hub_url}",
-        "",
     ]
+    # The hub's key header and the wrong-host self-check, as the Compose trust-api gets them.
+    # Unset (a dev kit) or still a placeholder, the chart's value stands.
+    for kit_key in ("TRUST_API_KEY_HEADER", "EXPECTED_TRUST_ID"):
+        value = kit.get(kit_key, "")
+        if not _is_placeholder(value):
+            lines.append(f"    {kit_key}: {yaml_quote(value.strip())}")
+    lines.append("")
 
     # OMOP core vocabulary (FLIP#842/843): the licensed bundle cannot be mirrored
     # publicly, so the chart runs its vocab-load hook only when a staged bundle is

@@ -222,6 +222,9 @@ services:
       # default in trust_api/config.py — not injected (see imaging-api note above).
       TRUST_API_KEY_HEADER: ${TRUST_API_KEY_HEADER}
       TRUST_API_KEY: ${TRUST_API_KEY}
+      # The kit's wrong-host self-check: trust-api exits when the hub resolves this
+      # host as another trust. Empty leaves the check off.
+      EXPECTED_TRUST_ID: ${EXPECTED_TRUST_ID:-}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       TRUST_NAME: ${TRUST_NAME}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}

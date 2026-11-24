@@ -268,8 +268,12 @@ trustApi:
     # HTTP header the hub reads the per-trust API key from. Must match the hub's
     # TRUST_API_KEY_HEADER; the platform default (.env.development.example, the
     # prod/dev compose, and register_trust's Hub-shared block) is "Authorization".
-    # A mismatch makes the hub answer 401 "API key is missing".
+    # A mismatch makes the hub answer 401 "API key is missing". `make sync-kit`
+    # writes the kit's value over this one.
     TRUST_API_KEY_HEADER: "Authorization"  # pragma: allowlist secret
+    # The kit's wrong-host self-check (`make sync-kit` writes the kit's EXPECTED_TRUST_ID):
+    # trust-api exits when the hub resolves it as another trust. Empty leaves the check off.
+    EXPECTED_TRUST_ID: ""
     POLL_INTERVAL_SECONDS: "5"
 
 # ---------------------------------------------------------------------------

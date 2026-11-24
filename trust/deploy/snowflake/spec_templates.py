@@ -296,6 +296,8 @@ def _trust_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Re
         "TRUST_NAME": kit.get("TRUST_NAME", names.code),
         "POLL_INTERVAL_SECONDS": kit.get("POLL_INTERVAL_SECONDS", "5"),
         "TRUST_API_KEY_HEADER": kit.get("TRUST_API_KEY_HEADER", "Authorization"),
+        # The wrong-host self-check; empty leaves it off.
+        "EXPECTED_TRUST_ID": kit.get("EXPECTED_TRUST_ID", ""),
         "TRUST_INTERNAL_SERVICE_KEY_HEADER": kit.get(
             "TRUST_INTERNAL_SERVICE_KEY_HEADER", "X-Trust-Internal-Service-Key"
         ),

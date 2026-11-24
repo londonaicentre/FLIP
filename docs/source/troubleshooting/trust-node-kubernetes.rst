@@ -1000,7 +1000,8 @@ trust-api heartbeats fail with 401
    kubectl logs -n flip-trust deploy/trust-release-flip-trust-trust-api --tail=20
 
 - ``Not authenticated: API key is missing.``: the API-key **header name** is wrong, not the key.
-  ``TRUST_API_KEY_HEADER`` must match the hub's (the platform default is ``Authorization``, which the chart uses).
+  ``TRUST_API_KEY_HEADER`` must match the hub's. ``sync-kit`` writes the kit's value into the override; a kit
+  without the line leaves the chart on the platform default, ``Authorization``. Re-sync the kit as below.
 - **Key rejected:** the Secret holds a key other than the registered one. Re-sync the kit:
 
   .. code-block:: shell
