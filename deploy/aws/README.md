@@ -1518,7 +1518,9 @@ Three constraints are easy to break and worth keeping in mind:
   on the previous release. `release.yml` now watches for exactly that: its
   "Confirm the release apply actually ran" step re-dispatches the apply once if
   the queued one was cancelled before it started, and fails the release if it
-  happens twice.
+  happens twice. It recognises the release apply by its run title,
+  `Terraform Apply: release v<X.Y.Z>`, which only a dispatch carrying
+  `release_tag` gets, so a run without the tag is never taken for it.
 
 The push apply runs on every push, so this dispatch is not needed to reach the
 apply; it is what pins the release digests over the push apply's `sha-` images.

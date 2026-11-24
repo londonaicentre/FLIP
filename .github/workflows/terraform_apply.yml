@@ -75,6 +75,11 @@
 
 name: Terraform Apply
 
+# A release apply says so in its title, which is how release.yml's confirm step
+# (.github/scripts/confirm-release-apply.sh) tells it from any other dispatch on
+# main (FLIP#2047). Empty for every other run, which GitHub then titles as usual.
+run-name: "${{ inputs.release_tag && format('Terraform Apply: release {0}', inputs.release_tag) || '' }}"
+
 on:
   # Every push, not only infrastructure ones (FLIP#1186): the hub's images and
   # the UI deploy through this workflow, so a path filter left a flip-api or

@@ -410,6 +410,7 @@ jq -c "$jqf" < "${FIXTURE_DIR}/runs.json"
             "conclusion": "success",
             "createdAt": "2026-01-01T12:00:00Z",
             "url": "https://example.invalid/apply",
+            "displayTitle": "Terraform Apply: release v1.2.3",
         }
         run.update(over)
         return run
@@ -472,6 +473,35 @@ jq -c "$jqf" < "${FIXTURE_DIR}/runs.json"
         assert result.returncode == 0, result.stdout + result.stderr
         assert "::warning::" in result.stdout
         assert "still queued" in result.stdout
+
+    def test_another_dispatch_on_main_is_not_the_release_apply(self) -> None:
+        """An operator's run without the tag, or another release's, ran something else (FLIP#2047)."""
+        for title in ("Terraform Apply", "Terraform Apply: release v1.2.30"):
+            with self.subTest(title=title):
+                self.write([self.run_entry(status="in_progress", conclusion=None, displayTitle=title)])
+                result = self.confirm()
+                assert result.returncode != 0, result.stdout + result.stderr
+                assert "::error::no terraform_apply run titled 'Terraform Apply: release v1.2.3'" in result.stdout
+                assert self.dispatches() == 0
+
+    def test_the_release_apply_is_found_behind_an_earlier_untagged_dispatch(self) -> None:
+        self.write(
+            [
+                self.run_entry(displayTitle="Terraform Apply", url="https://example.invalid/operator"),
+                self.run_entry(status="in_progress", conclusion=None, createdAt="2026-01-01T12:05:00Z"),
+            ]
+        )
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "is running — https://example.invalid/apply" in result.stdout
+
+    def test_the_apply_titles_a_release_run_the_way_the_script_looks_for_it(self) -> None:
+        """Only a dispatch with release_tag gets the title; every other run keeps GitHub's own."""
+        run_name = re.search(r"^run-name: (.+)$", code_text(WORKFLOWS / "terraform_apply.yml"), re.MULTILINE)
+        assert run_name, "terraform_apply.yml has no run-name"
+        expected = "\"${{ inputs.release_tag && format('Terraform Apply: release {0}', inputs.release_tag) || '' }}\""
+        assert run_name.group(1) == expected
+        assert 'RUN_TITLE="Terraform Apply: release ${TAG}"' in CONFIRM_SCRIPT.read_text()
 
     def test_release_runs_the_confirmation_after_the_dispatch(self) -> None:
         text = code_text(WORKFLOWS / "release.yml")

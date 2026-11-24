@@ -32,6 +32,14 @@
 #     GitHub Release and send a re-run back through all fourteen image builds.
 #   * still queued when the budget expires -> a warning, not a failure. Queuing
 #     behind a long push apply is legitimate and the release is not wrong.
+#   * no run for this tag seen by then -> a failure: the dispatch produced nothing
+#     this step can vouch for.
+#
+# WHICH RUN IS THE RELEASE APPLY. Only a dispatch that carries this release_tag,
+# which terraform_apply.yml's `run-name` puts in the run's title. An operator's
+# dispatch on main in the same window (an `fl_quiesced: true` re-run without the
+# tag) is not it, and accepting it left the release green with production on the
+# previous one (FLIP#2047).
 #
 # Reads from the environment:
 #     GH_TOKEN                   token for `gh`
@@ -52,11 +60,14 @@ APPLY_CONFIRM_POLL_SECONDS="${APPLY_CONFIRM_POLL_SECONDS:-15}"
 
 manual_hint="dispatch it again by hand once the group is clear: gh workflow run terraform_apply.yml --repo ${REPO} --ref refs/heads/main -f release_tag=${TAG}"
 
+# terraform_apply.yml's run-name for a dispatch with release_tag set.
+RUN_TITLE="Terraform Apply: release ${TAG}"
+
 find_run() {
     gh run list --repo "${REPO}" --workflow terraform_apply.yml \
         --branch main --event workflow_dispatch --limit 20 \
-        --json databaseId,status,conclusion,createdAt,url \
-        --jq "[.[] | select(.createdAt >= \"${STARTED_AT}\")] | sort_by(.createdAt) | first // empty"
+        --json databaseId,status,conclusion,createdAt,url,displayTitle \
+        --jq "[.[] | select(.createdAt >= \"${STARTED_AT}\" and .displayTitle == \"${RUN_TITLE}\")] | sort_by(.createdAt) | first // empty"
 }
 
 redispatched=0
@@ -101,6 +112,10 @@ while :; do
     fi
 
     if [[ "${SECONDS}" -ge "${deadline}" ]]; then
+        if [[ -z "${run}" ]]; then
+            echo "::error::no terraform_apply run titled '${RUN_TITLE}' appeared within ${APPLY_CONFIRM_SECONDS}s of the dispatch, so nothing confirms production was re-pinned to ${TAG}. Look for it (gh run list --repo ${REPO} --workflow terraform_apply.yml --branch main); if no run carries the tag, ${manual_hint}"
+            exit 1
+        fi
         echo "::warning::the release apply at ${TAG} was still queued after ${APPLY_CONFIRM_SECONDS}s. That is legitimate if an apply is in flight on main, but check it started and was not displaced: gh run list --repo ${REPO} --workflow terraform_apply.yml --branch main"
         exit 0
     fi
