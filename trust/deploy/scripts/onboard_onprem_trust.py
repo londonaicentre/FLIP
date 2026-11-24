@@ -186,19 +186,41 @@ def is_filled(value: str | None) -> bool:
     return bool(value) and "<run-make-" not in value
 
 
-def is_deployed_kit(kit_path: str) -> bool:
-    """Whether the kit is a deployed site's rather than a development one: ``HUB``, as make decides it.
+# The kit-file suffixes deploy/env_mode.mk gives a deployed kit: HUB's two values and the
+# pre-#1479 names in its OLD_KIT_ENVS (the test holds this to that line).
+DEPLOYED_KIT_SUFFIXES = ("prod", "stag", "production", "lza-prod", "lza-stag")
+
+
+def kit_reading(kit_path: str) -> tuple[bool, str]:
+    """Whether the kit is a deployed site's rather than a development one, and why it was read so.
 
     A deployed kit publishes real services and holds real credentials, so some checks escalate
-    from WARN to FAIL for it. The file name does not say: a prod kit may still be
-    ``.env.<CODE>.production``, a bare ``.env.<CODE>`` or any ``KIT_FILE=`` path (FLIP#2047).
-    `make onboard-onprem-trust` always passes HUB (empty for development). Run by hand without
-    it, only a ``.development`` kit is treated as a development one.
+    from WARN to FAIL for it. ``HUB`` decides, as it does for make: the file name alone does not
+    say, since a prod kit may be a bare ``.env.<CODE>`` or any ``KIT_FILE=`` path (FLIP#2047).
+    `make onboard-onprem-trust` passes an empty HUB for development, so empty means development,
+    except for a kit whose name says deployed (a stray ``export HUB=`` must not downgrade it).
+    Run by hand with no HUB at all, only a ``.development`` kit is read as a development one.
     """
     hub = os.environ.get("HUB")
-    if hub is None:
-        return not kit_path.endswith(".development")
-    return bool(hub.strip())
+    suffix = kit_path.rsplit(".", 1)[-1]
+    if hub and hub.strip():
+        return True, f"HUB={hub.strip()}"
+    if suffix in DEPLOYED_KIT_SUFFIXES:
+        return True, f"the kit file is named .{suffix}"
+    if hub is not None:
+        return False, "HUB is empty"
+    if ".development" in Path(kit_path).name:
+        return False, "the kit file is named .development"
+    return True, "no HUB given; run with HUB= for a development kit"
+
+
+def is_deployed_kit(kit_path: str) -> bool:
+    return kit_reading(kit_path)[0]
+
+
+def kit_reading_hint(kit_path: str) -> str:
+    deployed, why = kit_reading(kit_path)
+    return f"Judged as a {'deployed' if deployed else 'development'} kit ({why})."
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1065,6 +1087,7 @@ def check_unrotated_passwords(
             f"Unchanged: {', '.join(unchanged)}",
             f"Edit {kit_path} → Trust-local credentials section and replace each with a",
             "  random secret (`make new-trust` mints them for a fresh kit).",
+            kit_reading_hint(kit_path),
         ],
     )
 
@@ -1095,6 +1118,7 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
         hints=[
             f"Edit {kit_path} → set TRUST_LOG_LEVEL=INFO, then recreate the trust APIs.",
             "A site that already ran at DEBUG should rotate both trust keys.",
+            kit_reading_hint(kit_path),
         ],
     )
 
