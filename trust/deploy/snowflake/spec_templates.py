@@ -41,6 +41,7 @@ receiver queries succeed while every retrieval times out (FLIP#993).
 from __future__ import annotations
 
 import json
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -585,6 +586,38 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
     )
 
 
+#: The kit's FL site privacy filter (FLIP#851), as Compose and Helm pass it to the FLARE client.
+SITE_PRIVACY_KEYS = ("FL_SITE_PRIVACY_POLICY", "FL_SITE_PRIVACY_PERCENTILE", "FL_SITE_PRIVACY_GAMMA")
+
+
+def refuse_site_privacy(kit: dict[str, str]) -> None:
+    """Refuse a kit that asks for an FL site privacy filter, in either of its two forms.
+
+    On Compose and Helm an init step (``fl-client-init``, after the governance extract) renders
+    the client's ``privacy.json`` before the client starts. Nothing does on SPCS, so the trust
+    would come up with no site filter while its kit asks for one (fail closed, FLIP#2047).
+    """
+    asked = next((key for key in SITE_PRIVACY_KEYS if kit.get(key, "").strip()), None)
+    ref = kit.get("ACCESS_POLICY_FILE", "").strip()
+    if not asked and ref:
+        # Relative to trust/, as sync-kit and Compose's --project-directory trust resolve it.
+        document = Path(__file__).resolve().parents[2] / ref
+        try:
+            section = tomllib.loads(document.read_text()).get("fl_privacy")
+        except (OSError, ValueError) as e:
+            raise ValueError(
+                f"ACCESS_POLICY_FILE={ref!r} cannot be read ({e}), so it cannot be checked for a site privacy filter"
+            ) from None
+        if section:
+            asked = f"[fl_privacy] in {ref}"
+    if asked:
+        raise ValueError(
+            f"{asked} asks for an FL site privacy filter, which a Snowflake trust does not apply: nothing on\n"
+            "   SPCS renders the FL client's privacy.json, so the client would start without it. Remove the\n"
+            "   setting to deploy with no site filter, or run this trust on Compose or Kubernetes."
+        )
+
+
 def _pacs_env(kit: dict[str, str], names: Names) -> dict[str, str]:
     """The upstream PACS and the DQR schedule, as configure-xnat.sh reads them.
 
@@ -599,7 +632,9 @@ def _pacs_env(kit: dict[str, str], names: Names) -> dict[str, str]:
         "PACS_QR_PORT": kit.get("PACS_QR_PORT", "4242"),
         "PACS_LABEL": kit.get("PACS_LABEL", "Test PACS instance"),
         "PACS_SUPPORTS_EXTENDED_NEGOTIATIONS": kit.get("PACS_SUPPORTS_EXTENDED_NEGOTIATIONS", "true"),
-        "PACS_AVAILABILITY_DAYS": kit.get("PACS_AVAILABILITY_DAYS", "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY"),
+        # No default of its own: a second one here said Monday to Friday while every other
+        # shape retrieves all week. Absent from the kit, configure-xnat.sh's default applies.
+        **({"PACS_AVAILABILITY_DAYS": kit["PACS_AVAILABILITY_DAYS"]} if "PACS_AVAILABILITY_DAYS" in kit else {}),
         "PACS_AVAILABILITY_START": kit.get("PACS_AVAILABILITY_START", "00:00"),
         "PACS_AVAILABILITY_END": kit.get("PACS_AVAILABILITY_END", "24:00"),
         "PACS_THREADS": kit.get("PACS_THREADS", "1"),
@@ -1066,6 +1101,7 @@ def build_all(kit: dict[str, str], code: str, digests: dict[str, str] | None = N
     """
     names = Names(code)
     digests = digests or {}
+    refuse_site_privacy(kit)
     rendered = [
         _xnat_db(kit, names, digests),
         _xnat_web(kit, names, digests),

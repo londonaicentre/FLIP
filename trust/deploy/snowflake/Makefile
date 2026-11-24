@@ -27,6 +27,13 @@ REPO_ROOT := $(abspath $(SNOWFLAKE_DIR)/../../..)
 # Makefile does.
 include $(REPO_ROOT)/deploy/env_mode.mk
 
+# The kit is the one place that holds HUB_EGRESS. Given on the make line it was stored
+# nowhere, and the next `make up` without it issued UNSET EXTERNAL_ACCESS_INTEGRATIONS:
+# the trust left the hub and the FL network with exit 0 (FLIP#2047).
+ifneq ($(origin HUB_EGRESS),undefined)
+$(error HUB_EGRESS is read from the kit file only: put HUB_EGRESS=true (or false) in trust/.env.<CODE>.<env> and run again without it)
+endif
+
 # bash for `set -o pipefail`: the recipes below pipe emitted SQL into snow, and without it a
 # missing manifest (spcs_sql.py exits 1) still ended the target with exit 0.
 SHELL := /bin/bash
@@ -77,7 +84,7 @@ help:
 	@echo "  make plan|apply|destroy  HUB=<env>        The Terraform root (TF_ROOT=workload, or platform)"
 	@echo "  make sync-kit      KIT=<CODE> HUB=<env>   Write SECRET objects, push FL kit + governance"
 	@echo "  make up            KIT=<CODE> HUB=<env>   CREATE (or ALTER and RESUME) each service from the rendered specs"
-	@echo "                    HUB_EGRESS=true        ...attaching the hub/FL egress integration"
+	@echo "                                           ...attaching the hub/FL egress integration when the kit sets HUB_EGRESS=true"
 	@echo "  make down          KIT=<CODE> HUB=<env>   Drop every service"
 	@echo "  make suspend       KIT=<CODE> HUB=<env>   Suspend every service AND every compute pool"
 	@echo "  make status        KIT=<CODE> HUB=<env>   Service and compute-pool status"
@@ -109,7 +116,7 @@ require-connection:
 
 # ── Specs ────────────────────────────────────────────────────────────────────
 render: require-kit
-	@HUB_EGRESS=$(HUB_EGRESS) $(PYTHON) $(SNOWFLAKE_DIR)render_specs.py --kit $(KIT) --env $(KIT_ENV) --out-dir $(RENDER_DIR)
+	@$(PYTHON) $(SNOWFLAKE_DIR)render_specs.py --kit $(KIT) --env $(KIT_ENV) --out-dir $(RENDER_DIR)
 
 # ── Images ───────────────────────────────────────────────────────────────────
 # Pull by tag from GHCR, retag into the account repository, push, and record the digest

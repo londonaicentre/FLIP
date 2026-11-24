@@ -56,3 +56,12 @@ def test_an_unknown_root_is_refused() -> None:
     )
     assert result.returncode != 0
     assert "TF_ROOT must be workload, platform or identity" in result.stdout
+
+
+@pytest.mark.parametrize("target", ["render", "up", "status"])
+def test_hub_egress_on_the_make_line_is_refused(target: str) -> None:
+    """The kit holds it: a value given for one run is gone on the next, which detaches the trust."""
+    result = dry(target, "KIT=GSTT", "SNOW_CONNECTION=x", "HUB_EGRESS=true")
+    assert result.returncode != 0
+    assert "HUB_EGRESS" in result.stderr
+    assert "kit" in result.stderr

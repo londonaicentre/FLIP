@@ -631,3 +631,85 @@ def test_imaging_api_survives_a_cohort_download(specs: dict) -> None:
     assert containers(specs["trust-api"])[0]["livenessProbe"]["failureThreshold"] == 3, (
         "only imaging-api blocks its loop"
     )
+
+
+def test_a_site_privacy_policy_in_the_kit_is_refused(kit: dict) -> None:
+    """Nothing on SPCS renders the client's privacy.json, so the trust would start with no site
+    filter while its kit asks for one. Refused here, naming the setting (fail closed)."""
+    with pytest.raises(ValueError, match="FL_SITE_PRIVACY_POLICY"):
+        spec_templates.build_all({**kit, "FL_SITE_PRIVACY_POLICY": "percentile"}, "GSTT")
+    # Unset or empty is no policy, as on Compose.
+    spec_templates.build_all({**kit, "FL_SITE_PRIVACY_POLICY": "", "FL_SITE_PRIVACY_GAMMA": ""}, "GSTT")
+
+
+@pytest.mark.parametrize("backend", ["nvflare", "flower"])
+def test_a_site_privacy_section_in_the_governance_document_is_refused(kit: dict, tmp_path: Path, backend: str) -> None:
+    document = tmp_path / "governance.toml"
+    document.write_text('[disclosure]\nmin_cohort_size = 20\n\n[fl_privacy.nvflare]\npolicy = "percentile"\n')
+    asked = {**kit, "FL_BACKEND": backend, "NLB_SUBDOMAIN": "fl.example", "FL_SERVER_PORT": "9092"}
+    with pytest.raises(ValueError, match=r"\[fl_privacy\]"):
+        spec_templates.build_all({**asked, "ACCESS_POLICY_FILE": str(document)}, "GSTT")
+
+
+def test_a_governance_document_without_a_site_privacy_section_still_renders(kit: dict, tmp_path: Path) -> None:
+    document = tmp_path / "governance.toml"
+    document.write_text("# [fl_privacy.nvflare] is left to the platform\n[disclosure]\nmin_cohort_size = 20\n")
+    rendered = spec_templates.build_all({**kit, "ACCESS_POLICY_FILE": str(document)}, "GSTT")
+    api = next(r for r in rendered if r.name == "data-access-api")
+    assert api.spec["spec"]["containers"][0]["env"]["ACCESS_POLICY_FILE"] == "/governance/governance.toml"
+
+
+def test_a_governance_document_that_cannot_be_read_is_refused(kit: dict, tmp_path: Path) -> None:
+    """Unread, it may hold a site privacy section: refusing is the only safe answer."""
+    with pytest.raises(ValueError, match="ACCESS_POLICY_FILE"):
+        spec_templates.build_all({**kit, "ACCESS_POLICY_FILE": str(tmp_path / "absent.toml")}, "GSTT")
+
+
+def test_the_pacs_availability_days_default_is_configure_xnats(kit: dict) -> None:
+    """A second default here said Monday to Friday, so weekend retrievals queued until Monday on
+    SPCS alone. Without the kit line the key is omitted and configure-xnat.sh's default applies."""
+    for rendered in spec_templates.build_all(kit, "GSTT"):
+        if rendered.name in ("xnat-web", "xnat-configure"):
+            assert "PACS_AVAILABILITY_DAYS" not in rendered.spec["spec"]["containers"][0]["env"], rendered.name
+    days = "SATURDAY,SUNDAY"
+    for rendered in spec_templates.build_all({**kit, "PACS_AVAILABILITY_DAYS": days}, "GSTT"):
+        if rendered.name in ("xnat-web", "xnat-configure"):
+            assert rendered.spec["spec"]["containers"][0]["env"]["PACS_AVAILABILITY_DAYS"] == days
+
+
+def _lock(tmp_path: Path, code: str = "GSTT", env: str = "stag", **tags: str) -> Path:
+    images = {repo: {"tag": tag, "digest": f"sha256:{repo}"} for repo, tag in tags.items()}
+    (tmp_path / "images.lock.json").write_text(json.dumps({"code": code, "env": env, "images": images}))
+    return tmp_path
+
+
+def test_the_image_lock_is_used_for_the_trust_it_was_written_for(kit: dict, tmp_path: Path) -> None:
+    from render_specs import load_digests
+
+    lock = _lock(tmp_path, **{"trust-api": "v1.2.3", "flare-fl-client": "v1.2.3"})
+    assert load_digests(lock, "GSTT", "stag", kit) == {
+        "trust-api": "sha256:trust-api",
+        "flare-fl-client": "sha256:flare-fl-client",
+    }
+
+
+@pytest.mark.parametrize(("code", "env"), [("KCH", "stag"), ("GSTT", "prod")])
+def test_another_trusts_image_lock_is_not_used(kit: dict, tmp_path: Path, code: str, env: str) -> None:
+    """One lock per checkout: trust B rendered after mirroring trust A carried A's digests."""
+    from render_specs import load_digests
+
+    assert load_digests(_lock(tmp_path, code, env, **{"trust-api": "v1.2.3"}), "GSTT", "stag", kit) == {}
+
+
+def test_a_digest_mirrored_at_another_tag_is_dropped(kit: dict, tmp_path: Path) -> None:
+    """DOCKER_TAG edited, no `make mirror-images`: the specs kept the old release's digests and
+    every ALTER SERVICE succeeded on the old images."""
+    from render_specs import load_digests
+
+    lock = _lock(tmp_path, **{"trust-api": "v1.2.2", "orthanc": "v1.2.3", "flare-fl-client": "v1.2.3"})
+    assert load_digests(lock, "GSTT", "stag", kit) == {
+        "orthanc": "sha256:orthanc",
+        "flare-fl-client": "sha256:flare-fl-client",
+    }
+    moved = {**kit, "DOCKER_FL_TAG": "v1.3.0", "ORTHANC_TAG": "v1.0.0"}
+    assert load_digests(lock, "GSTT", "stag", moved) == {}

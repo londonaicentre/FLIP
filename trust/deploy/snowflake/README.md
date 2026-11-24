@@ -160,6 +160,15 @@ account repository and records the digest the registry returned. The renderer th
 that digest: a tag in the account repository can be re-pushed, a digest cannot. SPCS runs
 amd64 only, so the explicit platform matters on an arm64 workstation, where a tag pull
 gets arm64 silently and the service fails to start with an exec-format error.
+`images.lock.json` is one file per checkout, so the renderer uses it only for the trust and
+environment it was written for, and drops an image mirrored at another tag than the kit now
+asks for (a `DOCKER_TAG` edited without a new `mirror-images`). Such an image is referenced
+by tag, with a line saying to run `make mirror-images`.
+
+**No FL site privacy filter yet.** On Compose and Helm an init step renders the FLARE
+client's `privacy.json` from the kit's `FL_SITE_PRIVACY_*` or the governance document's
+`[fl_privacy.nvflare]` section. Nothing does that on SPCS, so `render` refuses a kit that
+sets either (naming the setting) rather than deploy a client without the filter it asks for.
 
 ### The one-shot jobs
 
@@ -267,15 +276,21 @@ host, an IP or a rule of its own: a spec either attaches that integration by nam
 nothing. Two services attach it, `trust-api` (polls the hub) and each `fl-client-net-N`
 (reaches the FL server); the guards in `tests/test_egress.py` fail if any other service does.
 
-The switch is the kit's (or the make line's) `HUB_EGRESS`, read literally as `true` or
+The switch is the kit's `HUB_EGRESS`, read literally as `true` or
 `false` and defaulting to false, because a trial account has no external network access at
 all: the trial renders hubless, the same specs, and the self-test runs without egress.
 Anything else (`yes`, `1`, a typo) fails naming the variable rather than quietly granting or
 withholding.
 
+The kit is the only place that holds it. Every `up` sets or clears the integration on each
+service from the rendered specs, so a value given for one run would be gone on the next and
+that deploy would take the trust off the hub and the FL network. `HUB_EGRESS=` on the make
+line (or in the environment) is therefore refused.
+
 ```bash
-make render KIT=GSTT HUB=stag HUB_EGRESS=true   # attach the integration
-make up     KIT=GSTT HUB=stag HUB_EGRESS=true
+# in trust/.env.GSTT.stag:  HUB_EGRESS=true
+make render KIT=GSTT HUB=stag   # the specs attach the integration
+make up     KIT=GSTT HUB=stag
 ```
 
 `up` checks the integration exists before it grants anything, and fails naming it and

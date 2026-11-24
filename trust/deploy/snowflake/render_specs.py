@@ -44,6 +44,7 @@ if str(HERE) not in sys.path:
 
 import yaml_min  # noqa: E402
 from kitfile import kit_path, read_env_vars, resolve_env  # noqa: E402
+from mirror_images import source_tag  # noqa: E402
 from naming import Names, NamingError  # noqa: E402
 from spec_templates import build_all  # noqa: E402
 
@@ -62,8 +63,14 @@ HEADER = """\
 """
 
 
-def load_digests(directory: Path) -> dict[str, str]:
-    """Image digests recorded by ``make mirror-images``; empty when none were."""
+def load_digests(directory: Path, code: str, env: str, kit: dict[str, str]) -> dict[str, str]:
+    """Image digests ``make mirror-images`` recorded for this trust at the kit's tags.
+
+    There is one lock per checkout, so it is used only when it was written for this trust
+    and environment, and an image mirrored at another tag than the kit now asks for is
+    dropped: its digest is the previous release's. Either way the image is referenced by
+    tag, as it is with no lock at all.
+    """
     lock = directory / IMAGE_LOCK
     if not lock.exists():
         return {}
@@ -71,8 +78,18 @@ def load_digests(directory: Path) -> dict[str, str]:
         data = json.loads(lock.read_text())
     except json.JSONDecodeError as e:
         sys.exit(f"❌ {lock} is not valid JSON ({e}). Re-run `make mirror-images`.")
-    images = data.get("images", {})
-    return {repo: entry.get("digest", "") for repo, entry in images.items()}
+    if (data.get("code"), data.get("env")) != (code, env):
+        print(f"   ⚠  {IMAGE_LOCK} is for {data.get('code')} ({data.get('env')}), not {code} ({env}): not used.")
+        print("      Run `make mirror-images` for this trust.")
+        return {}
+    digests: dict[str, str] = {}
+    for repo, entry in data.get("images", {}).items():
+        if entry.get("tag") == source_tag(kit, repo):
+            digests[repo] = entry.get("digest", "")
+        else:
+            print(f"   ⚠  {repo} was mirrored at {entry.get('tag')}, the kit asks for {source_tag(kit, repo)}:")
+            print("      referenced by TAG. Run `make mirror-images`.")
+    return digests
 
 
 def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dict[str, str]) -> dict[str, Any]:
@@ -154,6 +171,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # The kit is the one place that holds the switch. Given per run it was stored nowhere,
+    # and the next render without it detached the trust from the hub and the FL network.
+    if "HUB_EGRESS" in os.environ:
+        sys.exit(
+            "❌ HUB_EGRESS is set on the make line or in the environment. It is read from the kit file\n"
+            "   only: put HUB_EGRESS=true (or false) in trust/.env.<CODE>.<env> and run again without it."
+        )
     env = resolve_env(args.env)
     try:
         names = Names(args.kit)
@@ -170,20 +194,18 @@ def main() -> None:
             f"     make sync-trust-kit KIT={args.kit} HUB={env}"
         )
     kit = read_env_vars(path)
-    # One switch, the platform root's enable_hub_egress made visible to the specs: a kit may
-    # carry HUB_EGRESS, and HUB_EGRESS=... on the make line beats it (so a deploy can turn
-    # egress on for one run without editing the kit).
-    if os.environ.get("HUB_EGRESS"):
-        kit["HUB_EGRESS"] = os.environ["HUB_EGRESS"]
     out_dir = args.out_dir or HERE / "rendered" / f"{names.code}.{env}"
-    digests = load_digests(HERE)
-    manifest = render(kit, args.kit, env, out_dir, digests)
+    digests = load_digests(HERE, names.code, env, kit)
+    try:
+        manifest = render(kit, args.kit, env, out_dir, digests)
+    except ValueError as e:
+        sys.exit(f"❌ {e}")
 
     print(f"🔧 Rendered {len(manifest['services'])} SPCS specs for {names.code} ({env})")
     print(f"   Kit file: {path}")
     print(f"   Output:   {out_dir}")
     if not digests:
-        print("   ⚠  No images.lock.json - specs reference images by TAG. Run `make mirror-images`")
+        print("   ⚠  No image digests for this trust - specs reference images by TAG. Run `make mirror-images`")
         print("      before deploying anything you intend to keep: a tag in the account repository")
         print("      can be moved, a digest cannot.")
     for service in manifest["services"]:

@@ -205,7 +205,9 @@ A hubless node needs nothing here. To join a hub:
 2. In the platform root set ``enable_hub_egress = true`` with ``hub_api_host`` and
    ``fl_server_endpoints``, and apply it. This creates ``FLIP_<CODE>_HUB_EAI``, the only way out of
    the account.
-3. Render and deploy with ``HUB_EGRESS=true`` (on the make line, or in the kit).
+3. Set ``HUB_EGRESS=true`` in the kit file, then ``make render`` and ``make up``. The kit is the
+   only place that holds it: every ``up`` sets or clears the integration from the kit, and
+   ``HUB_EGRESS=`` on the make line is refused.
 4. Give the hub's operators the address the node dials out from. Snowflake publishes the egress
    ranges of each region, and they are shared by every account in that region, so the hub's FL
    listener allows a range, not one address.
@@ -280,6 +282,10 @@ images tree and holds no AES key. One limit remains: a stage grant covers the wh
 through SQL that role can still list the file names of another FL net's images. A trust that runs
 more than one FL net should treat that as open until each net has its own stage and role.
 
+**A site privacy filter is refused, not dropped.** The FL site privacy policy (``FL_SITE_PRIVACY_*``
+or the governance document's ``[fl_privacy]`` section) is not applied on Snowflake yet, so
+``make render`` refuses a kit that sets one instead of deploying a client without it.
+
 **A cohort query is checked before it runs, for Snowflake's own syntax too.** data-access-api
 passes a single ``SELECT`` over the trust's OMOP schema. On Snowflake it also refuses time travel
 (``AT``, ``BEFORE``, ``CHANGES``), which would keep serving a withdrawn patient, the AI and Cortex
@@ -317,8 +323,14 @@ Troubleshooting
 
 **``up`` fails: the integration does not exist.** The specs attach
 ``FLIP_<CODE>_HUB_EAI`` but the platform root was applied with ``enable_hub_egress = false``.
-Either apply it with egress (and the two host settings), or render with ``HUB_EGRESS=false`` and
+Either apply it with egress (and the two host settings), or set ``HUB_EGRESS=false`` in the kit and
 deploy a hubless trust.
+
+**``render`` refuses the kit: it asks for an FL site privacy filter.** ``FL_SITE_PRIVACY_*`` in the
+kit, or an ``[fl_privacy]`` section in its governance document, is not applied on Snowflake yet:
+nothing there renders the FL client's ``privacy.json``. Rather than start the client without the
+filter the kit asks for, ``render`` (and so ``up``) stops and names the setting. Remove it to deploy
+with no site filter, or run the trust on Compose or Kubernetes.
 
 **``up`` fails: role ``FLIP_<CODE>_FL`` does not exist.** The identity root was applied from an
 older commit. Re-apply the identity, platform and workload roots, then ``make sync-kit`` (it grants
