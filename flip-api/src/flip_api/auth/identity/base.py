@@ -67,7 +67,7 @@ class IdentityProvider(ABC):
         """Return every user in the directory."""
 
     @abstractmethod
-    def get_user(self, *, user_id: UUID | str | None = None, email: str | None = None) -> CognitoUser:
+    def get_user(self, *, user_id: UUID | None = None, email: str | None = None) -> CognitoUser:
         """Return the user with ``user_id`` or ``email``.
 
         Raises:
@@ -75,7 +75,7 @@ class IdentityProvider(ABC):
             UserNotFoundError: If no user matches.
         """
 
-    def get_username(self, user_id: UUID | str) -> str:
+    def get_username(self, user_id: UUID) -> str:
         """Return the principal name (email) of the user with ``user_id``."""
         return self.get_user(user_id=user_id).email
 
