@@ -123,7 +123,7 @@ NOT_APPLICABLE = {
         "MONAI Label is not deployed on SPCS": MONAI_LABEL,
         "Helm only": "K8S_PLATFORM_VALUES",
         "kit uploaded by make sync-kit, not fetched by date": "FLOWER_KIT_DATE FLARE_KIT_DATE",
-        "Compose first-start password; SPCS sets XNAT_ADMIN_PASSWORD": "XNAT_ADMIN_INITIAL_PASSWORD",
+        "Compose first start only; SPCS sets the admin one": "XNAT_ADMIN_INITIAL_PASSWORD",  # pragma: allowlist secret
         "not wired (#2047 N2)": "FL_SITE_PRIVACY_POLICY FL_SITE_PRIVACY_PERCENTILE FL_SITE_PRIVACY_GAMMA",
         "not wired (#2047, seed-orthanc never reads it)": "TRUST_DATA_SEED",
         "not wired (#2047, no finding ID)": (
