@@ -176,24 +176,8 @@ def update_project_user_access(project_id: UUID, user_ids: list[UUID], session: 
     Returns:
         None
     """
-    # Convert EmailStr to UUID
-    # user_pool_id = get_settings().AWS_COGNITO_USER_POOL_ID
-    # users = [get_user_by_email_or_id(user_pool_id=user_pool_id, email=uid) for uid in user_emails]
-    access_entries = []
-    for user_id in user_ids:
-        # if not user.id:
-        #     logger.warning(f"User {user.email} does not have a valid ID, skipping access update.")
-        #     continue
-
-        # Create ProjectUserAccess entries
-        access_entry = ProjectUserAccess(
-            project_id=project_id,
-            user_id=user_id,
-        )
-        access_entries.append(access_entry)
-    session.add_all(access_entries)
-    session.commit()  # Commit the changes to the database
-    session.flush()
+    session.add_all([ProjectUserAccess(project_id=project_id, user_id=user_id) for user_id in user_ids])
+    session.commit()
     logger.info(f"Updated user access for project {project_id} with {len(user_ids)} users.")
 
 
@@ -234,17 +218,12 @@ def create_project(
             user_id=current_user_id,  # Add the creator as the first user
         )
         session.add(access_entry)
-        session.flush()  # Ensures new_project.id is available
-        session.commit()  # Commit to finalize the project creation
+        session.commit()
         project_id = new_project.id
-        if not project_id:  # Should not happen if flush is successful
-            raise ValueError("Failed to retrieve ID for newly created project.")
 
-        payload.users = payload.users
         if payload.users:
             update_project_user_access(project_id, payload.users, session)
 
-        # Commit is typically handled by the calling endpoint or a 'with session.begin():' block
         logger.info(f"Project {project_id} created successfully by user {current_user_id}.")
         return project_id
 
