@@ -578,9 +578,10 @@ A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name
 flagged block, never by disabling the rule in `.tflint.hcl` (the rationale needs that second `#`: any other
 separator, such as `-- why`, makes tflint ignore the annotation). Removing an unused root variable means
 removing its whole input chain too: the `TF_VAR_` export in `deploy/aws/Makefile`, the key in
-`scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and `scripts/reconcile_ci_env.py` — and
+`deploy/aws/scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and
+`deploy/aws/scripts/reconcile_ci_env.py` — and
 deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
-against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
+against a canary fixture, and its guards are regression-tested by `deploy/aws/scripts/tests/test_tflint_lint.sh`.
 
 ### Azure trust node checks (Terraform)
 

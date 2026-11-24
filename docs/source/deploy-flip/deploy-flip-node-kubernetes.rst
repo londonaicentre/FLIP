@@ -679,6 +679,18 @@ When the admin refreshes your kit's hub-shared settings, see "Later — rotate h
    data must set ``TRUST_DATA_SEED=false`` in the kit (see `Step 1 — Check out the release and copy in the kit`_);
    the upgrade carries it into the release.
 
+.. note::
+
+   Every platform release also publishes this chart to GHCR as a versioned OCI artifact (FLIP#1646), whose chart
+   version, ``appVersion`` and ``global.image.tag`` all carry the release:
+
+   .. code-block:: shell
+
+      helm pull oci://ghcr.io/londonaicentre/charts/flip-trust --version X.Y.Z
+
+   The in-tree chart is deliberately unversioned (``0.0.0-dev``, floating image tag), so the Make targets above
+   deploy what the checkout holds. The chart README's "The published chart" section has the details.
+
 .. seealso::
 
    :doc:`/sys-admin/admin-upgrading-sites` for the full runbook, per-image pins and rolling back.

@@ -521,7 +521,7 @@ contract stay in sync), `fl_round_metrics_tests.yml` (tests over
 `check-version-bump.yml` (blocks a PR to `main` from `develop` that doesn't bump the
 flip-utils version), `check-package-metadata.yml` (validates flip-utils package metadata on
 PRs to develop/main), `validate_branch_origin.yml` (PRs targeting `main` must originate from
-`develop`, or from a `hotfix/*` branch for a hotfix release), `release.yml` (creates a GitHub Release on push to `main`), `release-pypi.yml`
+`develop`, or from a `hotfix/*` branch for a hotfix release), `release.yml` (creates a GitHub Release on push to `main`, and publishes the versioned trust Helm chart to `oci://ghcr.io/londonaicentre/charts/flip-trust` once the image builds are green, via `trust/deploy/helm/scripts/package_chart.py` — FLIP#1646), `release-pypi.yml`
 (publishes flip-utils to PyPI on push to `main`), `pr-release-notes-preview.yml` (previews
 release notes on a PR to `main`), `regenerate_docs_gifs.yml` (re-records the docs GIFs from
 Cypress on push to `develop` touching `flip-ui/src/**` or the Cypress docs harness —
