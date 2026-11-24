@@ -273,7 +273,9 @@ wipes XNAT (see the warning under `Restoring a trust node`_).
       make -C trust/xnat xnat-backup KIT=<CODE> HUB=prod
 
    It writes ``$XNAT_DATA_DIR/backups/xnat-db-<timestamp>.sql.gz`` and keeps it only if the dump is complete. Copy it
-   off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included.
+   off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included. The dump holds XNAT's
+   password hashes and token secrets, so it and ``backups/`` are readable only by the user that wrote them (the kit's
+   ``FLIP_UID``, or XNAT's own uid when the kit sets none): copy it as that user or as root.
 
 #. **Copy the XNAT archive** (``$XNAT_DATA_DIR/xnat-data/archive/``) with your backup tooling, at the same time as the
    dump. A database restored without its archive files, or the other way round, points at images that do not exist.
