@@ -146,10 +146,65 @@ class ApplyPublishesTheUi(unittest.TestCase):
         skipped every production publish (v0.15.0); ``always()`` lifts it, the result check holds the gate.
         """
         ui = job("terraform_apply.yml", "ui")
-        assert "needs: apply" in ui
+        assert "needs: [apply, ui-cognito-ids]" in ui
         assert "uses: ./.github/workflows/publish_ui.yml" in ui
-        assert re.search(r"^    if: always\(\) && needs\.apply\.result == 'success'$", ui, re.MULTILINE), ui
+        gate = "if: always() && needs.apply.result == 'success' && needs.ui-cognito-ids.result == 'success'"
+        assert f"    {gate}\n" in ui, ui
         assert permissions(ui) == {"contents": "read", "id-token": "write"}
+
+    def test_cognito_ids_that_differ_from_terraform_hold_the_ui(self) -> None:
+        """They were a warning on a green run, and the UI published could sign nobody in (FLIP#2047)."""
+        check = job("terraform_apply.yml", "ui-cognito-ids")
+        step = re.search(r"^        run: \|\n(?P<run>(?:          [^\n]*\n)+)", check, re.MULTILINE)
+        assert step, "ui-cognito-ids has no run script"
+        script = "\n".join(line[10:] for line in step["run"].splitlines())
+        terraform = {"TF_POOL_ID": "eu-west-2_new", "TF_CLIENT_ID": "newclient"}
+        for env, ok, says in [
+            ({**terraform, "UI_POOL_ID": "eu-west-2_new", "UI_CLIENT_ID": "newclient"}, True, "match Terraform"),
+            ({**terraform, "UI_POOL_ID": "eu-west-2_old", "UI_CLIENT_ID": "newclient"}, False, "::error title=UI Cog"),
+            ({**terraform, "UI_POOL_ID": "eu-west-2_new", "UI_CLIENT_ID": "oldclient"}, False, "::error title=UI Cog"),
+            ({**terraform, "UI_POOL_ID": "eu-west-2_new"}, False, "::error title=UI Cognito ids differ"),
+            # A first apply: nobody could have set them yet, and publish_ui.yml refuses to build without them.
+            (terraform, True, "::warning title=UI Cognito ids not set"),
+            # terraform output failed in the apply job: its own message, never "they match".
+            ({"UI_POOL_ID": "eu-west-2_new", "UI_CLIENT_ID": "newclient"}, False, "::error title=Cognito ids not read"),
+            ({}, False, "::error title=Cognito ids not read"),
+        ]:
+            with self.subTest(env=env):
+                blank = dict.fromkeys(("TF_POOL_ID", "TF_CLIENT_ID", "UI_POOL_ID", "UI_CLIENT_ID"), "")
+                run = subprocess.run(
+                    ["bash", "-c", script],
+                    env={"PATH": os.environ["PATH"], **blank, **env},
+                    capture_output=True,
+                    text=True,
+                )
+                assert (run.returncode == 0) is ok, run.stdout + run.stderr
+                assert says in run.stdout, run.stdout
+        mismatch = next(line for line in script.splitlines() if "UI Cognito ids differ" in line)
+        assert "AWS_COGNITO_USER_POOL_ID" in mismatch
+        assert "AWS_COGNITO_APP_CLIENT_ID" in mismatch
+
+    def test_the_cognito_check_reads_terraform_in_the_apply_job_and_cannot_fail_it(self) -> None:
+        """The staging restore and stop key on the apply job's result, so the verdict is a job of its own."""
+        apply = job("terraform_apply.yml", "apply")
+        read = apply[apply.index("- name: Read the Cognito ids Terraform holds") :]
+        assert "terraform output -raw CognitoUserPoolId)" in read
+        assert "terraform output -raw CognitoAppClientId)" in read
+        assert "2>/dev/null" not in read, "Terraform's error must reach the log"
+        assert "exit 1" not in read
+        assert "set -e" not in read
+        assert "cognito_user_pool_id: ${{ steps.cognito.outputs.pool }}" in apply
+        assert "cognito_app_client_id: ${{ steps.cognito.outputs.client }}" in apply
+
+        check = job("terraform_apply.yml", "ui-cognito-ids")
+        assert "needs: apply\n" in check
+        assert "if: always() && needs.apply.result == 'success'\n" in check
+        assert "permissions: {}" in check
+        apply_env = re.search(r"^    environment: (.+)$", apply, re.MULTILINE)
+        assert apply_env
+        assert f"environment: {apply_env.group(1)}" in check
+        for other in ("demo", "restore-staging-services", "staging-end-to-end", "hold-then-stop-staging"):
+            assert "ui-cognito-ids" not in job("terraform_apply.yml", other), other
 
     def test_the_ui_publishes_into_the_applys_environment(self) -> None:
         apply_env = re.search(r"^    environment: (.+)$", job("terraform_apply.yml", "apply"), re.MULTILINE)
