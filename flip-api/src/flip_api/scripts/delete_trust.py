@@ -57,7 +57,7 @@ Contract:
 - Exit code 0 on either status; non-zero only on argument errors or
   unexpected exceptions (e.g. an FK we haven't accounted for).
 
-Invoked by ``deploy/providers/AWS/scripts/delete-trust.sh`` as a one-off
+Invoked by ``deploy/aws/scripts/delete-trust.sh`` as a one-off
 ECS task (mirrors the ``register-trusts.sh`` pattern). For local dev:
 ``docker compose exec flip-api uv run python -m flip_api.scripts.delete_trust --name <slot>``.
 """

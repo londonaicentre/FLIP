@@ -135,8 +135,8 @@ they run, as for any on-prem trust:
 
 .. code-block:: bash
 
-   make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
-   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>
+   make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>
+   make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
 Then, on the site's side:
 

@@ -15,7 +15,7 @@
 
 The node has no inbound rule, so SSH, Ansible and the Docker ssh context all go through
 ``aws ssm start-session``. The entry is keyed on the node's alias and replaced in place on a re-run;
-other entries, including the hub's own (deploy/providers/AWS/update_ssm_ssh_config.py, same block
+other entries, including the hub's own (deploy/aws/update_ssm_ssh_config.py, same block
 format), are left alone.
 
 Usage:

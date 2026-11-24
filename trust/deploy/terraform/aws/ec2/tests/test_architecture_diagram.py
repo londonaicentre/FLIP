@@ -14,7 +14,7 @@
 
 """Drift guard between the AWS EC2 node diagrams and the Terraform they depict.
 
-The counterpart of ``deploy/providers/AWS/tests/test_architecture_diagram.py``. ``architecture/trust_ec2.py`` maps
+The counterpart of ``deploy/aws/tests/test_architecture_diagram.py``. ``architecture/trust_ec2.py`` maps
 each drawn label to Terraform addresses; this suite checks every address exists in the root or in
 ``../modules/network`` (as ``module.network.<address>``), and that every resource of a load-bearing type there is
 drawn. The ``.tf`` files are read as text: no ``terraform`` binary, no state, no credentials. The render smoke test

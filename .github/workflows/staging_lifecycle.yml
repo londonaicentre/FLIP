@@ -14,7 +14,7 @@
 # Staging used to run permanently, for an account nobody looks at between
 # deploys: three ECS services at 1/1, the hub host up for months, RDS available.
 # This workflow is the thing that brings it down and the thing that brings it
-# back. The work itself is deploy/providers/AWS/scripts/staging-power.sh, which
+# back. The work itself is deploy/aws/scripts/staging-power.sh, which
 # is tested offline in scripts/tests/test_staging_power.sh; this file is the
 # scheduling around it.
 #
@@ -184,7 +184,7 @@ jobs:
         env:
           HOLD_MINUTES_INPUT: ${{ inputs.hold_minutes }}
           HOLD_MINUTES_VAR: ${{ vars.STAGING_HOLD_MINUTES }}
-        run: deploy/providers/AWS/scripts/staging-power.sh hold-minutes
+        run: deploy/aws/scripts/staging-power.sh hold-minutes
 
       - name: Sleep
         env:
@@ -252,10 +252,10 @@ jobs:
           set -euo pipefail
           action="${{ inputs.action || 'stop-stag' }}"
           case "${action}" in
-            start-stag) deploy/providers/AWS/scripts/staging-power.sh start ;;
-            start-stag-data) deploy/providers/AWS/scripts/staging-power.sh start-data ;;
-            start-stag-services) deploy/providers/AWS/scripts/staging-power.sh start-services ;;
-            stop-stag | hold-then-stop) deploy/providers/AWS/scripts/staging-power.sh stop ;;
+            start-stag) deploy/aws/scripts/staging-power.sh start ;;
+            start-stag-data) deploy/aws/scripts/staging-power.sh start-data ;;
+            start-stag-services) deploy/aws/scripts/staging-power.sh start-services ;;
+            stop-stag | hold-then-stop) deploy/aws/scripts/staging-power.sh stop ;;
             *) echo "::error::unknown action '${action}'"; exit 1 ;;
           esac
 
@@ -269,7 +269,7 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           set -euo pipefail
-          deploy/providers/AWS/scripts/staging-power.sh status > "${RUNNER_TEMP}/state.txt"
+          deploy/aws/scripts/staging-power.sh status > "${RUNNER_TEMP}/state.txt"
           {
             echo "### Staging state after this run"
             echo

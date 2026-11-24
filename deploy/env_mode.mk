@@ -11,7 +11,7 @@
 #
 # Single source of truth for what the HUB selector means (FLIP#1479). Sibling of
 # instance.mk and fl_backend.mk, included by every Makefile that reads HUB —
-# root, deploy/providers/AWS, trust, trust/xnat, trust/deploy/helm,
+# root, deploy/aws, trust, trust/xnat, trust/deploy/helm,
 # fl-services/{nvflare,flower}, flip-ui — at the very top, BEFORE their env-file
 # include: this file needs only HUB, and the env file's name is one of the things
 # it derives.

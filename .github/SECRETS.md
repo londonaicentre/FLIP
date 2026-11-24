@@ -83,9 +83,9 @@ environment and readable only on the branches its deployment branch policy admit
 Which account an environment drives is set by its **`TF_HUB`** variable (`stag` |
 `prod`, the `deploy/env_mode.mk` selector), which has no default — together with `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, the OIDC roles it
 assumes. Those roles are not created by FLIP's pipeline: they come from the
-`deploy/providers/AWS/modules/terraform_ci_bootstrap` module, which the platform
+`deploy/aws/modules/terraform_ci_bootstrap` module, which the platform
 repositories (`aicentre-iac`, `aicentre-lza-iac`) apply in each account — or, in an
-account you own, `deploy/providers/AWS/ci`. The seeding script reads both ARNs from
+account you own, `deploy/aws/ci`. The seeding script reads both ARNs from
 IAM, after checking the roles trust this repository's environment. Repointing an environment at a different AWS account is a change to those
 values, not to any workflow. Because `TF_HUB` alone decides the estate's
 class, the workflows also state the **class** their branch implies
@@ -94,9 +94,9 @@ class, the workflows also state the **class** their branch implies
 names the other class — so a mis-set variable is a red compose step rather than an
 unattended apply that plans production with staging's shape. The full key list, the
 seeding procedure and the per-account bootstrap order are documented with the stack
-that consumes them: `deploy/providers/AWS/README.md` → "Terraform CI: plan on PR,
+that consumes them: `deploy/aws/README.md` → "Terraform CI: plan on PR,
 apply on merge" and "Repointing CI at the LZA accounts". Seeding is done by
-`deploy/providers/AWS/scripts/setup-github-environments.sh --hub <stag|prod>` (repo
+`deploy/aws/scripts/setup-github-environments.sh --hub <stag|prod>` (repo
 admin, `--dry-run` first, from a machine holding the operator's `.env.<env>` file).
 
 ## Security Notes

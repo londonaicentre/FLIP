@@ -215,8 +215,8 @@ on-prem trust, from the root of a FLIP checkout:
 .. code-block:: bash
 
    make new-trust TRUST_CODE=<CODE> TRUST_NAME="<name>" HUB=<env>
-   make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
-   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>
+   make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>
+   make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
 .. note::
 

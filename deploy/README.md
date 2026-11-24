@@ -21,29 +21,33 @@
 
 ## Where things live
 
-Deployment artifacts are **not** all under `deploy/`. Two different concerns share the word "deploy", and
-they are filed by two different rules:
+**The rule (#1438): unprefixed is the hub, `trust/` is the trust; below that a directory is named by artefact
+(`compose/`, `terraform/`, `ansible/`, `helm/`), and the cloud comes last (`deploy/aws`,
+`trust/deploy/terraform/<cloud>/<target>`).**
 
-1. **Application composition** — which containers form a stack. A compose file lives **next to the source
-   tree whose images it builds**, so most of them are outside this directory.
-2. **Infrastructure provisioning** — accounts, hosts, clusters. The hub's is `deploy/providers/`; a trust's
-   is `trust/deploy/terraform/`, one root per target, reading nothing from the hub (#1438).
+The hub and every trust deploy independently. The hub's Terraform creates no trust, and a trust root reads
+nothing from the hub: no state, no env file, no credentials. A trust's only links to its hub are its kit and its
+registration, which is a hub-admin action, so `register-trusts`, `package-onprem-trust-kit` and `delete-trust`
+stay in the hub's Makefile (`deploy/aws`).
+
+Compose files are the exception to "everything under `deploy/`": a compose file lives **next to the source tree
+whose images it builds**, so most of them are elsewhere.
 
 | I want to… | Go to |
 | ---------- | ----- |
-| Run/change the **Central Hub** container stack | `deploy/compose.*.yml` |
+| Run/change the **Central Hub** container stack | `deploy/compose/compose.*.yml` (run with `--project-directory deploy`, as the Makefiles do: their relative paths are from `deploy/`) |
 | Run/change the **trust** container stack | [`trust/deploy/`](../trust/deploy/README.md) |
 | Run/change the **XNAT** swarm stack | `trust/xnat/docker-compose-stack*.yml` |
 | Build/populate the mock **OMOP** database | `trust/omop-db/compose.yml` |
 | Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
-| Provision **AWS** (the hub: ECS, RDS, the SSM bastion; a trust node is `trust/deploy/terraform/aws/`) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
+| Provision **AWS** (the hub: ECS, RDS, the SSM bastion; a trust node is `trust/deploy/terraform/aws/`) | [`deploy/aws/`](aws/README.md) |
 | Provision an **Azure** trust (VM or AKS) | [`trust/deploy/terraform/azure/`](../trust/deploy/terraform/azure/README.md) |
 | Provision an **AWS EC2** trust in any account | [`trust/deploy/terraform/aws/ec2/`](../trust/deploy/terraform/aws/ec2/README.md) |
 | Register a trust, sync or package its **kit**, upgrade a site | `make` targets; the scripts are in `trust/deploy/scripts/` |
 | Provision an **on-prem** trust host (Ansible) | [`trust/deploy/ansible/`](../trust/deploy/ansible/README.md) |
 | Deploy a trust to **Kubernetes** (Helm) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) (chart: [`trust/deploy/helm/`](../trust/deploy/helm/README.md)) |
 
-Every compose file in **this** directory is Central-Hub-only; no trust service is defined here. The services are:
+Every compose file in **`compose/`** is Central-Hub-only; no trust service is defined here. The services are:
 
 - `flip-ui`, `flip-api`, `flip-db`, `pgadmin`.
 - `keycloak` (development only): the local identity provider. It is ephemeral (no volume) and imports [`keycloak/flip-realm.json`](keycloak/README.md) at every boot with `start-dev --import-realm`. The import skips a realm that already exists, so after a realm edit run `make reset-keycloak`.
@@ -64,11 +68,22 @@ one hub service meeting one trust service. Everything else hub-side, `flip-api` 
 included, stays on the hub-internal network and reaches the FL server there over its control ports. An
 fl-client holds no Central Hub URL and no Central Hub credential by design, so it is given no route to one.
 
-Only **trusts** have more than one deployment shape — Compose on a host (`trust/deploy/`, the host prepared by
-`trust/deploy/ansible/`) or Helm on Kubernetes (`trust/deploy/helm/`). Both render one stack, so they live with
-it; `providers/` holds only cloud infrastructure (today the `AWS/` Terraform root). The hub has one production
-target, AWS ECS Fargate, and needs no provider. See [`providers/README.md`](providers/README.md) for the
-shape × infrastructure matrix.
+The hub has one production target, AWS ECS Fargate (hub-on-EC2 went with #936); `compose/compose.prod.yml` is a
+local prod-image harness, not a deploy target. Only **trusts** have more than one shape, and either shape runs on
+infrastructure a trust Terraform root created or on infrastructure the site already has:
+
+| Node shape | Defined in | Installed by | Runs on |
+| ---------- | ---------- | ------------ | ------- |
+| **Compose on a host** | [`trust/deploy/compose/`](../trust/deploy/README.md) | [`trust/deploy/ansible/`](../trust/deploy/ansible/README.md) `onprem.yml` (site-owned host), `aws-ec2.yml` or `azure.yml` (cloud VMs), then `make up-onprem-trust` / the EC2 root's `make deploy` | an on-prem Ubuntu box, or a VM from `trust/deploy/terraform/{aws/ec2,azure}` |
+| **Helm on Kubernetes** | [`trust/deploy/helm/`](../trust/deploy/helm/README.md) (chart `flip-trust`) | `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<stag\|prod>` | a site-managed cluster (k3s, on-prem) or a managed one (AKS, EKS) |
+
+**Spell `HUB` out** on either row: `deploy/aws/Makefile` refuses to run without it, while
+`trust/deploy/helm/Makefile` reads **the `development` kit when `HUB` is unset**.
+
+`deploy/aws/Makefile` still drives `trust/deploy/ansible/onprem.yml` (`provision-local-trust`): the play needs
+nothing from AWS, but its driver parses the hub env file, the one known exception to "the hub's tree holds only
+the hub". `deploy/providers/AWS/GNUmakefile` forwards `make -C deploy/providers/AWS <goals>` to `deploy/aws` for
+one release after the move (#1438), then goes.
 
 ## Supported PostgreSQL Versions
 
@@ -82,7 +97,7 @@ FLIP uses AWS RDS PostgreSQL. The minimum supported version is PostgreSQL 15; th
 | PostgreSQL 16 | October 2028 | ✓ Supported |
 | PostgreSQL 17 | November 2029 | ✓ Current (Terraform default) |
 
-**Upgrade Policy**: Plan PostgreSQL major version upgrades with a 6-month lead time before EOL. AWS charges premium rates for EOL versions. To change the version, update the `postgres_version` variable in `deploy/providers/AWS/variables.tf`.
+**Upgrade Policy**: Plan PostgreSQL major version upgrades with a 6-month lead time before EOL. AWS charges premium rates for EOL versions. To change the version, update the `postgres_version` variable in `deploy/aws/variables.tf`.
 
 ## Central Hub prerequisites and configuration
 
@@ -103,7 +118,7 @@ Verifying the SES sender identity (and re-verifying an expired one) and checking
 #### Cognito Email Configuration
 
 The Cognito invitation and password-reset emails are Terraform-managed templates; their files, placeholders and
-local test utility are in [`providers/AWS/README.md` → Email Templates](providers/AWS/README.md#email-templates).
+local test utility are in [`aws/README.md` → Email Templates](aws/README.md#email-templates).
 Cognito sends them itself, not through SES.
 
 #### Cognito MFA Administration
@@ -116,13 +131,13 @@ Cognito exposes no admin API to delete a user's verified TOTP secret. With the p
 
 With `mfa_configuration = "OPTIONAL"`, disabling the preference actually takes effect: Cognito signs the user in without a challenge. The application layer then catches the user — `flip-api` `verify_token` checks whether `SOFTWARE_TOKEN_MFA` is present in the user's `UserMFASettingList` and returns 403 if not, and the `flip-ui` router guard routes the user to the post-auth enrolment page where they mint a fresh TOTP secret. First-time users follow the same path: they sign in with their temporary password, the app sees `mfaEnabled=false`, and they are walked through enrolment before any protected route is reachable.
 
-SMS MFA is intentionally disabled — it would introduce an SNS dependency and reintroduce SIM-swap risk. The rationale is documented inline at `deploy/providers/AWS/modules/cognito/main.tf` (around the `mfa_configuration` line) and the enforcement point lives in `flip-api/src/flip_api/auth/dependencies.py` (`verify_token`).
+SMS MFA is intentionally disabled — it would introduce an SNS dependency and reintroduce SIM-swap risk. The rationale is documented inline at `deploy/aws/modules/cognito/main.tf` (around the `mfa_configuration` line) and the enforcement point lives in `flip-api/src/flip_api/auth/dependencies.py` (`verify_token`).
 
 ##### `ENFORCE_MFA` flag
 
 The MFA gate is controlled by `flip-api`'s `ENFORCE_MFA` setting. The Settings default is `true` — when active, `verify_token` returns 403 for any signed-in user without an active TOTP and the UI's router guard redirects them through enrolment.
 
-The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.prod.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.prod` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
+The dev override lives in `deploy/compose/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose/compose.prod.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.prod` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
 
 Only `false`, `0`, `no` or `off` (trimmed, any case) turn the gate off. `true`, `1`, `yes`, `on`, empty and unset keep it on, and so does any other value — a typo fails closed, with a warning naming the value in the flip-api log.
 
@@ -149,10 +164,10 @@ without FLIP's audit log.
 ### Central Hub
 
 The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
-[`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
+[`deploy/aws/`](aws/README.md). The task definitions in `ecs_tasks.tf` (env maps in
 `locals.tf`) are the **canonical definition of production container config**. That root deploys onto an
 AWS Landing Zone Accelerator estate, where the network and edge are owned by the accelerator — see
-[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate).
+[Deploying onto an LZA estate](aws/README.md#deploying-onto-an-lza-estate).
 There is no self-contained single-account mode (removed in FLIP#1479). What the hub costs to run — hub only,
 trust hosts excluded because their GPU sizing is a per-trust decision — is on the docs site's
 [Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
@@ -435,7 +450,7 @@ Two operational consequences, both with the operator procedure in the manual's
   authentication` at trust-api, a **400** from imaging-api / data-access-api (a payload that is not an envelope at
   all is a 400 `... is not a valid envelope`); a 500 is a key-load or cipher fault, not a mismatch. On stag/prod the
   hub's copy is what the CI apply wrote into Secrets Manager, recoverable with
-  `deploy/providers/AWS/scripts/reconcile_ci_env.py`.
+  `deploy/aws/scripts/reconcile_ci_env.py`.
 - **There is no compatibility with the pre-FLIP#1179 AES-CBC format**, so a hub and its trusts cross that boundary
   together, as a flag day under Deployment Mode.
 
@@ -471,4 +486,4 @@ internal-ALB value would also work.
 
 > **Note on troubleshooting**: AWS-deployment-specific failure modes (Terraform state drift, ECS
 > service stuck in `PENDING`, CloudFront cache invalidation, RDS connectivity) are documented in
-> [`providers/AWS/TROUBLESHOOTING.md`](providers/AWS/TROUBLESHOOTING.md).
+> [`aws/TROUBLESHOOTING.md`](aws/TROUBLESHOOTING.md).

@@ -30,7 +30,9 @@ Also the one Python reader of the kit's TRUST_DATA_SEED (:func:`trust_data_seed`
 
 from __future__ import annotations
 
+import contextlib
 import os
+import tempfile
 from pathlib import Path
 
 # Mode for any file holding trust credentials: owner read/write only.
@@ -156,14 +158,14 @@ def comment_out(lines: list[str], key: str) -> list[str]:
 
 
 def write_secure(target: Path, lines: list[str]) -> None:
-    """Write ``lines`` to ``target``, restricting it to 0600 before any content lands.
+    """Replace ``target`` with ``lines`` atomically, as a 0600 file, so a kit is never partial or exposed.
 
-    Do not use ``Path.write_text`` followed by ``chmod``: ``write_text`` does not change the mode of
-    an existing file, so a kit file already at 0644 — hand-created, or seeded under a stock umask 022
-    — holds the freshly minted ``TRUST_API_KEY`` and ``TRUST_INTERNAL_SERVICE_KEY`` world-readable
-    for the window between the two calls, and permanently if the process is interrupted between
-    them. Opening without ``O_TRUNC`` lets ``fchmod`` run first; truncate and write only once the
-    descriptor is 0600.
+    The content goes to a temp file in the same directory, created 0600, which is flushed, fsynced
+    and renamed over the kit with ``os.replace``. An interrupted write (a full disk, a killed
+    process, a power cut) leaves the old kit whole rather than truncated, and the new credentials
+    never sit in a file with a wider mode: ``Path.write_text`` followed by ``chmod`` would expose
+    them through an existing 0644 kit. A symlinked kit is written through to the file it names, and
+    the replacement keeps the old file's owner when this process may set it (root, under ``sudo -E``).
 
     ``flip_api.scripts.env_utils.write_env_file`` is the same routine for the two generator scripts
     that run inside flip-api's package and virtual environment. This module sits at the repository
@@ -172,18 +174,45 @@ def write_secure(target: Path, lines: list[str]) -> None:
     Args:
         target (Path): The env file to write.
         lines (list[str]): Lines to write, without trailing newlines. Empty writes an empty file,
-            not a lone newline — the seeding call passes ``[]`` when there is no example to copy,
+            not a lone newline: the seeding call passes ``[]`` when there is no example to copy,
             and a stray newline there becomes a leading blank line in the finished kit.
 
     Returns:
         None
     """
-    with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT, KIT_FILE_MODE), "w") as handle:
-        os.fchmod(handle.fileno(), KIT_FILE_MODE)
-        handle.truncate(0)
-        # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
-        # leave a leading blank line — matching flip_api.scripts.env_utils.write_env_file exactly.
-        handle.write("\n".join(lines) + "\n" if lines else "")
+    # Write a 0600 temp file beside the kit and rename it over the kit, so an interrupted write leaves
+    # the old kit whole: it may be the only plaintext copy of TRUST_API_KEY. The rename goes to the
+    # file a symlinked kit names (an operator may keep the kit elsewhere behind a link), not over
+    # the link, and the new file keeps the old one's owner where this process may set it.
+    real = os.path.realpath(target)
+    directory = os.path.dirname(real)
+    try:
+        previous = os.stat(real)
+    except FileNotFoundError:
+        previous = None
+    fd, tmp = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            # mkstemp already creates 0600; set it explicitly so the mode never depends on that.
+            os.fchmod(handle.fileno(), KIT_FILE_MODE)
+            if previous is not None and (previous.st_uid, previous.st_gid) != (os.getuid(), os.getgid()):
+                with contextlib.suppress(PermissionError):
+                    os.fchown(handle.fileno(), previous.st_uid, previous.st_gid)
+            # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
+            # leave a leading blank line; the two copies of this routine must stay identical.
+            handle.write("\n".join(lines) + "\n" if lines else "")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, real)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+    dir_fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def write_kit(target: Path, kit: dict, example: Path | None = None, hub_shared_commented: bool = False) -> None:

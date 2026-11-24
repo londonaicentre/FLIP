@@ -16,13 +16,14 @@ on:
   workflow_dispatch:
   # Release builds (FLIP#1204): every image, at the tag — see AGENTS.md "Docker image builds".
   push:
-    branches: [main, develop]
     tags: ['v*.*.*']
-    # This image shares nothing with the xnat-web/db/nginx build contexts, so
-    # only its own directory and workflow should trigger a republish.
-    paths:
-      - "trust/xnat/dcm2niix/**"
-      - ".github/workflows/docker_build_xnat_dcm2niix.yml"
+  # Publish only after "Trust - XNAT CI" passes on main/develop (FLIP#880); the job-level `if`
+  # below gates on its success. workflow_run has no path filter, so that workflow's push paths
+  # cover every input of the XNAT images.
+  workflow_run:
+    workflows: ["Trust - XNAT CI"]
+    types: [completed]
+    branches: [main, develop]
   # PR runs exercise the Dockerfile — the pinned dcm2niix download, its sha256
   # check and the smoke test baked into the build — so a bad pin fails in the PR
   # rather than after merge. The login/push/visibility steps are gated below, so
@@ -35,12 +36,30 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   build-and-push:
-    # Skip on forks: they cannot push to ghcr.io/londonaicentre, so this whole
-    # build-and-publish job would otherwise show a spurious CI failure on fork
-    # pushes. Upstream main/develop publishing is unchanged.
-    if: github.repository == 'londonaicentre/FLIP'
+    # Only publish when the upstream test run passed. Dispatch, PR and release-tag runs have no
+    # workflow_run context, so they pass. The head_repository clause is the trust boundary
+    # (FLIP#882, scripts/tests/test_workflow_trust_guards.py).
+    # The event clause builds a commit once (FLIP#2020): the suite also runs for the
+    # develop→main PR, whose head branch passes the `branches` filter above, and a second
+    # build would replace the immutable sha-<short7> tag with a different image.
+    # A suite run started by hand is not a push either, so it no longer republishes: dispatch
+    # this workflow instead.
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)) &&
+      github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     permissions: # override top-level read-only default to allow GHCR push
       contents: read
@@ -54,6 +73,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # workflow_run.* is empty on the other events, so fall back to the run's own ref.
+          repository: ${{ github.event.workflow_run.head_repository.full_name || github.repository }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # A stable v<X.Y.Z> tag must point at a commit on main — releases are cut there by
       # release.yml; pre-release (-rc.N) tags are the release-candidate path and pass.
@@ -67,15 +90,28 @@ jobs:
           GH_EVENT_NAME: ${{ github.event_name }}
           GH_REF: ${{ github.ref }}
           GH_SHA: ${{ github.sha }}
+          GH_WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          GH_WR_EVENT: ${{ github.event.workflow_run.event }}
+          GH_WR_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          TAGS="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
+          # Under workflow_run, github.sha / github.ref_name name the default branch, not the
+          # tested commit, so tag from the triggering run's head_sha / head_branch.
+          if [[ "$GH_EVENT_NAME" == "workflow_run" ]]; then
+            SHA="$GH_WR_SHA"
+            REF_NAME="$GH_WR_BRANCH"
+          else
+            SHA="$GH_SHA"
+            REF_NAME="$GH_REF_NAME"
+          fi
+
+          TAGS="${REGISTRY}/${IMAGE_NAME}:${SHA}"
 
           # An empty sha would silently publish a mutable literal `sha-` tag — refuse.
-          [[ -n "$GH_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+          [[ -n "$SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
 
           # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish.
-          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
-          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${GH_SHA:0:7}"
+          # Length 7 must match the tag resolution in deploy/aws/Makefile.
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
 
           # The tool-version tag is the one every deploy config references
           # (dcm2niix_command.json, which both deployment shapes register, imaging-api's
@@ -90,13 +126,13 @@ jobs:
             TAGS="${REGISTRY}/${IMAGE_NAME}:${GH_REF_NAME}"
           else
             # Branch name sanitization
-            SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+            SAFE_REF_NAME=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
             TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
           fi
 
           # Branch number (if starts with number)
-          if [[ "$GH_REF_NAME" =~ ^[0-9]+ ]]; then
-              BRANCH_NUM=$(echo "$GH_REF_NAME" | grep -oE '^[0-9]+')
+          if [[ "$REF_NAME" =~ ^[0-9]+ ]]; then
+              BRANCH_NUM=$(echo "$REF_NAME" | grep -oE '^[0-9]+')
               TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${BRANCH_NUM}"
           fi
 
@@ -106,11 +142,11 @@ jobs:
              TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
           fi
 
-          # Determine if this is a merge/push to main or develop. Unlike the
-          # workflow_run-gated application workflows, this one is triggered
-          # directly, so github.ref_name is the branch already.
+          # Determine if this is a merge/push to main or develop
           BRANCH_NAME=""
-          if [[ "$GH_EVENT_NAME" == "push" ]]; then
+          if [[ "$GH_EVENT_NAME" == "workflow_run" && "$GH_WR_EVENT" == "push" ]]; then
+            BRANCH_NAME="$GH_WR_BRANCH"
+          elif [[ "$GH_EVENT_NAME" == "push" ]]; then
             BRANCH_NAME="$GH_REF_NAME"
           fi
 
@@ -141,13 +177,46 @@ jobs:
           done
           docker build "${TAG_FLAGS[@]}" .
 
+      # Sites pin the version tag, and every green "Trust - XNAT CI" run lands here whatever it
+      # changed (FLIP#880), so the tag moves only with this image's own source: each publish of it
+      # also tags the build context's git tree, and while that tag still names the same image as
+      # the version tag, the version tag is left alone. A manual dispatch always republishes it (a
+      # base-image rebuild changes no source), and a failed registry lookup fails the step rather
+      # than reading as an absent tag.
       - name: Push Docker image
         if: github.event_name != 'pull_request'
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+          VERSION: ${{ steps.tags.outputs.version }}
+          GH_EVENT_NAME: ${{ github.event_name }}
         run: |
+          # Prints the digest, nothing when the tag does not exist; any other failure is an error.
+          digest() {
+            local out
+            if ! out=$(docker buildx imagetools inspect "$1" 2>&1); then
+              grep -qiE 'not found|manifest unknown|name unknown' <<<"$out" && return 0
+              echo "::error::could not read $1 from the registry: $out" >&2
+              return 1
+            fi
+            awk '/^Digest:/ {print $2; exit}' <<<"$out"
+          }
+          VERSION_TAG="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          CONTEXT_TAG="${REGISTRY}/${IMAGE_NAME}:context-$(git rev-parse HEAD:./)"
+
           IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
           for tag in "${TAG_ARRAY[@]}"; do
+            if [[ "$tag" == "$VERSION_TAG" ]]; then
+              if [[ "$GH_EVENT_NAME" != "workflow_dispatch" ]]; then
+                PUBLISHED="$(digest "$CONTEXT_TAG")"
+                CURRENT="$(digest "$VERSION_TAG")"
+                if [[ -n "$PUBLISHED" && "$PUBLISHED" == "$CURRENT" ]]; then
+                  echo "Build context unchanged since ${VERSION_TAG} was published: tag left as it is"
+                  continue
+                fi
+              fi
+              docker tag "$tag" "$CONTEXT_TAG"
+              docker push "$CONTEXT_TAG"
+            fi
             docker push "$tag"
           done
 

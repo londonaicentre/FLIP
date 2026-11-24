@@ -372,7 +372,7 @@ trust/fl-kit-*/
 deploy/workspace/
 
 # Local Python env some AWS tooling installs in-tree
-deploy/providers/AWS/pip/
+deploy/aws/pip/
 
 trust/terraform.tfstate
 
@@ -397,10 +397,10 @@ SECURITY_INCIDENT.md
 *.war
 *.tf.backup
 .deployment-structure-analysis.md
-deploy/providers/AWS/REFACTORING.md
+deploy/aws/REFACTORING.md
 
 # Email template preview files (generated locally for testing)
-deploy/providers/AWS/email_previews/
+deploy/aws/email_previews/
 
 .claude/scheduled_tasks.lock
 pi-session-*.html

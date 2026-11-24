@@ -58,7 +58,7 @@ The tests do not stand up XNAT, DicomEdit, or Postgres. The anonymization tests
 validate the FLIP-authored ruleset against synthetic studies. The script tests put
 stubs for the external commands they call (`docker-entrypoint.sh`, `psql`, `curl`,
 `aws`) onto `PATH`, the same mock-bin idiom as
-`deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh`. So a regression is caught
+`deploy/aws/scripts/tests/test_add_fl_kits.sh`. So a regression is caught
 in CI without a heavyweight integration environment or an image build.
 
 ## Running
@@ -116,6 +116,6 @@ new value is exercised against both entrypoints automatically.
 
 ### Inputs outside this directory
 
-Many of these tests read files from outside `trust/xnat/tests/`, so
-`.github/workflows/test_trust_xnat.yml` lists each of them in its paths filter.
+The workflow's paths filter covers all of `trust/xnat/`. Many of these tests also read files from
+outside it, so `.github/workflows/test_trust_xnat.yml` lists each of those.
 A new input needs adding there too, or a change to it lands with its test unrun.

@@ -38,7 +38,7 @@ test_coverage_html_command_integration = uv run pytest ./tests/integration $(tes
 # directory of the first -f file (always deploy/), pinning every instance to `deploy` and, on
 # a second stack, running these targets — including the alembic ones that write into the
 # bind-mounted source tree — against the default stack's containers (FLIP#957).
-docker_command = DEBUG=$(DEBUG) docker compose -p $(COMPOSE_PROJECT) -f ../deploy/compose.development.yml
+docker_command = DEBUG=$(DEBUG) docker compose -p $(COMPOSE_PROJECT) --project-directory ../deploy -f ../deploy/compose/compose.development.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 

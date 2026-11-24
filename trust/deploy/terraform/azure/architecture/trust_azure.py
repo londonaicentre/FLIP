@@ -14,7 +14,7 @@
 
 """Render the Azure trust node architecture diagrams from the Terraform in this directory.
 
-Diagram-as-code in the style of ``deploy/providers/AWS/architecture/central_hub.py``. This tree has three roots
+Diagram-as-code in the style of ``deploy/aws/architecture/central_hub.py``. This tree has three roots
 (``bootstrap/``, ``vm/``, ``aks/``) and two modules (``modules/network``, ``modules/kit_drop``), so
 ``TERRAFORM_ADDRESSES`` names each address as ``<directory>/<address>``. ``tests/test_architecture_diagram.py`` checks
 that map against the ``.tf`` files in both directions, so a resource cannot be removed, renamed or added without the

@@ -57,7 +57,8 @@ class EveryWorkflowUsesTheAction(unittest.TestCase):
         uses = {w.name: sum(USE in line for line in code_lines(w)) for w in WORKFLOWS}
         assert uses["docs.yml"] == 1, uses
         # AWS deploy tests, Azure node checks and the AWS EC2/EKS node matrix.
-        assert uses["validate_terraform.yml"] == 3, uses
+        for name in ("validate_terraform.yml", "validate_terraform_azure.yml", "validate_terraform_aws_node.yml"):
+            assert uses[name] == 1, uses
 
     def test_each_job_checks_out_the_repo_before_using_it(self) -> None:
         """A local action is read from the checkout: used before actions/checkout, the step cannot even load."""

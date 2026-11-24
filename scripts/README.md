@@ -171,7 +171,7 @@ the authoritative list):
 - **check-added-large-files**: Prevents committing files larger than 1000 KiB (`--maxkb=1000` — the hook compares against `getsize // 1024`, so the cap is ~1.024 MB)
 - **check-merge-conflict**: Detects merge conflict markers
 - **check-yaml**: Validates YAML syntax
-- **prettier**: Formats YAML under `deploy/providers/AWS/`
+- **prettier**: Formats YAML under `deploy/aws/`
 - **end-of-file-fixer**: Ensures files end with a newline
 - **detect-private-key**: Detects private SSH/SSL keys
 - **uv-lock** (one entry per uv project — root, flip-api, docs, trust-api, imaging-api, data-access-api, omop-db, xnat-tests, xnat-export-mask, aws-deploy, flip-utils, fl-api-flower, fl-api-base): verifies each project's `uv.lock` is in sync with its `pyproject.toml` (`--check`, so it fails on drift instead of silently regenerating). Use `make lock` to regenerate when a `pyproject.toml` legitimately changes.

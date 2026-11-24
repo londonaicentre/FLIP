@@ -301,7 +301,7 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
         kit_path,
         hints=[
             "Ask the FLIP admin to package + send your kit (`make package-onprem-trust-kit",
-            f"  KIT={kit} HUB={os.environ.get('HUB') or 'prod'}` from deploy/providers/AWS),",
+            f"  KIT={kit} HUB={os.environ.get('HUB') or 'prod'}` from deploy/aws),",
             "  extract the tarball, then:",
             f"    cp <extracted-dir>/<kit-file> {kit_path}",
         ],
@@ -559,7 +559,7 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
         "The Hub-shared block is stale. Ask the FLIP admin for a refreshed kit:",
         (
             "  make sync-trust-kit KIT=<CODE> HUB=<env>  →  "
-            "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>"
+            "make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<env>"
         ),
         "then replace ONLY the Hub-shared block in your kit file and re-run the upgrade.",
     ]

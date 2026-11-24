@@ -30,7 +30,7 @@ COPY --chown=${UNAME}:${UNAME} fl-server/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # The paths the server writes on ECS's read-only root filesystem; must stay VOLUMEs, which is what
-# carries the owner set here onto Fargate's volumes (FLIP#1795, deploy/providers/AWS/AGENTS.md). /workspace
+# carries the owner set here onto Fargate's volumes (FLIP#1795, deploy/aws/AGENTS.md). /workspace
 # is the FLARE workspace there (FL_WORKSPACE, see the entrypoint). ~/.cache is group-writable for
 # the composes' host-uid `user:`, which keeps the image's group.
 RUN mkdir -p /workspace /home/${UNAME}/.cache \

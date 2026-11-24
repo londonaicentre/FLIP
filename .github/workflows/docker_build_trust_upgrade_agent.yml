@@ -34,6 +34,12 @@ on:
       - "scripts/trust_upgrade_agent.py"
       - ".github/workflows/docker_build_trust_upgrade_agent.yml"
 
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -73,7 +79,7 @@ jobs:
           [[ -n "$GH_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
 
           # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish.
-          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          # Length 7 must match the tag resolution in deploy/aws/Makefile.
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${GH_SHA:0:7}"
 
           # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".

@@ -40,10 +40,10 @@ ENV_EXAMPLE = REPO_ROOT / ".env.development.example"
 # (``--env-file trust/.env.<CODE>.<env>``) plus a hub-shared block the trust Makefile
 # exports, so they are a different contract and are not checked here.
 DEV_COMPOSE_FILES = (
-    "deploy/compose.development.yml",
-    "deploy/compose.development.nvflare.yml",
-    "deploy/compose.development.flower.yml",
-    "deploy/compose.development.debug.override.yml",
+    "deploy/compose/compose.development.yml",
+    "deploy/compose/compose.development.nvflare.yml",
+    "deploy/compose/compose.development.flower.yml",
+    "deploy/compose/compose.development.debug.override.yml",
 )
 
 # Interpolated by the composes but supplied by make, not the env file:

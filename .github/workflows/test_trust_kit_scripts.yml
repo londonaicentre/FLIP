@@ -44,7 +44,7 @@ on:
       # is where those gates are checked.
       - ".github/workflows/test_*.yml"
       - ".github/workflows/pr_paths_changed.yml"
-      - "deploy/compose*.yml"
+      - "deploy/compose/*.yml"
       - "trust/deploy/compose/*.yml"
       - "fl-services/nvflare/compose.dev.yml"
       # test_flower_runtime_install.py asserts on the Flower composes, the Helm chart and the FL
@@ -57,8 +57,8 @@ on:
       - "fl-services/nvflare/*/Dockerfile"
       - "flip-api/Dockerfile"
       - ".github/workflows/terraform_apply.yml"
-      - "deploy/providers/AWS/scripts/image-wait-budgets.sh"
-      - "deploy/providers/AWS/scripts/resolve-image-tags.sh"
+      - "deploy/aws/scripts/image-wait-budgets.sh"
+      - "deploy/aws/scripts/resolve-image-tags.sh"
       - "trust/deploy/helm/templates/**"
       - "trust/deploy/helm/values*.yaml"
       # test_mirror_images.py asserts every third-party image a trust node runs is pinned to the
@@ -93,6 +93,12 @@ on:
 
 permissions:
   contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   test-trust-kit-lib:

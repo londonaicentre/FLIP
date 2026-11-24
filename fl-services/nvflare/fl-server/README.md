@@ -66,7 +66,7 @@ Where the file lives:
 
 - **Compose host, production:** `/opt/flip/services/fl-server-net-<N>/local/`
 - **Compose host, development:** `$FL_PROVISIONED_DIR/net-<N>/services/fl-server-net-<N>/local/`
-- **ECS:** `local/` is an EFS volume. `make rollback-centralhub` (in `deploy/providers/AWS`) handles it for you. Before repointing any service, it runs the one-shot `efs-provision-certs` task that Terraform runs when the kit changes. That task empties `local/` and re-syncs the kit from S3 (`scripts/reset-fl-server-local.sh`).
+- **ECS:** `local/` is an EFS volume. `make rollback-centralhub` (in `deploy/aws`) handles it for you. Before repointing any service, it runs the one-shot `efs-provision-certs` task that Terraform runs when the kit changes. That task empties `local/` and re-syncs the kit from S3 (`scripts/reset-fl-server-local.sh`).
 
 To do the ECS step by hand, for instance before rolling back with plain `aws ecs update-service`:
 

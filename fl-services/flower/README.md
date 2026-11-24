@@ -209,7 +209,7 @@ On a stag/prod hub, do not call it by hand. One command mints the next `N` key p
 claimable, with no Terraform apply and no SuperLink restart (FLIP#1942):
 
 ```bash
-make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>
+make -C deploy/aws add-fl-kits N=<n> HUB=<stag|prod>
 ```
 
 **The keys are the pool.** On a Flower hub flip-api's slot pool is every slot `Trust_<N>` whose pair
@@ -220,7 +220,7 @@ key's file name, so there is no separate slot list to keep in step (`FL_KIT_SLOT
 setting, which the dev compose stacks pass as `TRUST_NAMES`). `add-fl-kits` first checks that
 `FLOWER_KIT_DATE` is the date the hub runs, since it copies that date's public keys onto the hub.
 
-`add-fl-kits` (`deploy/providers/AWS/scripts/add_fl_kits_flower.sh`) works in this order, and the
+`add-fl-kits` (`deploy/aws/scripts/add_fl_kits_flower.sh`) works in this order, and the
 order is what keeps a slot from being claimed before its SuperNode would be admitted:
 
 1. Numbers the new keys past every key in S3 and every name already minted, and records the new
@@ -331,5 +331,5 @@ make -C fl-services/flower up \
 (Run from the repo root; `data/` is gitignored. `up-secure` takes the same two variables.)
 
 The central-hub multi-net Flower topology is the separate
-[`deploy/compose.development.flower.yml`](../../deploy/compose.development.flower.yml), driven by the
+[`deploy/compose/compose.development.flower.yml`](../../deploy/compose/compose.development.flower.yml), driven by the
 root `make up FL_BACKEND=flower`.

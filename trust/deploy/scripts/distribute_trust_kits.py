@@ -16,7 +16,7 @@
 
 Reads one kit (a JSON object, or a one-element array) on stdin and writes it to
 ``--target PATH``. Used by the dev ``register-trust`` Makefile pipe and by
-deploy/providers/AWS/scripts/register-trusts.sh for the local-file and
+deploy/aws/scripts/register-trusts.sh for the local-file and
 ec2-tempfile writes (after it has fetched the kit out of SSM).
 
 All file writing delegates to ``trust_kit_lib.write_kit`` — the single
