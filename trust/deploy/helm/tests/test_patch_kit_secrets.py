@@ -17,9 +17,12 @@ APIs, so after a key rotation the client kept the old key in its environment and
 to imaging-api and data-access-api was refused, with the deploy exiting 0. `deploy-trust-k8s` then
 discarded the target's exit status altogether.
 
-Both targets are run for real against stubs. A restarted fl-client is waited on only when it was
-ready before the restart: Pending is its resting state while its kit is not staged or no node has a
-free GPU, and a `rollout status` on that client can only time out.
+Both targets are run for real against stubs. The FL client is restarted only when the Secret's
+trust-internal service key differs after the patch from before it: `deploy-trust-k8s KIT=` runs this
+target on every deploy, and restarting a client whose key did not move would end an in-flight FL job
+for nothing. A restarted fl-client is waited on only when it was ready before the restart: Pending
+is its resting state while its kit is not staged or no node has a free GPU, and a `rollout status`
+on that client can only time out.
 """
 
 import os
@@ -36,17 +39,21 @@ pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make is no
 
 API_DEPLOYMENTS = [f"trust-release-flip-trust-{svc}" for svc in ("trust-api", "data-access-api", "imaging-api")]
 
-# sync_k8s_kit.py runs through `uv run`; the stub stands in for the Secret patch.
+# sync_k8s_kit.py runs through `uv run`; the stub stands in for the Secret patch, leaving KEY_AFTER
+# as the Secret's trust-internal service key (no Secret at all with KEY_AFTER empty).
 UV_STUB = """#!/bin/sh
 printf 'uv %s\\n' "$*" >> "$CALL_LOG"
+[ -z "$KEY_AFTER" ] || printf '%s' "$KEY_AFTER" > "$SECRET_FILE"
 exit "${UV_RC:-0}"
 """
 
-# kubectl: the fl-client listing prints FL_CLIENTS (`<name>=<readyReplicas>` per Deployment, as the
-# target's jsonpath asks for it), or fails with GET_RC; `rollout status` of STATUS_FAILS fails.
+# kubectl: `get secret` prints the key the Secret holds, or fails when there is no Secret; the
+# fl-client listing prints FL_CLIENTS (`<name>=<readyReplicas>` per Deployment, as the target's
+# jsonpath asks for it), or fails with GET_RC; `rollout status` of STATUS_FAILS fails.
 KUBECTL_STUB = """#!/bin/sh
 printf 'kubectl %s\\n' "$*" >> "$CALL_LOG"
 case "$1 $2" in
+  "get secret") cat "$SECRET_FILE" 2>/dev/null || exit 1 ;;
   "get deployment") printf '%s' "$FL_CLIENTS"; exit "${GET_RC:-0}" ;;
   "rollout status") [ "$3" != "deployment/$STATUS_FAILS" ] || exit 1 ;;
 esac
@@ -67,9 +74,18 @@ def _stub(path: Path, body: str) -> Path:
     return path
 
 
-def _make(tmp_path: Path, target: str, *args: str, **env_overrides: str) -> tuple[subprocess.CompletedProcess, str]:
+def _make(
+    tmp_path: Path, target: str, *args: str, key_before: str | None = "old-key", **env_overrides: str
+) -> tuple[subprocess.CompletedProcess, str]:
+    """Run the target. The Secret holds `key_before` (None: no Secret yet) and, unless KEY_AFTER
+    says otherwise, the patch rotates it."""
     log = tmp_path / "calls.log"
     log.write_text("")
+    secret = tmp_path / "secret-key"
+    secret.unlink(missing_ok=True)
+    if key_before is not None:
+        secret.write_text(key_before)
+    env_overrides = {"SECRET_FILE": str(secret), "KEY_AFTER": "new-key", **env_overrides}
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     _stub(bin_dir / "uv", UV_STUB)
@@ -96,13 +112,49 @@ def _waited(calls: str) -> list[str]:
 # ---------------------------------------------------------------- what is restarted
 
 
-def test_the_fl_clients_are_restarted_with_the_three_apis(tmp_path):
-    result, calls = _make(tmp_path, "patch-kit-secrets", FL_CLIENTS="rel-fl-client-net-1=1 rel-fl-client-net-2=1 ")
+@pytest.mark.parametrize("key_before", ["old-key", "", None], ids=["rotated", "empty-before", "no-secret-before"])
+def test_a_changed_key_restarts_the_fl_clients_with_the_three_apis(tmp_path, key_before):
+    result, calls = _make(
+        tmp_path,
+        "patch-kit-secrets",
+        key_before=key_before,
+        FL_CLIENTS="rel-fl-client-net-1=1 rel-fl-client-net-2=1 ",
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "internal service key changed: restarting the FL client" in result.stdout
     expected = [f"deployment/{name}" for name in [*API_DEPLOYMENTS, "rel-fl-client-net-1", "rel-fl-client-net-2"]]
     assert _restarted(calls) == expected
     assert _waited(calls) == expected
+
+
+def test_an_unchanged_key_leaves_the_fl_clients_running(tmp_path):
+    """Every `deploy-trust-k8s KIT=` runs this target; a restart here ends an in-flight FL job."""
+    result, calls = _make(tmp_path, "patch-kit-secrets", FL_CLIENTS="rel-fl-client-net-1=1 ", KEY_AFTER="old-key")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "internal service key unchanged: FL client left running" in result.stdout
+    apis = [f"deployment/{name}" for name in API_DEPLOYMENTS]
+    assert _restarted(calls) == apis
+    assert _waited(calls) == apis
+
+
+def test_the_key_is_compared_without_being_printed_or_passed_as_an_argument(tmp_path):
+    result, calls = _make(tmp_path, "patch-kit-secrets")
+
+    assert "old-key" not in result.stdout + result.stderr + calls
+    assert "new-key" not in result.stdout + result.stderr + calls
+    reads = [line for line in calls.splitlines() if line.startswith("kubectl get secret")]
+    assert len(reads) == 2
+    assert all("trust-release-flip-trust-secrets" in r and "{.data.trust-internal-service-key}" in r for r in reads)
+    assert calls.index("kubectl get secret") < calls.index("uv run") < calls.rindex("kubectl get secret")
+
+
+def test_a_key_that_cannot_be_read_after_the_patch_fails_before_any_restart(tmp_path):
+    result, calls = _make(tmp_path, "patch-kit-secrets", key_before=None, KEY_AFTER="")
+
+    assert result.returncode != 0
+    assert _restarted(calls) == []
 
 
 def test_the_fl_clients_are_found_by_the_releases_labels(tmp_path):
@@ -139,7 +191,7 @@ def test_a_failed_secret_patch_restarts_nothing(tmp_path):
     result, calls = _make(tmp_path, "patch-kit-secrets", UV_RC="1")
 
     assert result.returncode != 0
-    assert "kubectl" not in calls
+    assert _restarted(calls) == []
 
 
 def test_an_unreadable_cluster_fails_before_any_restart(tmp_path):

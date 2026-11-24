@@ -100,8 +100,9 @@ images that exist.
   first install can adopt it, and regenerates the FL-server egress port (and, for Flower,
   `flClient.flower.superlink`) on every run so upgrades never lose them. `sync-kit-override` writes only
   the override; `patch-kit-secrets` only patches the Secret and restarts what reads it: the three API
-  deployments and the release's FL clients (an FL client that was not ready, awaiting its kit or a free GPU,
-  is restarted but not waited on).
+  deployments every time, and the release's FL clients only when the trust-internal service key in the Secret
+  changed (it says which), so a routine redeploy leaves a running FL job alone. An FL client that was not ready,
+  awaiting its kit or a free GPU, is restarted but not waited on.
 - **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy-release` and `xnat-init` with that
   override, then `patch-kit-secrets` — even when a step failed, so trust-api never polls with a stale key
   (#595) — and fails if any of the three did, naming which one. Without `KIT=` it is plain `deploy`, which is also all the repo-root
@@ -998,7 +999,7 @@ kubectl rollout restart deployment/<release>-flip-trust-xnat-web
 ```
 
 `make patch-kit-secrets` restarts `imaging-api`, `trust-api`,
-`data-access-api` and the FL clients but neither `xnat-db` nor `xnat-web`, so running it alone
+`data-access-api` (and the FL clients, when the trust-internal service key changed) but neither `xnat-db` nor `xnat-web`, so running it alone
 during a rotation still leaves those two on the old password — restart
 `xnat-db` and `xnat-web` yourself, in that order, around it.
 

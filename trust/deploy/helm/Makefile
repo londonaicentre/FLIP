@@ -635,7 +635,20 @@ sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit 
 
 patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s HUB=stag"; exit 1)
-	@uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \
+	@# One shell, so the Secret's trust-internal service key can be compared across the patch. The FL
+	@# clients read it from that Secret like the three APIs, but are restarted only when it changed
+	@# (FLIP#2047): this target runs on every deploy-trust-k8s, and a restart ends an in-flight FL job.
+	@# A Secret that was not there before counts as changed. The key is only ever piped into a hash.
+	@# Each client is listed as <name>=<ready replicas>, and one that was not ready is not waited on:
+	@# awaiting its kit or a free GPU it stays Pending, and the wait could only time out
+	@# (scripts/rollout_wait.py). A release with flClient.enabled=false has none.
+	@key_hash() { \
+		v=$$($(KUBECTL) get secret $(RELEASE_NAME)-flip-trust-secrets -n $(NAMESPACE) \
+			-o jsonpath='{.data.trust-internal-service-key}' 2>/dev/null) \
+		&& printf '%s' "$$v" | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'; \
+	}; \
+	before=$$(key_hash) || before=absent; \
+	uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \
 		--kit $(KIT) \
 		--env $(ENV) \
 		--kit-file $(KIT_FILE) \
@@ -645,14 +658,17 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		--output-dir $(CHART_DIR) \
 		$(if $(NO_VOCAB_LOAD),--no-vocab-load) \
 		$(KUBE_CONTEXT_ARG) \
-		--no-write-override
-	@# The FL clients read TRUST_INTERNAL_SERVICE_KEY from the same Secret, so they restart with the
-	@# three APIs (FLIP#2047); a release with flClient.enabled=false has none. Each is listed as
-	@# <name>=<ready replicas>, and one that was not ready is not waited on: awaiting its kit or a
-	@# free GPU it stays Pending, and the wait could only time out (scripts/rollout_wait.py).
-	@fl=$$($(KUBECTL) get deployment -n $(NAMESPACE) \
-		-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component=fl-client \
-		-o jsonpath='{range .items[*]}{.metadata.name}={.status.readyReplicas}{" "}{end}') || exit 1; \
+		--no-write-override || exit 1; \
+	after=$$(key_hash) || { echo "❌  could not read $(RELEASE_NAME)-flip-trust-secrets after the patch — nothing restarted."; exit 1; }; \
+	fl=; \
+	if [ "$$before" = "$$after" ]; then \
+		echo "ⓘ  internal service key unchanged: FL client left running"; \
+	else \
+		echo "🔄 internal service key changed: restarting the FL client"; \
+		fl=$$($(KUBECTL) get deployment -n $(NAMESPACE) \
+			-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component=fl-client \
+			-o jsonpath='{range .items[*]}{.metadata.name}={.status.readyReplicas}{" "}{end}') || exit 1; \
+	fi; \
 	restart=; \
 	for svc in trust-api data-access-api imaging-api; do restart="$$restart $(RELEASE_NAME)-flip-trust-$$svc"; done; \
 	wait=$$restart; \
