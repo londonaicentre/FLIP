@@ -233,10 +233,10 @@ services:
       - SUPERLINK_ADDRESS=fl-server-net-1:8000
       # Service name (`fl-api-net-1`), which is the only name that resolves: with no
       # container_name the container is named by the compose project, and the old
-      # `flip-fl-api-net-1` spelling is not a DNS name in any stack. Getting this wrong
-      # fails SILENTLY — register-supernode-keys.sh swallows the DNS error and still exits
-      # 0, leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
-      # (FLIP#957).
+      # `flip-fl-api-net-1` spelling is not a DNS name in any stack. Getting this wrong fails
+      # the one-shot (register-supernode-keys.sh exits non-zero when the FL API does not take
+      # the node → trust mappings, FLIP#2047): without them SuperNode keys are unlabelled and
+      # FL metrics attributed to unknown_client (FLIP#957).
       - FL_API_ADDRESS=http://fl-api-net-1:8000
       - FL_API_KEY=${FL_API_KEY}
       # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's

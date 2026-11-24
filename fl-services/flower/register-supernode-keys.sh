@@ -70,7 +70,7 @@ echo "SuperLink Control API is ready."
 # supernode_credentials_<N>.pub is Trust_<N>, the slot flip-api derives from the same file name
 # (FLIP#1942), so the keys are the only list and one added later never renames another.
 # FL_API_ADDRESS is optional and, when set, needs FL_API_KEY (every FL API route but /health
-# requires it; FL_API_KEY_HEADER renames the header).
+# requires it; FL_API_KEY_HEADER renames the header), and a mapping the FL API does not take fails the run.
 # TRUST_NAMES accepts both JSON list (["Trust_1", "Trust_2"]) and comma-separated (Trust_1,Trust_2).
 raw_trust_names="${TRUST_NAMES:-}"
 # Strip JSON brackets and quotes, then split on commas
@@ -196,7 +196,9 @@ if [ ${#skipped[@]} -gt 0 ]; then
     fi
 fi
 
-# Register node_id → trust_name mappings with FL API (best-effort)
+# Register node_id → trust_name mappings with FL API. They live only in its memory and only this
+# one-shot writes them, so one it did not take fails the run: exit 0 left the trust shown as
+# disconnected with its SuperNode online (FLIP#2047).
 if [ -n "$fl_api_address" ] && [ ${#trust_names[@]} -gt 0 ]; then
     echo ""
     echo "Registering node → trust name mappings with FL API at ${fl_api_address}..."
@@ -205,9 +207,14 @@ if [ -n "$fl_api_address" ] && [ ${#trust_names[@]} -gt 0 ]; then
         if python -c "import urllib.request as u; u.urlopen('${fl_api_address}/openapi.json', timeout=3)" 2>/dev/null; then
             break
         fi
+        if [ "$attempt" -eq "${FL_API_READY_ATTEMPTS:-30}" ]; then
+            echo "ERROR: FL API at ${fl_api_address} did not become ready, so no node → trust name mapping was registered" >&2
+            exit 1
+        fi
         sleep 2
     done
 
+    unmapped=()
     for i in "${!node_ids[@]}"; do
         nid="${node_ids[$i]}"
         if [ -z "$nid" ]; then
@@ -228,10 +235,15 @@ urllib.request.urlopen(req, timeout=5)
 " 2>&1); then
             echo "    OK: ${tname} → ${nid}"
         else
-            echo "    WARN: Failed to register ${tname} with FL API: ${err}"
+            echo "    FAIL: ${tname} was not registered with FL API: ${err}" >&2
+            unmapped+=("$tname")
         fi
     done
 
+    if [ ${#unmapped[@]} -gt 0 ]; then
+        echo "ERROR: FL API at ${fl_api_address} did not take the mapping for: ${unmapped[*]} (check FL_API_KEY matches the FL API's)" >&2
+        exit 1
+    fi
     echo "Node registration complete."
 else
     echo "FL_API_ADDRESS not set — skipping node → trust name registration."
