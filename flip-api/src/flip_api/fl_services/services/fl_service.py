@@ -1023,7 +1023,8 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         s3.copy_object(src_meta_path, dest_meta_path)
 
     # Some jobs load a large model checkpoint SERVER-SIDE and don't need it on the clients:
-    #   - evaluation jobs: the models[*].checkpoint files, loaded by EvaluationModelLocator;
+    #   - evaluation and inference jobs: the models[*].checkpoint files, loaded by
+    #     EvaluationModelLocator (an entry with no checkpoint names a model the trust already holds);
     #   - training jobs: a pretrained backbone declared via top-level SERVER_CHECKPOINT (str or
     #     list), loaded by InitialCheckpointPTModelPersistor and broadcast as the round-0 model.
     # Divert those to a server-only `server_checkpoints/` prefix so they are staged for the
@@ -1032,7 +1033,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # collapses app-deploy). Mirrors the Flower backend, which keeps the checkpoint server-side.
     server_checkpoints: set[str] = set()
     # job_type is already alias-normalised (_normalise_job_type), so the plain name is exhaustive.
-    if job_type == "evaluation":
+    if job_type in ("evaluation", "inference"):
         server_checkpoints = {
             m["checkpoint"]
             for m in input_config.get("models", {}).values()
@@ -1047,7 +1048,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     if server_checkpoints:
         logger.info(f"Diverting server-side checkpoints out of the app bundle: {server_checkpoints}")
 
-    # Copy model files, skipping meta.json. Evaluation checkpoints go once to the server-only
+    # Copy model files, skipping meta.json. Server-side checkpoints go once to the server-only
     # `server_checkpoints/` prefix; every other model file is mirrored into each app*/custom/.
     for src_key in model_files:
         rel = src_key.replace(f"{model_bucket_s3_path}/", "", 1)

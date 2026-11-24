@@ -566,6 +566,7 @@ EVAL_MODELS = {"models": {"arkplus": {"checkpoint": "weights.pt", "path": "ArkPl
             "evaluator.py",
             ["config.json", "evaluator.py"],
         ),
+        ("inference", "inference", EVAL_MODELS, "weights.pt", "inference.py", ["config.json", "inference.py"]),
         (
             "standard",
             "standard",
@@ -575,7 +576,7 @@ EVAL_MODELS = {"models": {"arkplus": {"checkpoint": "weights.pt", "path": "ArkPl
             ["trainer.py", "validator.py", "config.json", "models.py"],
         ),
     ],
-    ids=["evaluation", "evaluation_client_api", "standard"],
+    ids=["evaluation", "evaluation_client_api", "inference", "standard"],
 )
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
@@ -633,6 +634,37 @@ def test_bundle_nvflare_application_diverts_server_checkpoint(
     # verify_bundle_paths is told which files were diverted.
     _, verify_kwargs = mock_verify.call_args
     assert verify_kwargs["server_checkpoints"] == {checkpoint}
+
+
+# An inference job may name a model the trust's image already holds: an empty ``models`` entry. Nothing is then
+# diverted to the server, and the app's files reach the clients as usual.
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_inference_without_checkpoint(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+    required = ["config.json", "inference.py"]
+    write_base_tree(mocked_settings.FL_APP_BASE_DIR, "nvflare", "inference", ["app/custom/flip.py", "meta.json"])
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = _config_json({"job_type": "inference", "models": {"totalsegmentator": {}}})
+    mock_required.return_value = required
+    mock_client.list_objects.side_effect = [[f"{model_bucket}/{model_id}/{f}" for f in required], []]
+    mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    fl_service.bundle_nvflare_application(model_id)
+
+    destinations = [call.args[1] for call in mock_client.copy_object.call_args_list if len(call.args) >= 2]
+    assert not any("/server_checkpoints/" in destination for destination in destinations)
+    assert f"{dest_bucket}/{model_id}/app/custom/inference.py" in destinations
+    _, verify_kwargs = mock_verify.call_args
+    assert verify_kwargs["server_checkpoints"] == set()
 
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
@@ -2587,7 +2619,7 @@ class TestNormaliseJobType:
     def test_pre_rename_aliases_resolve_against_the_real_manifest(self, real_manifest_settings, alias, resolved):
         assert fl_service._normalise_job_type(alias, FLBackend.NVFLARE) == resolved
 
-    @pytest.mark.parametrize("job_type", ["standard", "evaluation", "fed_opt"])
+    @pytest.mark.parametrize("job_type", ["standard", "evaluation", "fed_opt", "inference"])
     def test_plain_names_pass_through_against_the_real_manifest(self, real_manifest_settings, job_type):
         assert fl_service._normalise_job_type(job_type, FLBackend.NVFLARE) == job_type
 
