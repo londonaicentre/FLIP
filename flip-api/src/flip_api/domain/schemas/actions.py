@@ -53,6 +53,11 @@ class TrustAuditAction(StrEnum):
     keys are reissued in place (FLIP#1569). The trust row, its id and its FL kit slot
     assignment are unchanged, so the audit row is the only record that the credentials
     changed and when.
+
+    KEY_PROMOTED and KEY_EXPIRED close a staged rotation (FLIP#1714). ROTATED then means a new key
+    was issued; KEY_PROMOTED that the trust first authenticated with it, so the old key stopped
+    working; KEY_EXPIRED that the deadline passed with the new key unused, so it was dropped and the
+    old key carries on.
     """
 
     REGISTERED = "REGISTERED"
@@ -65,3 +70,6 @@ class TrustAuditAction(StrEnum):
     # keys are minted; KIT_DOWNLOADED is written on every download, with what it carried in ``detail``.
     KEYS_ISSUED = "KEYS_ISSUED"
     KIT_DOWNLOADED = "KIT_DOWNLOADED"
+    # FLIP#1714, staged key rotation: the trust's first call with the staged key, or its deadline passing.
+    KEY_PROMOTED = "KEY_PROMOTED"
+    KEY_EXPIRED = "KEY_EXPIRED"

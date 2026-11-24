@@ -28,13 +28,14 @@ minted by ``issue_trust_keys`` when the trust's kit is first downloaded.
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from flip_api.auth import trust_key_cache
+from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLKitSlot, Trust
 from flip_api.db.seed.fl_kit_slots import insert_missing_slots, resolve_fl_kit_slot_names
 from flip_api.domain.schemas.actions import TrustAuditAction
@@ -93,6 +94,9 @@ class RegisteredTrust:
     fl_kit_slot: FLKitSlot
     trust_api_key: str | None
     trust_internal_service_key: str | None
+    # Set when the new api key was staged (FLIP#1714): the old key is accepted until then, or until
+    # the trust first uses the new one. ``None`` means the new key is the only one the hub accepts.
+    staged_until: datetime | None = None
 
 
 def _claim_free_slot(session: Session, slot_names: list[str]) -> FLKitSlot | None:
@@ -256,21 +260,41 @@ def register_trust(
     )
 
 
-def rotate_trust_keys(session: Session, *, name: str) -> RegisteredTrust:
-    """Reissue a trust's api and internal-service keys in place (FLIP#1569).
+def rotate_trust_keys(
+    session: Session,
+    *,
+    name: str,
+    revoke_old: bool = False,
+    grace: timedelta | None = None,
+) -> RegisteredTrust:
+    """Reissue a trust's api and internal-service keys in place (FLIP#1569, FLIP#1714).
 
-    The trust row, its id, its code and its FL kit slot assignment are unchanged. Only
-    ``api_key_hash`` moves, in one transaction with a ROTATED audit row, and the new plaintext
-    keys are returned once for the operator to write into the trust's kit file. The hub refuses
-    the old key from the moment this commits, so the trust is offline until its containers are
+    The trust row, its id, its code and its FL kit slot assignment are unchanged, and the new
+    plaintext keys are returned once for the operator to write into the trust's kit file. The
+    change and a ROTATED audit row commit in one transaction.
+
+    By default the rotation is **staged**: the new key's hash goes into ``pending_api_key_hash``
+    and the hub accepts both keys, so the site stays online while its new kit is delivered. The
+    first request the trust makes with the new key promotes it and the old key is refused from then
+    on (``authenticate_trust``). If the new key is still unused after ``grace`` it is dropped and
+    the old key carries on. Rotating again while a key is pending replaces the pending key, which is
+    how a lost kit is recovered: the site never stopped working. A trust with no live key yet takes
+    the new key directly (``issue_trust_keys``).
+
+    ``revoke_old`` is the immediate cutover, for a key known to be leaked: the new hash replaces the
+    live one at once, any pending key is dropped, and the trust is offline until its containers are
     recreated from the new kit.
 
     Args:
         session (Session): SQLModel session; the function commits before returning.
         name (str): Trust display name, as ``register_one_trust`` looks it up.
+        revoke_old (bool): Refuse the old key from this commit on instead of staging the new one.
+        grace (timedelta | None): How long a staged key may stay unused. Defaults to
+            ``TRUST_KEY_ROTATION_GRACE_DAYS``.
 
     Returns:
-        RegisteredTrust: The trust, its FL kit slot, and the new plaintext keys.
+        RegisteredTrust: The trust, its FL kit slot, the new plaintext keys and, when staged, the
+        new key's deadline.
 
     Raises:
         TrustRegistrationError: No trust of that name is registered, or it has no FL kit slot.
@@ -286,11 +310,15 @@ def rotate_trust_keys(session: Session, *, name: str) -> RegisteredTrust:
             "Reclaiming a slot is a separate operation; do not rotate the api key without one."
         )
 
-    kit = issue_trust_keys(session, trust=trust, slot=slot, action=TrustAuditAction.ROTATED, user_id=None)
-
-    logger.info("Rotated api and internal-service keys for trust %r (id=%s).", trust.name, trust.id)
-
-    return kit
+    return issue_trust_keys(
+        session,
+        trust=trust,
+        slot=slot,
+        action=TrustAuditAction.ROTATED,
+        user_id=None,
+        revoke_old=revoke_old,
+        grace=grace,
+    )
 
 
 def issue_trust_keys(
@@ -300,12 +328,22 @@ def issue_trust_keys(
     slot: FLKitSlot,
     action: TrustAuditAction,
     user_id: UUID | None,
+    revoke_old: bool = True,
+    grace: timedelta | None = None,
 ) -> RegisteredTrust:
-    """Mint a trust's api and internal-service keys, replacing any it had, and commit.
+    """Mint a trust's api and internal-service keys and commit: the one owner of the key columns.
 
-    The one place a registered trust's keys change: its first issue (KEYS_ISSUED, FLIP#1852) and every
-    rotation (ROTATED). ``api_key_hash`` moves in one transaction with the audit row, so the hub refuses
-    the old key, if there was one, from the moment this commits.
+    Every change to a registered trust's keys goes through here: its first issue (KEYS_ISSUED,
+    FLIP#1852), the UI's **Issue new keys** and the deploy CLI's rotation (ROTATED, FLIP#1569). The key
+    columns move in one transaction with the audit row.
+
+    The new key is **staged** (FLIP#1714) only when the caller asks for it (``revoke_old=False``) and
+    the trust has a live key to keep: the hash goes into ``pending_api_key_hash`` with a deadline, and
+    the hub accepts both keys until the trust first uses the new one. Every other case is a cutover: the
+    new hash replaces the live one, the old key is refused from this commit on, and any pending key is
+    dropped with it, so a UI rotate, the leak response, also revokes a key staged earlier. A trust with
+    no live key yet (added in the UI, kit never downloaded) has nothing to keep online, so it always
+    takes the new key directly.
 
     Args:
         session (Session): SQLModel session; the function commits before returning.
@@ -313,17 +351,30 @@ def issue_trust_keys(
         slot (FLKitSlot): Its FL kit slot.
         action (TrustAuditAction): KEYS_ISSUED or ROTATED.
         user_id (UUID | None): The acting user, or ``None`` from the deploy CLI.
+        revoke_old (bool): Cut the old key off at once (the default). False stages the new key.
+        grace (timedelta | None): How long a staged key may stay unused. Defaults to
+            ``TRUST_KEY_ROTATION_GRACE_DAYS``.
 
     Returns:
-        RegisteredTrust: The trust, its FL kit slot, and the new plaintext keys.
+        RegisteredTrust: The trust, its FL kit slot, the new plaintext keys, and the staged key's
+        deadline (``staged_until``, ``None`` after a cutover).
     """
     api_key, api_key_hash = generate_trust_key()
     # Per-trust and trust-side only: the hub never validates this key, so its hash is discarded.
     internal_key, _ = generate_trust_key()
 
-    trust.api_key_hash = api_key_hash
+    staged_until: datetime | None = None
+    if not revoke_old and trust.api_key_hash is not None:
+        window = grace if grace is not None else timedelta(days=get_settings().TRUST_KEY_ROTATION_GRACE_DAYS)
+        staged_until = datetime.now(timezone.utc) + window
+        trust.pending_api_key_hash = api_key_hash
+        trust.pending_api_key_expires_at = staged_until
+    else:
+        trust.api_key_hash = api_key_hash
+        trust.pending_api_key_hash = None
+        trust.pending_api_key_expires_at = None
 
-    # Same transaction as the hash change: a rolled-back issue leaves no audit claim behind.
+    # Same transaction as the key change: a rolled-back issue leaves no audit claim behind.
     audit_trust_action(trust_id=trust.id, trust_name=trust.name, action=action, user_id=user_id, session=session)
 
     session.add(trust)
@@ -333,9 +384,22 @@ def issue_trust_keys(
     # Drop this process's entry; serving workers re-check the live hash on every cache hit.
     trust_key_cache.invalidate()
 
+    if staged_until is None:
+        logger.info("Issued keys for trust %r (id=%s); any old key is refused from now on.", trust.name, trust.id)
+    else:
+        # Log the local deadline, not the model attribute: the timestamp is not sensitive, but the
+        # attribute's name (`pending_api_key_...`) reads as a credential to the clear-text logging check.
+        logger.info(
+            "Staged new keys for trust %r (id=%s); both keys work until it first uses the new one, or until %s.",
+            trust.name,
+            trust.id,
+            staged_until,
+        )
+
     return RegisteredTrust(
         trust=trust,
         fl_kit_slot=slot,
         trust_api_key=api_key,
         trust_internal_service_key=internal_key,
+        staged_until=staged_until,
     )

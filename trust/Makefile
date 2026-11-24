@@ -15,7 +15,7 @@
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance prepare-host-dirs \
-	reconvert-nifti install-kit
+	reconvert-nifti install-kit rotate-internal-service-key
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
 # runs the prod compose) and the kit-file env token (ENV: .env.<CODE>.stag / .prod,
 # the files the AWS-side register-trusts writes), both from ../deploy/env_mode.mk.
@@ -662,6 +662,16 @@ FL_CLIENT_INIT_PROBE = $(if $(FL_CLIENT_INIT),test -x /app/fl-client-init.sh && 
 # Azure node by `flip-node selftest <backend>`; needs no AWS and no hub.
 selftest-node:
 	@bash deploy/scripts/selftest_node.sh "$(FL_BACKEND)"
+
+# Rotate this trust's TRUST_INTERNAL_SERVICE_KEY in its kit, on the site alone (FLIP#1714). The hub never
+# checks this key, so no hub call is made and TRUST_API_KEY is untouched. It takes effect only when every
+# trust container is recreated from the kit together: a container left on the old value refuses its
+# siblings' calls. Recreate with the site's upgrade verb (`make upgrade-onprem-trust KIT=<CODE>` from the
+# repo root on compose), not `up-trust`, which is a first-install command.
+rotate-internal-service-key:
+	$(require_kit_file)
+	@python3 deploy/scripts/rotate_internal_service_key.py --kit-file "$(KIT_FILE)"
+	@echo "   Next: recreate every trust container from $(KIT_FILE_LABEL), e.g. 'make upgrade-onprem-trust KIT=$(KIT)$(if $(HUB), HUB=$(HUB))' from the repo root."
 
 check-governance:
 	$(require_kit_file)

@@ -12,8 +12,10 @@
 
 """Shared utilities for reading and updating environment files."""
 
+import contextlib
 import json
 import os
+import tempfile
 from pathlib import Path
 
 # Owner read/write only. Kit files carry generated database passwords, per-trust API keys and the
@@ -76,12 +78,13 @@ def update_or_append(lines: list[str], var_name: str, value: str) -> list[str]:
 
 
 def write_env_file(path: Path, lines: list[str]) -> None:
-    """Write env file lines to *path* and restrict it to owner read/write.
+    """Replace *path* with *lines* atomically, as a 0600 file, so a kit is never partial or exposed.
 
-    A kit file created outside the sanctioned paths can keep whatever mode the umask gave it —
-    0644 on a stock box — while receiving generated credentials. Tighten the open file descriptor
-    before truncating or writing it, so the new contents are never exposed through an existing
-    permissive mode.
+    The content goes to a temp file in the same directory, created 0600, which is flushed, fsynced
+    and renamed over the file with ``os.replace``. An interrupted write leaves the old file whole,
+    and generated credentials never sit in a file with a wider mode. A symlinked file is written
+    through to the file it names, and the replacement keeps the old file's owner when this process
+    may set it.
 
     ``trust/deploy/scripts/trust_kit_lib.write_secure`` is the same routine for the root-level ``register-trust``
     scripts. It is duplicated rather than shared because that module lives at the repository root,
@@ -94,15 +97,39 @@ def write_env_file(path: Path, lines: list[str]) -> None:
     Returns:
         None
     """
-    # Do not use Path.write_text followed by chmod: an existing 0644 file, or a new file created
-    # under umask 022, would contain fresh credentials before its mode is tightened. Opening
-    # without O_TRUNC lets fchmod run first; truncate and write only after the descriptor is 0600.
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT, KIT_FILE_MODE), "w") as env_file:
-        os.fchmod(env_file.fileno(), KIT_FILE_MODE)
-        env_file.truncate(0)
-        # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
-        # leave a leading blank line — matching trust/deploy/scripts/trust_kit_lib.write_secure exactly.
-        env_file.write("\n".join(lines) + "\n" if lines else "")
+    # Write a 0600 temp file beside the kit and rename it over the kit, so an interrupted write leaves
+    # the old kit whole: it may be the only plaintext copy of TRUST_API_KEY. The rename goes to the
+    # file a symlinked kit names (an operator may keep the kit elsewhere behind a link), not over
+    # the link, and the new file keeps the old one's owner where this process may set it.
+    real = os.path.realpath(path)
+    directory = os.path.dirname(real)
+    try:
+        previous = os.stat(real)
+    except FileNotFoundError:
+        previous = None
+    fd, tmp = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as env_file:
+            # mkstemp already creates 0600; set it explicitly so the mode never depends on that.
+            os.fchmod(env_file.fileno(), KIT_FILE_MODE)
+            if previous is not None and (previous.st_uid, previous.st_gid) != (os.getuid(), os.getgid()):
+                with contextlib.suppress(PermissionError):
+                    os.fchown(env_file.fileno(), previous.st_uid, previous.st_gid)
+            # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
+            # leave a leading blank line; the two copies of this routine must stay identical.
+            env_file.write("\n".join(lines) + "\n" if lines else "")
+            env_file.flush()
+            os.fsync(env_file.fileno())
+        os.replace(tmp, real)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+    dir_fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 if __name__ == "__main__":

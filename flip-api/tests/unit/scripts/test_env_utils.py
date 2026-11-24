@@ -79,6 +79,35 @@ class TestWriteEnvFile:
 
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
+    def test_an_interrupted_write_leaves_the_old_file_whole_and_no_temp_file(self, tmp_path):
+        """A failure before the rename must not truncate the only copy of the credentials."""
+        target = tmp_path / ".env.test"
+        target.write_text("TRUST_API_KEY=old\n")
+
+        with patch("flip_api.scripts.env_utils.os.fsync", side_effect=OSError("disk full")):
+            try:
+                write_env_file(target, ["TRUST_API_KEY=new"])
+            except OSError:
+                pass
+            else:
+                raise AssertionError("the write error was swallowed")
+
+        assert target.read_text() == "TRUST_API_KEY=old\n"
+        assert sorted(p.name for p in tmp_path.iterdir()) == [".env.test"]
+
+    def test_a_symlinked_file_is_written_through_and_stays_a_link(self, tmp_path):
+        real = tmp_path / "etc" / ".env.test"
+        real.parent.mkdir()
+        real.write_text("OLD=1\n")
+        link = tmp_path / ".env.test"
+        link.symlink_to(real)
+
+        write_env_file(link, ["NEW=1"])
+
+        assert link.is_symlink()
+        assert real.read_text() == "NEW=1\n"
+        assert stat.S_IMODE(real.stat().st_mode) == 0o600
+
 
 def _normalised_body(source: str, func_name: str, renames: dict[str, str]) -> str:
     """Return a function's body as canonical source, ignoring its docstring, comments and local names.

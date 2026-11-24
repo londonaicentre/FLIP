@@ -29,7 +29,9 @@
 #
 # ROTATE_KEYS=1 (set by `make rotate-trust-keys KIT=<CODE>`) runs the same CLI with
 # `--rotate`: one named trust, keys reissued in place, and the kit MUST come back with
-# credentials or the rotation is a failure.
+# credentials or the rotation is a failure. The new key is staged (FLIP#1714): the hub accepts
+# both keys until the site first uses the new one. REVOKE_OLD=1 adds `--revoke-old`, the
+# immediate cutover for a leaked key.
 #
 # Usage (via `make register-trusts [KIT=<CODE>] HUB=<env>`):
 #   KIT_FILES="<kit file>..." register-trusts.sh
@@ -50,6 +52,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/utils.sh"
+
+# REVOKE_OLD is the leaked-key switch (FLIP#1714): a value it does not recognise must not quietly
+# fall back to a staged rotation that leaves the leaked key valid.
+case "${REVOKE_OLD:-}" in
+    "" | 0 | 1) ;;
+    *)
+        log_error "REVOKE_OLD must be empty, 0 or 1 (got '${REVOKE_OLD}')."
+        exit 1
+        ;;
+esac
 
 check_aws_profile
 
@@ -135,6 +147,7 @@ register_one_kit() {
         # Rotation reissues the keys of an existing trust in place: same id, same code, same FL kit
         # slot, only api_key_hash changes. The name identifies it; the code is not needed.
         cmd_args+=(--rotate)
+        [ "${REVOKE_OLD:-0}" = "1" ] && cmd_args+=(--revoke-old)
     else
         [ -n "$code" ] && cmd_args+=(--code "$code")
         [ -n "$region" ] && cmd_args+=(--region "$region")
@@ -220,7 +233,7 @@ register_one_kit() {
         log_error "Trust '$name': no kit in SSM parameter '$ssm_param' — $verb FAILED."
         [ -n "$failure_log" ] && printf '%s\n' "$failure_log" >&2
         # The task may have committed the new hash before its SSM write failed.
-        [ "${ROTATE_KEYS:-0}" = "1" ] && log_error "The hub may already refuse the old key; re-run 'make rotate-trust-keys KIT=${KIT}'."
+        [ "${ROTATE_KEYS:-0}" = "1" ] && log_error "The hub may already hold a new key for this trust; re-run 'make rotate-trust-keys KIT=${KIT}' (a staged key is simply replaced)."
         aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
         return 1
     fi
@@ -271,7 +284,7 @@ register_one_kit() {
         --env-class "$ENV_CLASS" --target "$kit_file" </dev/null; then
         log_error "Trust '$name': the hub-shared block of $kit_file is incomplete — $verb FAILED."
         if [ "${ROTATE_KEYS:-0}" = "1" ]; then
-            log_error "The rotation itself succeeded: the hub refuses the old key, and $kit_file holds the new keys. Do not re-run rotate-trust-keys."
+            log_error "The rotation itself succeeded and $kit_file holds the new keys$([ "${REVOKE_OLD:-0}" = "1" ] && echo '; the hub already refuses the old key'). Do not re-run rotate-trust-keys."
         elif echo "$kit" | jq -e '.trust_api_key' >/dev/null 2>&1; then
             log_error "The trust IS registered: $kit_file holds its write-once credentials (the hub keeps only their hash). Do not re-scaffold it."
         fi
@@ -279,14 +292,24 @@ register_one_kit() {
         return 1
     fi
     log_success "Wrote kit for '$name' → $kit_file"
+    if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+        # Say which mode ran: on this path nothing else on screen does (FLIP#1714).
+        local staged_until
+        staged_until="$(echo "$kit" | jq -r '.staged_until // empty')"
+        if [ -n "$staged_until" ]; then
+            log_info "Trust '$name': new key staged; the old key stays valid until the site first uses the new one, or until $staged_until."
+        else
+            log_info "Trust '$name': old key refused from now on; the site is offline until it runs on $kit_file."
+        fi
+    fi
 }
 
 # `|| failed=1` so one bad kit doesn't strand the rest — every kit is attempted,
 # then the script exits non-zero so a failure can never read as success.
 failed=0
 if [ "${ROTATE_KEYS:-0}" = "1" ]; then
-    # Never rotate every trust in one go: the hub refuses each trust's old key as soon as its
-    # rotation commits, so every rotated site is offline until its new kit is delivered.
+    # Never rotate every trust in one go: each rotated site needs its new kit delivered, and with
+    # REVOKE_OLD=1 it is offline from the moment its rotation commits until the kit arrives.
     # shellcheck disable=SC2086 # deliberate word splitting, to count the kit files
     set -- ${KIT_FILES}
     if [ "$#" != 1 ]; then

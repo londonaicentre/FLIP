@@ -307,6 +307,13 @@ class Trust(SQLModel, table=True):
     code: str | None = Field(default=None)
     region: str | None = Field(default=None)
     api_key_hash: str | None = Field(default=None)
+    # Staged key rotation (FLIP#1714). `rotate_trust_keys` stores the new key's hash here and the
+    # hub accepts either hash, so a site keeps working while its new kit is delivered. The first
+    # request authenticated with the pending key promotes it into `api_key_hash` (the old key is
+    # refused from then on); past `pending_api_key_expires_at` an unused pending key is dropped and
+    # the live key carries on. Both NULL when no rotation is in flight.
+    pending_api_key_hash: str | None = Field(default=None)
+    pending_api_key_expires_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # Latest per-service health snapshot reported by the trust's health collector on
     # the heartbeat (issue #901). Validated at the API boundary (TrustHeartbeatInput)

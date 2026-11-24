@@ -126,10 +126,28 @@ def test_a_failed_sync_after_the_write_says_the_rotation_happened(tmp_path: Path
     code, calls, out = _rotate(tmp_path, SYNC_EXIT="1", MAIN_ENV_FILE="/hub/.env.stag")
     _failed_after_the_task(code, calls, out)
     assert _ran(calls, "ssm delete-parameter"), "the kit file holds the keys, so the parameter goes"
-    assert "the hub refuses the old key" in out
+    assert "The rotation itself succeeded" in out
+    assert "the hub already refuses the old key" not in out  # staged: the old key still works
     assert "Do not re-run rotate-trust-keys" in out
     assert "/hub/.env.stag" in out
     assert "make sync-trust-kit KIT=T0 HUB=stag" in out
+
+
+def test_a_staged_rotation_does_not_pass_revoke_old(tmp_path: Path) -> None:
+    code, calls, out = _rotate(tmp_path)
+    assert code == 0, out
+    assert '"--revoke-old"' not in "\n".join(calls)
+
+
+def test_revoke_old_passes_revoke_old_and_a_failed_sync_says_the_old_key_is_refused(tmp_path: Path) -> None:
+    code, calls, out = _rotate(tmp_path, REVOKE_OLD="1")
+    assert code == 0, out
+    assert '"--revoke-old"' in "\n".join(calls)
+    second = tmp_path / "second"
+    second.mkdir()
+    code, calls, out = _rotate(second, REVOKE_OLD="1", SYNC_EXIT="1", MAIN_ENV_FILE="/hub/.env.stag")
+    _failed_after_the_task(code, calls, out)
+    assert "the hub already refuses the old key" in out
 
 
 def test_a_failed_ssm_read_keeps_the_parameter(tmp_path: Path) -> None:
@@ -163,3 +181,30 @@ def test_rotation_refuses_more_than_one_kit(tmp_path: Path) -> None:
     code, calls, out = _rotate(tmp_path, kits=2)
     assert code == 1, out
     assert not _ran(calls, "ecs run-task")
+
+
+def test_a_revoke_old_value_other_than_0_or_1_is_refused_before_the_task(tmp_path: Path) -> None:
+    """FLIP#1714: `REVOKE_OLD=true` must not quietly stage and leave a leaked key valid."""
+    for value in ("true", "yes"):
+        run_dir = tmp_path / value
+        run_dir.mkdir()
+        code, calls, out = _rotate(run_dir, REVOKE_OLD=value)
+        assert code == 1, out
+        assert "REVOKE_OLD must be empty, 0 or 1" in out
+        assert not _ran(calls, "ecs run-task"), out
+
+
+def test_a_staged_rotation_says_until_when_the_old_key_works(tmp_path: Path) -> None:
+    kit = [{**KIT[0], "staged_until": "2026-12-07T10:00:00+00:00"}]
+    code, _, out = _rotate(tmp_path, KIT_JSON=json.dumps(kit))
+    assert code == 0, out
+    assert "new key staged; the old key stays valid until the site first uses the new one" in out
+    assert "or until 2026-12-07T10:00:00+00:00" in out
+    assert "old key refused" not in out
+
+
+def test_a_cutover_says_the_old_key_is_refused(tmp_path: Path) -> None:
+    code, _, out = _rotate(tmp_path, REVOKE_OLD="1")
+    assert code == 0, out
+    assert "old key refused from now on" in out
+    assert "new key staged" not in out
