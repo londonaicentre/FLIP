@@ -63,10 +63,8 @@ Run the hub's current backend and say the other was not covered. The full refere
      EXTRA_ARGS="--trusts <CODE>,<CODE> --project-name '<name>' --project-description '<the clinical task>'"
    ```
    For a trust without the OMOP vocabulary, pass the tutorial's `query_novocab.sql` as an absolute `QUERY_FILE`.
-4. **Trusts that run NVFLARE jobs as pods** need their study entries once the project is approved, before training
-   starts: `make -C trust/deploy/helm sync-project-studies KIT=<CODE> HUB=stag` on that trust (no `PROJECTS` = every
-   approved project). Without it the server aborts the job on every site. The other trusts then show only
-   `child worker process finished with RC 1`, which is that abort, not a crash. If the run has already failed, sync,
-   then re-run with `--project-id <UUID>`; the images are already pulled.
+4. **Trusts that run NVFLARE jobs as pods** build each project's study entry when its job starts. A job-pod trust
+   older than the hub has none, and the server aborts the job on every site; the other trusts then show only
+   `child worker process finished with RC 1`, which is that abort, not a crash.
 5. **When the model goes to ERROR**, read the FL server's log before the trusts': on AWS, the CloudWatch group
    `/ecs/fl-server-net-1` names the site and the reason.

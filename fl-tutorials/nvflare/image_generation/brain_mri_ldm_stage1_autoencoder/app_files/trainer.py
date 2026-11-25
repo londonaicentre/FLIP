@@ -32,6 +32,7 @@ from pathlib import Path
 import einops
 import numpy as np
 import nvflare.client as flare
+import pandas as pd
 import torch
 from flip import FLIP
 from flip.constants import ResourceType
@@ -259,7 +260,7 @@ def validate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -
 class AutoencoderTrainer:
     """The networks, losses, optimisers and data for autoencoder training."""
 
-    def __init__(self, config: dict, project_id: str, query: str):
+    def __init__(self, config: dict, project_id: str, query: str) -> None:
         self.config = config
         self.project_id = project_id
         self.epochs = config["LOCAL_ROUNDS"]
@@ -303,7 +304,7 @@ class AutoencoderTrainer:
             num_workers=workers,
         )
 
-    def build_datalist(self, dataframe) -> tuple[list[dict], list[dict]]:
+    def build_datalist(self, dataframe: pd.DataFrame) -> tuple[list[dict], list[dict]]:
         """List each accession's volumes, one item per configured MR sequence, and split by accession.
 
         The four sequences of a study are four views of one brain, so whole studies go to training or

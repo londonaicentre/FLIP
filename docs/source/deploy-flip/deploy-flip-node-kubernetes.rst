@@ -166,9 +166,8 @@ The trust offers the FL scheduler only the GPUs it is configured with. A trust l
 the trust as "waiting for resources". To lend a cluster's GPUs one per job instead of holding one around the clock,
 use NVFLARE job pods (``flClient.nvflare.jobPods``, with ``maxGpus`` set to the GPUs FLIP may use); see the chart
 README's "NVFLARE job pods" section.
-With job pods, run ``make -C trust/deploy/helm sync-project-studies KUBE_CONTEXT=<ctx>`` after the first deploy,
-after each project is approved at this trust, and after every upgrade: until a project has its NVFLARE study entry,
-NVFLARE does not start its jobs here.
+With job pods, each project's job gets its NVFLARE study entry (its job image, and the mount of its own studies) when
+it starts at this trust: there is nothing to run after an approval or an upgrade.
 
 Extra network egress
 ====================
@@ -332,7 +331,8 @@ the FL client starts.
 - ``KUBE_CONTEXT`` is required, so the kit never lands in whichever cluster ``kubectl`` happens to point at.
 - The kit goes to ``KIT_DEST`` on the node (default ``/opt/flip/fl-kit``), and the deploy targets mount that same
   path, whatever the kit's ``FL_KIT_DIR`` says. Any previous kit there is removed first. To use another path, pass
-  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the deploy.
+  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the first deploy. Later deploys and upgrades keep the path
+  the release already mounts; pass ``KIT_DEST`` again only to move the kit.
 - ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
   to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
@@ -585,8 +585,8 @@ overlay win for the keys they set. Do not pass settings with
    * - ``flClient.kitHostPath``
      - ``/opt/flip/fl-kit``
      - Path **on the node** holding the FL kit. Required whenever the FL client is enabled with the default
-       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). The deploy targets set it
-       from ``KIT_DEST``, over the kit's ``FL_KIT_DIR`` (see Step 3).
+       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). The first deploy sets it
+       from ``KIT_DEST``, over the kit's ``FL_KIT_DIR``, and later deploys keep it (see Step 3).
    * - ``flBackend``
      - from the kit
      - ``nvflare`` or ``flower``.
@@ -679,6 +679,18 @@ When the admin refreshes your kit's hub-shared settings, see "Later — rotate h
    data must set ``TRUST_DATA_SEED=false`` in the kit (see `Step 1 — Check out the release and copy in the kit`_);
    the upgrade carries it into the release.
 
+.. note::
+
+   Every platform release also publishes this chart to GHCR as a versioned OCI artifact (FLIP#1646), whose chart
+   version, ``appVersion`` and ``global.image.tag`` all carry the release:
+
+   .. code-block:: shell
+
+      helm pull oci://ghcr.io/londonaicentre/charts/flip-trust --version X.Y.Z
+
+   The in-tree chart is deliberately unversioned (``0.0.0-dev``, floating image tag), so the Make targets above
+   deploy what the checkout holds. The chart README's "The published chart" section has the details.
+
 .. seealso::
 
    :doc:`/sys-admin/admin-upgrading-sites` for the full runbook, per-image pins and rolling back.
@@ -726,7 +738,7 @@ Troubleshooting
      - The API server does not listen on 443 and ``networkPolicies.apiServer`` is not set:
        :ref:`ts-k8s-api-server-egress`.
    * - Job pods on: a project's jobs never start at this trust
-     - The project has no NVFLARE study entry yet: run ``sync-project-studies`` (:ref:`ts-k8s-job-pods-no-study`).
+     - The trust cannot build the project's NVFLARE study entry (:ref:`ts-k8s-job-pods-no-study`).
    * - Flower SuperNode logs ``Permission denied`` on ``/certs`` or ``/keys``
      - The kit was staged for the wrong backend. Re-stage from the slot's own kit directory, or pass
        ``FL_BACKEND=flower``.

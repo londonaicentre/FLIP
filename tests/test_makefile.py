@@ -698,6 +698,8 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     gate = next(line for line in output.splitlines() if "onboard_onprem_trust.py" in line)
                     args = shlex.split(gate)
                     assert "--gate" in args, gate
+                    # Only the upgrade's gate skips the seed-marker folder: it never seeds (FLIP#1985).
+                    assert ("--upgrade" in args) == (target == "upgrade-onprem-trust"), gate
                     assert Path(args[args.index("--kit-file") + 1]) == kit_file, gate
                     if target == "upgrade-onprem-trust":
                         plan = next(line for line in output.splitlines() if "site_upgrade.py plan" in line)

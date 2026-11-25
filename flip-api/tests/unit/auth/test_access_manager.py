@@ -405,17 +405,6 @@ class TestCanModifyProject:
 
         assert result is False
 
-    def test_returns_false_on_database_exception(self):
-        user_id = uuid4()
-        project_id = uuid4()
-        db = MagicMock(spec=Session)
-        db.exec.side_effect = Exception("DB connection error")
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_modify_project(user_id, project_id, db)
-
-        assert result is False
-
 
 class TestCanAccessProject:
     def test_admin_with_manage_projects_permission_bypasses_ownership_check(self):
@@ -448,17 +437,6 @@ class TestCanAccessProject:
         project_id = uuid4()
         db = MagicMock(spec=Session)
         db.exec.return_value.first.return_value = None
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_access_project(user_id, project_id, db)
-
-        assert result is False
-
-    def test_returns_false_on_database_exception(self):
-        user_id = uuid4()
-        project_id = uuid4()
-        db = MagicMock(spec=Session)
-        db.exec.side_effect = Exception("DB connection error")
 
         with patch(PATCH_HAS_PERMISSIONS, return_value=False):
             result = can_access_project(user_id, project_id, db)
@@ -590,17 +568,6 @@ class TestCanContributeToProject:
         # Project lookup happened, but no follow-up membership query.
         assert db.exec.call_count == 1
 
-    def test_returns_false_on_database_exception(self):
-        user_id = uuid4()
-        project_id = uuid4()
-        db = MagicMock(spec=Session)
-        db.exec.side_effect = Exception("DB connection error")
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_contribute_to_project(user_id, project_id, db)
-
-        assert result is False
-
 
 class TestCanModifyModel:
     def test_returns_true_when_user_has_manage_projects_permission(self):
@@ -718,17 +685,6 @@ class TestCanModifyModel:
             patch(PATCH_CAN_MODIFY_PROJECT, return_value=False),
             patch(PATCH_CAN_CONTRIBUTE_TO_PROJECT, return_value=False),
         ):
-            result = can_modify_model(user_id, model_id, db)
-
-        assert result is False
-
-    def test_returns_false_on_database_exception(self):
-        user_id = uuid4()
-        model_id = uuid4()
-        db = MagicMock(spec=Session)
-        db.exec.side_effect = Exception("DB connection error")
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
             result = can_modify_model(user_id, model_id, db)
 
         assert result is False

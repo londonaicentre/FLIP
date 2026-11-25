@@ -1163,6 +1163,33 @@ def test_53_log_level_info_passes_and_unset_warns() -> None:
     _assert(unset.status == mod.Status.WARN, "unset level is a WARN", unset.detail)
 
 
+def test_60_log_level_passes_only_a_level_quieter_than_debug() -> None:
+    """NOTSET and a numeric level log everything, as DEBUG does, so only the named quiet levels pass."""
+    print("\n[60] TRUST_LOG_LEVEL: only INFO / WARNING / ERROR / CRITICAL pass")
+    for level in ("INFO", "warning", "ERROR", "CRITICAL"):
+        result = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
+        _assert(result.status == mod.Status.PASS, f"{level} passes", result.detail)
+    for level in ("NOTSET", "0", "5", "TRACE"):
+        deployed = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
+        _assert(deployed.status == mod.Status.FAIL, f"{level} on a deployed kit is a FAIL", deployed.detail)
+        dev = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.development")
+        _assert(dev.status == mod.Status.WARN, f"{level} on a development kit is a WARN", dev.detail)
+
+
+def test_61_an_empty_trust_local_password_is_not_a_rotated_one() -> None:
+    """A password set to nothing was not rotated; a key the kit does not carry at all is left to the other checks."""
+    print("\n[61] Trust-local passwords: an empty value is unrotated")
+    repo_root = SCRIPTS_DIR.parents[2]
+    rotated = {key: "rotated-secret" for key in mod.TRUST_LOCAL_PASSWORD_KEYS}  # pragma: allowlist secret
+    emptied = {**rotated, "GRAFANA_ADMIN_PASSWORD": ""}
+    check = mod.check_unrotated_passwords(emptied, True, repo_root, "SITE", "trust/.env.SITE.prod")
+    _assert(check.status == mod.Status.FAIL, "an empty password fails a deployed kit", str(check))
+    _assert(any("GRAFANA_ADMIN_PASSWORD" in hint for hint in check.hints), "the hint names the empty key", str(check))
+    absent = {key: value for key, value in rotated.items() if key != "GRAFANA_ADMIN_PASSWORD"}
+    check = mod.check_unrotated_passwords(absent, True, repo_root, "SITE", "trust/.env.SITE.prod")
+    _assert(check.status == mod.Status.PASS, "a key the kit does not carry is not counted", str(check))
+
+
 def test_54_hub_shared_allows_the_other_backends_kit_date_empty() -> None:
     """Only the running backend's kit date is required (FLIP#1476); a placeholder still fails."""
     print("▶ hub-shared row: the other backend's kit date may be empty")
@@ -1388,10 +1415,44 @@ def main() -> None:
     test_57_fl_kit_contents_a_closed_folder_above_the_slot_is_named_not_crashed_on()
     test_58_a_site_without_the_membership_store_dir_is_told_the_exact_root_step()
     test_59_standalone_ready_also_names_the_upgrade()
+    test_60_log_level_passes_only_a_level_quieter_than_debug()
+    test_61_an_empty_trust_local_password_is_not_a_rotated_one()
+    test_62_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)
+
+
+def test_62_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked() -> None:
+    """A site root installed: the folder above its data dirs is root's. Only a first install seeds (FLIP#1985)."""
+    print("\n[60] existing data dirs under a root-owned parent: first install FAIL, upgrade PASS")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        (locked / "omop").mkdir(parents=True)
+        (locked / "pacs").mkdir()
+        kit = {"OMOP_DATA_DIR": f"{locked}/omop", "ORTHANC_STORAGE_DIR": f"{locked}/pacs"}
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            first = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod")
+            upgrade = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod", upgrade=True)
+            missing = mod.check_data_dir_paths(
+                {**kit, "COHORT_SNAPSHOT_STORAGE_DIR": f"{locked}/snapshots"}, True, "k", upgrade=True
+            )
+    _assert(first.status == mod.Status.FAIL and "seed marker" in first.detail, "first install: FAIL", str(first))
+    _assert(upgrade.status == mod.Status.PASS, "upgrade: PASS", f"{upgrade.status}: {upgrade.detail}")
+    _assert(
+        missing.status == mod.Status.FAIL and "COHORT_SNAPSHOT_STORAGE_DIR" in missing.detail,
+        "upgrade: a dir it would still create is checked",
+        str(missing),
+    )
+    with mock.patch.object(sys, "argv", ["prog", "SITE", "--gate", "--upgrade"]):
+        with mock.patch.object(mod, "run_checks", side_effect=SystemExit) as run:
+            try:
+                mod.main()
+            except SystemExit:
+                pass
+    _assert(run.call_args.args[3] is True, "--upgrade reaches the row", str(run.call_args))
 
 
 if __name__ == "__main__":

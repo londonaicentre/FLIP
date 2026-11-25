@@ -287,8 +287,8 @@ data "aws_route53_zone" "subdomain" {
 # Target group for the fl-server-net-1 ECS Fargate service. Registered by
 # the ECS service via the load_balancer block in ecs_services.tf - we never
 # attach instance/IP targets here. target_type=ip is required for awsvpc
-# Fargate tasks. NLB protocol must be TCP - HTTP/2 gRPC framing is opaque
-# to the NLB and forwarded as-is.
+# Fargate tasks. NLB protocol must be TCP - the FL client's TLS ends
+# at the FL server, so the NLB forwards it as-is.
 # The internal NLB (fl_ingress_lza.tf) forwards its FL listener here. The name
 # keeps the `-lza` suffix the live states hold (a name change is ForceNew).
 resource "aws_lb_target_group" "ecs_fl_server_tcp" {

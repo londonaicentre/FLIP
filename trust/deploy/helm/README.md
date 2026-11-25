@@ -729,35 +729,18 @@ client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's laun
 pool. Each job runs in the fl-client image.
 
 Each FLIP project is an NVFLARE study (FLIP#1678), and NVFLARE takes a study's job image and pod template
-from the site's `local/study_runtime.yaml`, which the site's operator maintains and its launcher re-reads at
-every launch. The fl-client only reads it: the file is a ConfigMap (`<release>-fl-studies-<net>`) that the
-chart mounts and never writes, so a `helm upgrade` leaves it alone. Fill it, and refresh it, with:
+from its entry. The fl-client's launcher (`flip.nvflare.project_launcher`) builds a project's entry when the
+project's job starts: the template above, the kit's job image and, with `images: project`, a read-only mount of the
+project's own folder, or with `images: archive` of its directory of XNAT's archive once XNAT has archived one of its
+sessions (until then its jobs stream). Nothing is synced after an approval, an upgrade or a change of
+`jobPods.images`: every job gets the entry its project needs at that moment. The trust keeps its own gate: the
+entry, with its mount, is built only for a project whose XNAT project imaging-api created when this trust approved
+it. Any other project's job, and any job while imaging-api cannot answer, mounts nothing and streams, through
+download routes that serve only the approved cohort. The template itself mounts no images,
+so a job from a hub that predates studies, which lands in the default study, streams its studies.
 
-```bash
-make sync-project-studies                       # every project whose approved cohort this trust holds
-make sync-project-studies PROJECTS="<id> ..."   # or exactly these
-```
-
-It builds one entry per project from the template above and replaces the ConfigMap; the client picks the
-change up within a minute or so, with no restart. When it finds no approved project (data-access-api's snapshot
-folder empty or not mounted) it stops and replaces nothing, since an empty file would stop every project's jobs. Run it after the first deploy, after each project is
-approved at this trust, after an upgrade (the entries carry the job image and the pod template), after
-changing `jobPods.images`, and, with `images: archive`, after a project's first imaging pull (until XNAT has
-archived one of its sessions there is no directory to mount, so its entry streams; the sync prints a line for
-each project that streams, and why): the file outlives a redeploy, so until it is synced again every project keeps
-the entries of the previous mode. Until
-a project has its entry NVFLARE has no job image for its study and does not start its jobs. The template
-itself mounts no images, so a job from a hub that predates studies, which lands in the default study,
-streams its studies.
-
-**Leaving `images: archive`** (for `project` or `stream`) takes three steps, in this order, because the
-entries already synced keep mounting XNAT's archive until the next sync, and the chart checks
-`COHORT_RECONCILE_MINUTES` only while the mode is still `archive`:
-
-1. Upgrade with the new `jobPods.images`, leaving `imagingApi.env.COHORT_RECONCILE_MINUTES` as it is.
-2. Run `make sync-project-studies`. Until it has run, the fl-client logs an error at every start naming the
-   projects whose entries still mount the archive (`kubectl logs <fl-client pod> -c fl-client-init`).
-3. Only then, if you mean to, set `COHORT_RECONCILE_MINUTES` to 0 in a later upgrade.
+`make sync-project-studies` still writes the operator's study file (the ConfigMap `<release>-fl-studies-<net>`,
+which the chart mounts but never creates), but a project's job does not use it.
 
 Prerequisites and trade-offs:
 
@@ -1392,7 +1375,7 @@ page is [Trust node on Kubernetes](../../../docs/source/troubleshooting/trust-no
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Check the fl-client container requests `nvidia.com/gpu` (`flClient.gpu.allocation: devicePlugin`) and the node lists it in its allocatable, or, with `allocation: runtime`, that `NVIDIA_VISIBLE_DEVICES=0` is set and the node's default runtime is `nvidia`. `CUDA_VISIBLE_DEVICES=0` is set in both modes by `flClient.gpu.enabled: true`.
 5. **Jobs never start ("waiting for resources")**: the FL server logs `sites without the requested resources: {'<slot>': {'num_of_gpus': 1}}`. The trust offers fewer GPUs than the job asks for: `grep num_of_gpus` in the client's `local/resources.json` shows 0 while `flClient.gpu.enabled` is false. Enable the GPU, or use job pods (`flClient.nvflare.jobPods`) on a GPU pool.
-6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable endpoint and root certificates are in the kit.
 7. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic

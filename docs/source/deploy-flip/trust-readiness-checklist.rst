@@ -212,7 +212,7 @@ into the trust. The firewall must allow a short list of outbound destinations. T
 have been tested behind a deny-everything firewall, is on :ref:`deploy-trust-node-network`.
 
 - ☐ **Outbound HTTPS to the Central Hub**, and to the hub's separate federated-learning endpoint on its own port.
-  The addresses and port come with the trust's kit. The federated-learning connection is mutual TLS on a
+  The addresses and port come with the trust's kit. The federated-learning connection is TLS on a
   non-standard port (8002 on the production hub) and must be exempt from TLS inspection. It is the one rule that
   differs from the usual "outbound 443"; the questions below settle how the site can allow it.
 - ☐ **Outbound access to the container registries and package sources** the node installs and updates from, as
@@ -237,8 +237,8 @@ network team has. Settle them before the node is built:
   allows ``ssl`` only on its default port passes 443 and resets the federated-learning connection on its port: the
   TCP connection opens, the TLS handshake starts, and the connection is reset with nothing read back. Ask for the
   ``ssl`` application to be allowed to the FL endpoint on its port, or for an application override for it.
-- **Is outbound TLS decrypted?** Then the FL endpoint needs an exemption. Mutual TLS cannot be decrypted, and a
-  re-signed connection fails the client's certificate check.
+- **Is outbound TLS decrypted?** Then the FL endpoint needs an exemption. The FL client accepts only the hub's
+  own certificate, so a re-signed connection fails its check.
 - **Can rules name a host, or only an address?** The FL endpoint has a fixed address, so either works; give both.
 - **Can the node resolve public names?** Some enclaves have no public DNS. The node then needs a hosts entry for the
   hub and the FL endpoint.
@@ -247,7 +247,7 @@ network team has. Settle them before the node is built:
 
 The request itself, in a form a firewall team can copy:
 
-   From the FLIP node to the FL endpoint host, at its fixed address, TCP on the FL port, mutually authenticated
+   From the FLIP node to the FL endpoint host, at its fixed address, TCP on the FL port,
    TLS, exempt from decryption, allowed as the ``ssl`` application on that non-default port.
 
 On a Compose node, the trust operator can run ``make onboard-onprem-trust KIT=<CODE>`` to probe every destination

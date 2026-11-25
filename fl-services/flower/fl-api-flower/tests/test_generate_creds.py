@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""generate_creds.py --add-supernode adds one SuperNode key pair to a deployed kit (FLIP#1942).
+"""generate_creds.py issues the SuperLink's TLS certificates and the SuperNode key pairs.
 
+--add-supernode adds one SuperNode key pair to a deployed kit (FLIP#1942).
 add-fl-kits mints through it, and the SuperLink only ever sees the public half: a pair whose halves did
 not match would register, be handed out, and then have its SuperNode refused. So the script is run for
 real here and checked to write a matching pair while leaving the CA and every other key untouched.
 """
 
+import ssl
 import subprocess
 import sys
 from pathlib import Path
@@ -88,3 +90,37 @@ def test_refuses_a_number_that_names_no_slot(tmp_path):
 
     assert result.returncode != 0
     assert not any((kit / "keys").glob("supernode_credentials_0*"))
+
+
+def _handshake(ca: Path, cert: Path, key: Path, server_name: str) -> None:
+    """A TLS handshake in memory, the client verifying as the FL API's SuperLink probe does."""
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(cert, key)
+    client_ctx = ssl.create_default_context(cafile=str(ca))
+    c_in, c_out, s_in, s_out = ssl.MemoryBIO(), ssl.MemoryBIO(), ssl.MemoryBIO(), ssl.MemoryBIO()
+    client = client_ctx.wrap_bio(c_in, c_out, server_hostname=server_name)
+    server = server_ctx.wrap_bio(s_in, s_out, server_side=True)
+    done = {client: False, server: False}
+    while not all(done.values()):
+        for side in (client, server):
+            if not done[side]:
+                try:
+                    side.do_handshake()
+                    done[side] = True
+                except ssl.SSLWantReadError:
+                    pass
+        s_in.write(c_out.read())
+        c_in.write(s_out.read())
+
+
+def test_the_server_certificate_passes_strict_verification(tmp_path):
+    """Python 3.13 verifies with VERIFY_X509_STRICT, which refused the certificates without key
+    identifiers, so the FL API reported its SuperLink down and the hub dispatched no run (FLIP#2043)."""
+    assert ssl.create_default_context().verify_flags & ssl.VERIFY_X509_STRICT
+
+    result = subprocess.run([sys.executable, str(SCRIPT)], cwd=tmp_path, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    certs = tmp_path / "certificates"
+    for name in ("fl-server-net-1", "localhost"):
+        _handshake(certs / "ca.crt", certs / "server.pem", certs / "server.key", name)

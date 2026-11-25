@@ -463,7 +463,7 @@ def check_fl_endpoint_reachable(kit_vars: dict[str, str], kit_present: bool) -> 
     if failure is None:
         return Check(label, Status.PASS, f"tcp {host}:{port} connects (from {source})")
     hints = [
-        "The FL client connects out to this host:port over mutual TLS; a connection that opens"
+        "The FL client connects out to this host:port over TLS; a connection that opens"
         " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
         f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
     ]
@@ -1036,8 +1036,11 @@ def check_unrotated_passwords(
     if not template.is_file():
         return Check("Trust-local passwords", Status.WARN, "not checked — trust/.env.example is missing")
     template_vars = read_kit_vars(template)
+    # A key set to nothing was not rotated either; one the kit does not carry at all is not this check's.
     unchanged = [
-        key for key in TRUST_LOCAL_PASSWORD_KEYS if kit_vars.get(key) and kit_vars[key] == template_vars.get(key)
+        key
+        for key in TRUST_LOCAL_PASSWORD_KEYS
+        if key in kit_vars and (not kit_vars[key] or kit_vars[key] == template_vars.get(key))
     ]
     if not unchanged:
         return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
@@ -1046,9 +1049,9 @@ def check_unrotated_passwords(
     return Check(
         "Trust-local passwords",
         Status.FAIL if deployed else Status.WARN,
-        f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} still match {template.name} defaults",
+        f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} are empty or still match {template.name} defaults",
         hints=[
-            f"Unchanged: {', '.join(unchanged)}",
+            f"Unchanged or empty: {', '.join(unchanged)}",
             f"Edit {kit_path} → Trust-local credentials section and replace each with a",
             "  random secret (`make new-trust` mints them for a fresh kit).",
             f"Judged by HUB={hub}; run with HUB= for a development kit.",
@@ -1069,7 +1072,8 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
     level = (kit_vars.get("TRUST_LOG_LEVEL") or "").strip().upper()
-    if level and level != "DEBUG":
+    # Named, not "anything but DEBUG": NOTSET and a numeric level below 20 log everything too.
+    if level in ("INFO", "WARNING", "ERROR", "CRITICAL"):
         return Check(label, Status.PASS, f"TRUST_LOG_LEVEL={level}")
     if not level:
         # Unset falls back to each service's own default; name it rather than assume.
@@ -1079,7 +1083,9 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     return Check(
         label,
         Status.FAIL if deployed else Status.WARN,
-        "TRUST_LOG_LEVEL=DEBUG logs trust credentials into Loki (FLIP-SR-050)",
+        f"TRUST_LOG_LEVEL={level} logs trust credentials into Loki (FLIP-SR-050)"
+        if level == "DEBUG"
+        else f"TRUST_LOG_LEVEL={level} is not INFO, WARNING, ERROR or CRITICAL, and may log as DEBUG does",
         hints=[
             f"Edit {kit_path} → set TRUST_LOG_LEVEL=INFO, then recreate the trust APIs.",
             "A site that already ran at DEBUG should rotate both trust keys.",
@@ -1254,13 +1260,18 @@ def prepare_host_dirs_command(kit: str) -> str:
     return f"{command} {quote_make_assignment('HUB', hub)}" if hub else command
 
 
-def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>") -> Check:
+def check_data_dir_paths(
+    kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>", upgrade: bool = False
+) -> Check:
     """Every data dir is absolute, and the bring-up can create it as this user (FLIP#1723).
 
     The kit template carries the development paths, which are relative: on a deployed trust they
     resolve inside this checkout, on whatever disk it sits on. An unset one falls back to its
     /opt/flip default, which a non-root operator usually cannot create — a site installed before
     the membership store (FLIP#857) has no COHORT_SNAPSHOT_STORAGE_DIR, so its upgrade meets this.
+
+    An upgrade never seeds, so it writes no seed marker beside the OMOP and Orthanc dirs: a site
+    that root installed is not refused for that folder (FLIP#1985).
     """
     label = "Data dir paths"
     if not kit_present:
@@ -1286,6 +1297,7 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
             blocked[var] = f"{unset}{nearest} is not writable"
         elif (
             var in SEED_MARKER_DIR_VARS
+            and not upgrade
             and not sample_data_off(kit_vars)
             and path.parent.exists()
             and not os.access(path.parent, os.W_OK)
@@ -1373,7 +1385,7 @@ def kit_file_label(kit_file: Path, repo_root: Path) -> str:
         return str(kit_file)
 
 
-def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[Check]:
+def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None, upgrade: bool = False) -> list[Check]:
     kit_file = kit_file or repo_root / "trust" / f".env.{kit}"
     kit_path = kit_file_label(kit_file, repo_root)
     kit_vars = read_kit_vars(kit_file)
@@ -1401,7 +1413,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_sample_data(kit_vars, kit_present, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root, image_uid=999),
-        check_data_dir_paths(kit_vars, kit_present, kit_path, kit),
+        check_data_dir_paths(kit_vars, kit_present, kit_path, kit, upgrade),
         check_container_uid(kit_vars, kit_present, kit_path, kit),
     ]
 
@@ -1428,6 +1440,11 @@ def main() -> None:
         help="Running as the gate of a make verb (up-onprem-trust, upgrade-onprem-trust): on READY, "
         "let it continue rather than suggest a command.",
     )
+    parser.add_argument(
+        "--upgrade",
+        action="store_true",
+        help="Judge the kit for an upgrade of a running site (upgrade-onprem-trust), which never seeds.",
+    )
     args = parser.parse_args()
 
     # The governance and site-privacy checks run stdlib tomllib under this interpreter.
@@ -1452,7 +1469,7 @@ def main() -> None:
     print(f"  {BOLD}Checks:{RESET}")
     print()
 
-    checks = run_checks(kit, repo_root, kit_file)
+    checks = run_checks(kit, repo_root, kit_file, args.upgrade)
     label_width = max(len(c.label) + 1 for c in checks)  # +1 for the trailing ":"
     for c in checks:
         render_check(c, label_width)

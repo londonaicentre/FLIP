@@ -33,7 +33,7 @@ from torch import nn
 AUTOENCODER_CONFIG = Path(__file__).parent / "autoencoder_config.yaml"
 
 
-def load_net_config():
+def load_net_config() -> dict[str, Any]:
     """Read the ``net_config`` block from the ``config.json`` next to this file."""
     config_path = Path(__file__).parent / "config.json"
     with open(config_path, "r") as f:
@@ -93,7 +93,7 @@ class LatentDiffusionModelNetwork(nn.Module):
     - Diffusion Model (to generate samples in the latent space) — the module actually trained
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         net_config = load_net_config()
         document = read_autoencoder_document()

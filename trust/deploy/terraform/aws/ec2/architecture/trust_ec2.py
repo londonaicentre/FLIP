@@ -265,7 +265,7 @@ def _draw_network(drawn: _Drawn) -> None:
 
     # Outbound only: the node dials everything; nothing dials the node.
     trust_api >> Edge(label="HTTPS :443\nTRUST_API_KEY") >> nat
-    fl_client >> Edge(label="mTLS gRPC\n:8002 prod / :8003 stag") >> nat
+    fl_client >> Edge(label="FL TLS\n:8002 prod / :8003 stag") >> nat
     host >> Edge(label="images, seed data :443") >> nat
     nat >> Edge(style="dashed") >> igw
     igw >> Edge(label="hub API :443\nFL :8002 / :8003") >> hub
@@ -313,7 +313,7 @@ def _draw_host(drawn: _Drawn) -> None:
     alloy >> Edge(label="container logs") >> loki >> grafana
 
     trust_api >> Edge(label="HTTPS :443 poll tasks, heartbeat\nTRUST_API_KEY") >> hub
-    fl_client >> Edge(label="mTLS gRPC\n:8002 prod / :8003 stag") >> hub
+    fl_client >> Edge(label="FL TLS\n:8002 prod / :8003 stag") >> hub
     host >> Edge(label="image pulls :443") >> ghcr
     host >> Edge(label="seed omop-db + orthanc :443") >> hf
 

@@ -213,7 +213,7 @@ def test_an_unready_optional_workload_is_still_reported(monkeypatch, capsys):
     _main(monkeypatch, [wl("deployment", "t-fl-client", "fl-client")])
     out = capsys.readouterr().out
     assert "t-fl-client" in out
-    assert "idle or awaiting its kit" in out
+    assert "awaiting its kit" in out
 
 
 def test_a_failing_core_workload_fails_even_when_optionals_are_fine(monkeypatch):
@@ -320,3 +320,57 @@ def test_a_daemonset_is_judged_on_its_scheduled_pods(monkeypatch):
     assert rollout_wait.is_ready(["kubectl"], "flip", "daemonset", "t-x") is False
     obj["status"]["numberReady"] = 3
     assert rollout_wait.is_ready(["kubectl"], "flip", "daemonset", "t-x") is True
+
+
+# ---------------------------------------------------------------- an fl-client that was serving (FLIP#1984)
+
+
+def test_an_fl_client_ready_before_the_upgrade_is_waited_on():
+    waited, skipped = rollout_wait.partition(
+        [wl("deployment", "t-fl-client", "fl-client")], frozenset({"deployment/t-fl-client"})
+    )
+    assert waited == [wl("deployment", "t-fl-client", "fl-client")]
+    assert skipped == []
+
+
+def test_ready_before_reaches_only_the_fl_client():
+    """Observability and MONAI Label stay optional however they were before."""
+    waited, _ = rollout_wait.partition([wl("deployment", "t-grafana", "grafana")], frozenset({"deployment/t-grafana"}))
+    assert waited == []
+
+
+def test_a_serving_fl_client_that_does_not_come_back_fails_the_deploy(monkeypatch, capsys):
+    rc = _main(
+        monkeypatch,
+        [wl("deployment", "t-fl-client", "fl-client")],
+        failures={"t-fl-client"},
+        argv_extra=("--ready-before", "deployment/t-fl-client"),
+    )
+    assert rc == 1
+    assert "it was ready before the upgrade" in capsys.readouterr().out
+
+
+def test_report_ready_names_only_the_ready_fl_clients(monkeypatch, capsys):
+    monkeypatch.setattr(
+        rollout_wait,
+        "discover",
+        lambda *a, **k: [
+            wl("deployment", "t-trust-api", "trust-api"),
+            wl("deployment", "t-fl-client-net-1", "fl-client"),
+            wl("deployment", "t-fl-client-net-2", "fl-client"),
+        ],
+    )
+    monkeypatch.setattr(rollout_wait, "is_ready", lambda kubectl, ns, kind, name: name.endswith("net-1"))
+    monkeypatch.setattr(sys, "argv", ["rollout_wait.py", "--namespace", "flip", "--release", "t", "--report-ready"])
+    assert rollout_wait.main() == 0
+    assert capsys.readouterr().out.strip() == "deployment/t-fl-client-net-1"
+
+
+def test_report_ready_on_a_first_install_names_nothing(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise RuntimeError("no release")
+
+    monkeypatch.setattr(rollout_wait, "discover", boom)
+    monkeypatch.setattr(sys, "argv", ["rollout_wait.py", "--namespace", "flip", "--release", "t", "--report-ready"])
+    assert rollout_wait.main() == 0
+    assert capsys.readouterr().out.strip() == ""
