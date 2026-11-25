@@ -790,7 +790,7 @@ jobs:
           kubectl get pods -n flip-trust
 
       # The self-test's egress and drift checks, each run against a release it must pass and one it
-      # must not (FLIP#2079, HDRS WP3): the release as installed, a Deployment changed by hand, and
+      # must not (FLIP#2079): the release as installed, a Deployment changed by hand, and
       # the release confined to DNS-only egress.
       - name: Prove the egress and drift checks
         run: python3 trust/deploy/helm/ci/prove_node_checks.py --out build/node-checks

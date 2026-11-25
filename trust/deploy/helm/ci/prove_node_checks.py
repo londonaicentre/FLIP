@@ -14,8 +14,9 @@
 A check that always passes proves nothing, so each is run against a node it must pass and a node it must not:
 
 1. the release as installed: no drift; its network is open, which the egress row must report as a warning
-2. one Deployment changed by hand: the drift row must fail and name it; undone, it must pass again
-3. the release upgraded to a policy that allows DNS only: the egress row must pass, which also shows that this
+2. one Deployment changed by hand: the drift row must fail and name it
+3. the change undone: the drift row must pass again
+4. the release upgraded to a policy that allows DNS only: the egress row must pass, which also shows that this
    cluster enforces NetworkPolicy at all
 
 Each run's report is kept under --out. The CI release has no XNAT and no FL client, so the self-test's other rows
