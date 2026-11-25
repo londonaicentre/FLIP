@@ -8,6 +8,9 @@
   "type": "docker",
   "image": "ghcr.io/londonaicentre/xnat-nifti-to-seg:1.0.0",
   "network": "#PLACEHOLDER_NETWORK#",
+  "reserve-memory": 1024,
+  "limit-memory": 8192,
+  "limit-cpu": 2,
   "command-line": "python /app/src/nifti_to_seg.py -i /resource-in --resource-uri #RESOURCE_URI# --resource-label #RESOURCE_LABEL#",
   "mounts": [
     {

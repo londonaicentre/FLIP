@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 import pydicom
 import pytest
+import requests
 import SimpleITK as sitk
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import CTImageStorage, ExplicitVRLittleEndian, generate_uid
@@ -123,7 +124,7 @@ def _planes_by_source(seg: Dataset) -> dict[str, dict[int, np.ndarray]]:
 
 def test_each_label_lands_on_its_source_slices(scan) -> None:
     dicom_dir, mask, slices = scan
-    seg = nifti_to_seg.nifti_to_seg(mask, dicom_dir, LABELS, "TOTALSEG test")
+    seg = nifti_to_seg.nifti_to_seg(mask, dicom_dir, LABELS, "NIFTI_SEG test")
 
     assert [s.SegmentLabel for s in seg.SegmentSequence] == ["liver", "iliopsoas_left"]
     planes = _planes_by_source(seg)
@@ -140,7 +141,7 @@ def test_each_label_lands_on_its_source_slices(scan) -> None:
 
 def test_frames_sit_at_their_source_slices_position(scan) -> None:
     dicom_dir, mask, slices = scan
-    seg = nifti_to_seg.nifti_to_seg(mask, dicom_dir, LABELS, "TOTALSEG test")
+    seg = nifti_to_seg.nifti_to_seg(mask, dicom_dir, LABELS, "NIFTI_SEG test")
     positions = {s.SOPInstanceUID: [float(v) for v in s.ImagePositionPatient] for s in slices}
     for item in seg.PerFrameFunctionalGroupsSequence:
         uid = item.DerivationImageSequence[0].SourceImageSequence[0].ReferencedSOPInstanceUID
@@ -150,13 +151,13 @@ def test_frames_sit_at_their_source_slices_position(scan) -> None:
 
 def test_the_viewer_breaking_top_level_reference_list_is_gone(scan) -> None:
     dicom_dir, mask, _ = scan
-    seg = nifti_to_seg.nifti_to_seg(mask, dicom_dir, LABELS, "TOTALSEG test")
+    seg = nifti_to_seg.nifti_to_seg(mask, dicom_dir, LABELS, "NIFTI_SEG test")
     assert "SourceImageSequence" not in seg
 
 
 def test_codes_modifier_and_colour_come_from_labels_json(scan) -> None:
     dicom_dir, mask, _ = scan
-    liver, iliopsoas = nifti_to_seg.nifti_to_seg(mask, dicom_dir, LABELS, "TOTALSEG test").SegmentSequence
+    liver, iliopsoas = nifti_to_seg.nifti_to_seg(mask, dicom_dir, LABELS, "NIFTI_SEG test").SegmentSequence
     assert liver.SegmentedPropertyTypeCodeSequence[0].CodeValue == "10200004"
     assert liver.RecommendedDisplayCIELabValue == nifti_to_seg.rgb_to_dicom_lab([40, 140, 40])
     modifier = iliopsoas.SegmentedPropertyTypeCodeSequence[0].SegmentedPropertyTypeModifierCodeSequence[0]
@@ -166,7 +167,7 @@ def test_codes_modifier_and_colour_come_from_labels_json(scan) -> None:
 
 def test_no_seg_when_no_labelled_voxel_is_listed(scan) -> None:
     dicom_dir, mask, _ = scan
-    assert nifti_to_seg.nifti_to_seg(mask, dicom_dir, {"7": {"name": "spleen"}}, "TOTALSEG test") is None
+    assert nifti_to_seg.nifti_to_seg(mask, dicom_dir, {"7": {"name": "spleen"}}, "NIFTI_SEG test") is None
 
 
 def test_white_is_full_lightness_and_neutral() -> None:
@@ -196,10 +197,10 @@ def _main(resource: Path, uri: str, monkeypatch: pytest.MonkeyPatch, fake: FakeX
     monkeypatch.setattr(nifti_to_seg, "Xnat", lambda *args: fake)
     for key in ("XNAT_HOST", "XNAT_USER", "XNAT_PASS"):
         monkeypatch.setenv(key, "x")
-    return nifti_to_seg.main(["-i", str(resource), "--resource-uri", uri, "--resource-label", "TOTALSEG"])
+    return nifti_to_seg.main(["-i", str(resource), "--resource-uri", uri, "--resource-label", "NIFTI_SEG"])
 
 
-URI = "/archive/experiments/XNAT_E00001/scans/1/resources/TOTALSEG"
+URI = "/archive/experiments/XNAT_E00001/scans/1/resources/NIFTI_SEG"
 
 
 def test_main_stores_one_collection_named_after_the_session(scan, tmp_path, monkeypatch) -> None:
@@ -212,7 +213,7 @@ def test_main_stores_one_collection_named_after_the_session(scan, tmp_path, monk
 
     assert _main(resource, URI, monkeypatch, fake) == 0
     ((project, experiment, label, seg),) = fake.stored
-    assert (project, experiment, label) == ("PROJ", "XNAT_E00001", "XNAT_E00001_TOTALSEG_1")
+    assert (project, experiment, label) == ("PROJ", "XNAT_E00001", "XNAT_E00001_NIFTI_SEG_1")
     assert pydicom.dcmread(pydicom.filebase.DicomBytesIO(seg)).Modality == "SEG"
 
 
@@ -235,5 +236,61 @@ def test_main_waits_for_a_nifti(tmp_path, monkeypatch) -> None:
 
 def test_main_leaves_resources_off_scans_alone(tmp_path, monkeypatch) -> None:
     fake = FakeXnat(tmp_path)
-    assert _main(tmp_path, "/archive/experiments/XNAT_E00001/resources/TOTALSEG", monkeypatch, fake) == 0
+    assert _main(tmp_path, "/archive/experiments/XNAT_E00001/resources/NIFTI_SEG", monkeypatch, fake) == 0
     assert fake.stored == []
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [[], {}, {"0": {"name": "x"}}, {"x": {"name": "x"}}, {"5": {}}, {"5": "liver"}],
+    ids=["list", "empty", "background", "non-numeric", "no-name", "bare-name"],
+)
+def test_main_fails_on_a_malformed_labels_json(scan, tmp_path, monkeypatch, labels) -> None:
+    _, mask, _ = scan
+    resource = tmp_path / "resource"
+    resource.mkdir()
+    shutil.copy(mask, resource / mask.name)
+    (resource / "labels.json").write_text(json.dumps(labels))
+    fake = FakeXnat(tmp_path)
+    assert _main(resource, URI, monkeypatch, fake) == 1
+    assert fake.stored == []
+
+
+def test_main_refuses_a_mask_over_the_voxel_cap(scan, tmp_path, monkeypatch) -> None:
+    _, mask, _ = scan
+    resource = tmp_path / "resource"
+    resource.mkdir()
+    shutil.copy(mask, resource / mask.name)
+    (resource / "labels.json").write_text(json.dumps(LABELS))
+    monkeypatch.setattr(nifti_to_seg, "MAX_VOXELS", ROWS * COLS * SLICES - 1)
+    fake = FakeXnat(tmp_path)
+    assert _main(resource, URI, monkeypatch, fake) == 1
+    assert fake.stored == []
+
+
+def test_a_2d_image_is_not_a_label_map(tmp_path) -> None:
+    flat = tmp_path / "flat.nii.gz"
+    sitk.WriteImage(sitk.Image([COLS, ROWS], sitk.sitkUInt8), str(flat))
+    with pytest.raises(nifti_to_seg.InputError):
+        nifti_to_seg.check_mask_size(flat)
+
+
+class _Answer:
+    def __init__(self, status: int, text: str = "") -> None:
+        self.status_code, self.text, self.ok = status, text, status < 400
+
+    def raise_for_status(self) -> None:
+        if not self.ok:
+            raise requests.HTTPError(response=self)
+
+
+@pytest.mark.parametrize(("exists", "raises"), [("true", False), ("false", True)])
+def test_a_lost_race_is_fine_only_when_the_collection_exists(monkeypatch, exists, raises) -> None:
+    xnat = nifti_to_seg.Xnat("http://xnat", "u", "p")
+    monkeypatch.setattr(xnat.session, "request", lambda *args, **kwargs: _Answer(500))
+    monkeypatch.setattr(xnat.session, "get", lambda *args, **kwargs: _Answer(200, exists))
+    if raises:
+        with pytest.raises(requests.HTTPError):
+            xnat.store_roi_collection("P", "E", "E_NIFTI_SEG_1", b"seg")
+    else:
+        xnat.store_roi_collection("P", "E", "E_NIFTI_SEG_1", b"seg")

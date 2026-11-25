@@ -106,7 +106,6 @@ The options in `app_files/config.json`:
 | `totalsegmentator.roi_subset` | a list of structure names to predict, or `null` for all 117. The tutorial predicts FLIP-SIDE's: the liver, the gluteal muscles, iliopsoas and autochthon, both sides |
 | `totalsegmentator.fastest` | `true` for the 6 mm model: quicker and coarser |
 | `totalsegmentator.device` | `gpu` or `cpu` |
-| `mask_resource` | the XNAT resource the masks are stored in, `TOTALSEG` by default |
 
 `app_files/meta.json` asks for one GPU at each trust.
 
@@ -129,14 +128,14 @@ To remove the exported job: `make clean` (deletes `./fl_job`).
 
 ## Where the masks go
 
-At a trust, each mask is stored on the scan it was predicted from, in the trust's XNAT, as `pred_*.nii.gz` in the
-`TOTALSEG` resource, followed by a `labels.json` naming each label (its SNOMED codes and colour, from TotalSegmentator's
-own maps). The masks never leave the trust.
+At a trust, `flip.add_mask` stores each mask on the scan it was predicted from, in the trust's XNAT, as
+`pred_*.nii.gz` in the `NIFTI_SEG` resource, with a `labels.json` naming each label (its SNOMED codes and colour, from
+TotalSegmentator's own maps). The masks never leave the trust.
 
-- **The OHIF viewer draws them.** XNAT's viewer shows DICOM segmentations, not NIfTI masks, so the trust's XNAT turns
-  each mask into one: the `nifti_to_seg` command (`trust/xnat/nifti-to-seg/`) runs when the resource holds both files,
-  and stores a DICOM-SEG ROI collection on the session, named `<session>_TOTALSEG_<scan>`. Import it from the viewer's
-  Masks panel.
+- **The OHIF viewer can draw them.** XNAT's viewer shows DICOM segmentations, not NIfTI masks. On a trust that sets
+  `NIFTI_TO_SEG=true` in its kit file, XNAT's `nifti_to_seg` command (`trust/xnat/nifti-to-seg/`) turns each mask into
+  a DICOM-SEG ROI collection on the session, named `<session>_NIFTI_SEG_<scan>`. Import it from the viewer's Masks
+  panel.
 - **A second run on the same project does not replace them.** FLIP's imaging service refuses a file name the resource
   already holds, so the first run's mask stays and the second run reports `masks_saved` as 0.
 

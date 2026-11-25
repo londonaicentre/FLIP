@@ -109,10 +109,10 @@ def _code(concept: dict | None) -> list[str] | None:
     return [concept["value"], concept["scheme"], concept["meaning"]] if concept else None
 
 
-def mask_labels(mask: nib.Nifti1Image, task: str) -> dict[str, dict]:
-    """The labels.json for a mask: each label's name, SNOMED codes and colour, from TotalSegmentator's own maps.
+def mask_labels(mask: nib.Nifti1Image, task: str) -> dict[int, dict]:
+    """What each label in the mask is: its name, SNOMED codes and colour, from TotalSegmentator's own maps.
 
-    XNAT's nifti_to_seg command reads it to turn the mask into a DICOM-SEG the OHIF viewer draws.
+    flip.add_mask writes it beside the mask as labels.json, for the trust's XNAT to draw the mask in OHIF.
     """
     from totalsegmentator.dicom_utils import load_color_mapping, load_snomed_mapping
     from totalsegmentator.map_to_binary import class_map
@@ -124,7 +124,7 @@ def mask_labels(mask: nib.Nifti1Image, task: str) -> dict[str, dict]:
         if not name:
             continue
         codes = snomed.get(name, {})
-        labels[str(int(value))] = {
+        labels[int(value)] = {
             "name": name,
             "category": _code(codes.get("property_category")),
             "type": _code(codes.get("property_type")),
@@ -135,35 +135,32 @@ def mask_labels(mask: nib.Nifti1Image, task: str) -> dict[str, dict]:
     return labels
 
 
-def save_mask(flip: FLIP, project_id: str, item: dict, mask: nib.Nifti1Image, resource: str, task: str) -> bool:
-    """Keep one mask, and its labels.json, where the images are. True when it was stored.
+def save_mask(flip: FLIP, project_id: str, item: dict, mask: nib.Nifti1Image, task: str) -> bool:
+    """Keep one mask where the images are. True when it was stored.
 
-    At a trust both go on the image's scan in XNAT, in ``resource``: the mask as ``pred_*.nii.gz``, then
-    labels.json. labels.json goes last because XNAT's nifti_to_seg command converts the resource to a
-    DICOM-SEG once it holds both. FLIP's imaging service takes files only from ``<images>/<net>/upload/``,
-    by a path relative to it, and refuses a file name the resource already holds, so a second run keeps the
-    first run's mask. A failure to store a mask is counted, not raised: the other studies still run.
+    At a trust, flip.add_mask stores it on the image's scan in XNAT, as ``pred_*.nii.gz`` with a labels.json
+    naming its labels, which the trust's XNAT can turn into a DICOM-SEG the OHIF viewer draws. FLIP's imaging
+    service takes files only from ``<images>/<net>/upload/``, by a path relative to it, and refuses a file name
+    the resource already holds, so a second run keeps the first run's mask. A failure to store a mask is
+    counted, not raised: the other studies still run.
     """
     relative = f"{item['accession_id']}/{item['image'].name.replace('input_', 'pred_', 1)}"
-    labels_relative = f"{item['accession_id']}/labels.json"
     try:
         if FlipConstants.LOCAL_DEV:
             # Simulator only: there is no XNAT, so the mask goes to a local folder when one is given.
             if not os.environ.get("DEV_MASKS_DIR"):
                 return False
-            root = Path(os.environ["DEV_MASKS_DIR"])
-        else:
-            root = Path(os.environ.get("IMAGES_DIR", "/app/data/images")) / os.environ["NET_ID"] / "upload"
-        path = root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        nib.save(mask, str(path))
-        (root / labels_relative).write_text(json.dumps(mask_labels(mask, task), indent=1))
-        if FlipConstants.LOCAL_DEV:
+            path = Path(os.environ["DEV_MASKS_DIR"]) / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            nib.save(mask, str(path))
             return True
         # .../scans/<id>-<description>/resources/NIFTI/files/input_*.nii.gz
         parts = item["image"].parts
         scan_id = parts[parts.index("scans") + 1].split("-")[0]
-        flip.add_resource(project_id, item["accession_id"], scan_id, resource, [relative, labels_relative])
+        path = Path(os.environ.get("IMAGES_DIR", "/app/data/images")) / os.environ["NET_ID"] / "upload" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        nib.save(mask, str(path))
+        flip.add_mask(project_id, item["accession_id"], scan_id, relative, mask_labels(mask, task))
         return True
     except Exception as err:
         logger.warning("The mask for %s was not saved: %s", item["accession_id"], err)
@@ -183,8 +180,7 @@ def infer(flip: FLIP, project_id: str, images: list[dict], config: dict) -> dict
             logger.warning("Study %d of %d failed: %s", index, len(images), err)
             continue
         predicted += 1
-        resource = config.get("mask_resource", "TOTALSEG")
-        saved += save_mask(flip, project_id, item, mask, resource, options.get("task", "total"))
+        saved += save_mask(flip, project_id, item, mask, options.get("task", "total"))
         logger.info("Study %d of %d done in %.0f s", index, len(images), time.monotonic() - started)
     if not predicted:
         raise RuntimeError(f"none of the {len(images)} studies could be predicted")

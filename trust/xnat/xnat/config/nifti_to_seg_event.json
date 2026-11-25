@@ -10,5 +10,5 @@
     "status": "",
     "payload-filter": ""
   },
-  "act-as-event-user": false
+  "act-as-event-user": true
 }

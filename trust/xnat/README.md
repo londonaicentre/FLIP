@@ -217,12 +217,16 @@ command that turns an OHIF DICOM-SEG assessor into NIfTI. Its version tag lives 
 `EXPORT_MASK_VERSION`, and `tests/test_export_mask_image_pin.py` holds
 [`xnat/config/export_mask_command.json`](xnat/config/export_mask_command.json) to it.
 
-Every trust also registers `ghcr.io/londonaicentre/xnat-nifti-to-seg` (built from [`nifti-to-seg/`](nifti-to-seg/),
-published by `docker_build_xnat_nifti_to_seg.yml`): the `nifti_to_seg` command that turns the NIfTI masks an FL job
-stores on a scan into a DICOM-SEG ROI collection the OHIF viewer draws (FLIP#1945). `configure-nifti-to-seg.sh`, run by
-`make xnat-configure`, subscribes it site-wide to `ResourceEvent` `UPDATED` on resources labelled `TOTALSEG`
-(`NIFTI_TO_SEG_RESOURCE`): imaging-api adds a job's files one request at a time, so the mask creates the resource and the
-`labels.json` the job writes last updates it, and the command does nothing until the resource holds both. Its version tag lives in the Dockerfile's `NIFTI_TO_SEG_VERSION`, held to
+Trusts that set `NIFTI_TO_SEG=true` in their kit file also register `ghcr.io/londonaicentre/xnat-nifti-to-seg` (built
+from [`nifti-to-seg/`](nifti-to-seg/), published by `docker_build_xnat_nifti_to_seg.yml`): the `nifti_to_seg` command
+that turns the label masks an FL job stores with `flip.add_mask` into DICOM-SEG ROI collections the OHIF viewer draws
+(FLIP#1945). `configure-nifti-to-seg.sh`, run by `make xnat-configure`, subscribes it site-wide to `ResourceEvent`
+`UPDATED` on resources labelled `NIFTI_SEG` (flip-utils' `MASK_RESOURCE`): imaging-api adds a job's files one request at
+a time, so the mask creates the resource and the `labels.json` written last updates it, and the command does nothing
+until the resource holds both. It runs as the user who caused the event, not the admin who registered it, and refuses
+oversized or malformed input before parsing it (`NIFTI_TO_SEG_MAX_BYTES`, `NIFTI_TO_SEG_MAX_VOXELS`, at most 1000
+labels), with a memory and CPU limit on the container. A job's uploads come from imaging-api's service account,
+which is a site administrator, so the command still holds that account's rights there. Its version tag lives in the Dockerfile's `NIFTI_TO_SEG_VERSION`, held to
 [`xnat/config/nifti_to_seg_command.json`](xnat/config/nifti_to_seg_command.json) by
 `tests/test_nifti_to_seg_image_pin.py`. Not yet on Kubernetes trusts: there the Container Service runs the command as a
 pod, which needs its own route to XNAT's REST API checked first.

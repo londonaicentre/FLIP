@@ -157,6 +157,11 @@ class _FlipConstantsProxy:
 FlipConstants = _FlipConstantsProxy()
 
 
+# The scan resource flip.add_mask stores label masks in. A trust that enables XNAT's nifti_to_seg command
+# (trust/xnat/nifti-to-seg/) turns what lands here into a DICOM-SEG the OHIF viewer draws (FLIP#1945).
+MASK_RESOURCE = "NIFTI_SEG"
+
+
 class ResourceType(StrEnum):
     """Types of imaging resources available in XNAT."""
 

@@ -16,15 +16,19 @@
 set -euo pipefail
 
 # Registers the nifti_to_seg container-service command and its event subscription (FLIP#1945).
+# Run only on trusts that set NIFTI_TO_SEG=true: `make xnat-configure` gates it (xnat-configure-nifti-to-seg
+# in trust/xnat/Makefile).
 #
-# An FL job (an `inference` job, say) stores its masks on a scan with flip.add_resource, as NIfTI,
+# An FL job (an `inference` job, say) stores its masks on a scan with flip.add_mask, as NIfTI,
 # which the XNAT OHIF viewer cannot draw. This command turns them into a DICOM-SEG ROI collection on
 # the session, which it can. The trigger is the resource itself. imaging-api uploads one file per
 # request, so the job's mask creates the resource (a ResourceEvent CREATED) and the labels.json it writes
 # last updates it (UPDATED): subscribing to UPDATED alone converts each mask once, with both files in
 # place. A CREATED subscription as well would launch a second container that races the first to the
 # same ROI collection, because labels.json has landed too by the time it starts. The subscription is site-wide
-# and filtered on the resource label, so any project's job can use it.
+# and filtered on the resource label, so any project's job can use it. It runs the command as the user who
+# caused the event (act-as-event-user), not as the admin running this script: imaging-api's service account
+# for a job's upload, the person themselves for a hand upload.
 #
 # Must run AFTER configure-dcm2niix.sh, which registers the Docker backend and verifies the
 # socket proxy.
@@ -35,23 +39,18 @@ set -euo pipefail
 #   TRUST_NETWORK_NAME  - Docker network the launched container joins; it must reach xnat-web,
 #                         because the converter downloads the scan's DICOM and uploads the SEG
 #                         through the XNAT REST API.
-# Optional:
-#   NIFTI_TO_SEG_RESOURCE - the resource label that triggers a conversion (default TOTALSEG, the
-#                           TotalSegmentator inference tutorial's mask_resource).
 
 XNAT_URL="http://xnat-web:8080" # internal to Docker network
 NIFTI_TO_SEG_NAME="nifti_to_seg"
-NIFTI_TO_SEG_RESOURCE="${NIFTI_TO_SEG_RESOURCE:-TOTALSEG}"
+# The resource flip.add_mask stores masks in: flip-utils' MASK_RESOURCE (held equal by
+# trust/xnat/tests/test_configure_nifti_to_seg.py).
+NIFTI_TO_SEG_RESOURCE="NIFTI_SEG"
 SUBSCRIPTION_PREFIX="Convert FL job masks to DICOM-SEG"
 STATUSES="UPDATED"
 
 if [[ -z "${TRUST_NETWORK_NAME:-}" ]]; then
   echo "ERROR: TRUST_NETWORK_NAME is not set. The nifti_to_seg container would start with no" >&2
   echo "       route to xnat-web and every conversion would fail." >&2
-  exit 1
-fi
-if ! [[ "$NIFTI_TO_SEG_RESOURCE" =~ ^[A-Za-z0-9_-]+$ ]]; then
-  echo "ERROR: NIFTI_TO_SEG_RESOURCE '$NIFTI_TO_SEG_RESOURCE' is not a plain resource label." >&2
   exit 1
 fi
 

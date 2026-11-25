@@ -36,8 +36,9 @@ import requests
 from pydantic import ValidationError
 from requests import HTTPError
 
-from flip.constants.flip_constants import XNAT_ARCHIVE_DIR, FlipConstants, ModelStatus, ResourceType
+from flip.constants.flip_constants import MASK_RESOURCE, XNAT_ARCHIVE_DIR, FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
+from flip.core.masks import labels_json
 from flip.exceptions import ResultsUploadError
 from flip.schemas import DEFAULT_X_AXIS_LABEL, FLLogEvent, TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
@@ -845,6 +846,27 @@ class FLIPStandardDev(FLIPBase):
         self.logger.info(
             "[DEV] Resource → add %s file(s) to accession=%s scan=%s resource=%s",
             len(files),
+            accession_id,
+            scan_id,
+            resource_id,
+        )
+
+    @override
+    def add_mask(
+        self,
+        project_id: str,
+        accession_id: str,
+        scan_id: str,
+        mask: str,
+        labels: dict[int, str | dict[str, Any]],
+        resource_id: str = MASK_RESOURCE,
+    ) -> None:
+        """Check the labels and log only in dev mode - nothing is written or uploaded."""
+        labels_json(labels)
+        self.logger.info(
+            "[DEV] Mask → %s with %s label(s) to accession=%s scan=%s resource=%s",
+            mask,
+            len(labels),
             accession_id,
             scan_id,
             resource_id,

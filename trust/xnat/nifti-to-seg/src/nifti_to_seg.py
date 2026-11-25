@@ -12,10 +12,11 @@
 """XNAT Container Service command: turn a scan's NIfTI label masks into DICOM-SEG ROI collections OHIF draws.
 
 Launched by the site-wide ResourceEvent subscription that configure-nifti-to-seg.sh registers, when an FL job
-stores masks on a scan with flip.add_resource (FLIP#1945). The Container Service mounts the resource at
---input and injects XNAT_HOST / XNAT_USER / XNAT_PASS for the user the command runs as. Every NIfTI in the
-resource becomes one DICOM-SEG on the scan's DICOM series, uploaded as an ROI collection, which is what the
-XNAT OHIF viewer lists. A resource without a labels.json is left alone: the labels are the job's to name.
+stores masks on a scan with flip.add_mask (FLIP#1945). The Container Service mounts the resource at
+--input and injects XNAT_HOST / XNAT_USER / XNAT_PASS for the user the command runs as (the one who caused
+the event). Every NIfTI in the resource becomes one DICOM-SEG on the scan's DICOM series, uploaded as an ROI
+collection, which is what the XNAT OHIF viewer lists. A resource without a labels.json is left alone: the
+labels are the job's to name. The inputs come from researcher code, so they are size-checked before parsing.
 
 labels.json maps each label value to its segment:
     {"5": {"name": "liver", "category": ["123037004", "SCT", "Anatomical Structure"],
@@ -44,6 +45,41 @@ VERSION = "1.0.0"
 # /experiments/<session>/scans/<scan>/resources/<id>: the Container Service's URI of a scan resource.
 SCAN_RESOURCE = re.compile(r"/experiments/(?P<experiment>[^/]+)/scans/(?P<scan>[^/]+)/resources/")
 TISSUE = ("85756007", "SCT", "Tissue")
+# Input caps, checked before anything is parsed. A CT label map of 512x512x2000 is ~0.5 billion voxels.
+MAX_NIFTI_BYTES = int(os.environ.get("NIFTI_TO_SEG_MAX_BYTES", 1 << 30))
+MAX_VOXELS = int(os.environ.get("NIFTI_TO_SEG_MAX_VOXELS", 600_000_000))
+MAX_LABELS_BYTES = 1 << 20
+MAX_LABELS = 1000
+
+
+class InputError(ValueError):
+    """The resource's files are not something this command converts."""
+
+
+def read_labels(path: Path) -> dict[str, dict]:
+    """labels.json, checked: at most MAX_LABELS entries, each keyed by a label value and carrying a name."""
+    if path.stat().st_size > MAX_LABELS_BYTES:
+        raise InputError(f"{path.name} is larger than {MAX_LABELS_BYTES} bytes")
+    labels = json.loads(path.read_text())
+    if not isinstance(labels, dict) or not 0 < len(labels) <= MAX_LABELS:
+        raise InputError(f"{path.name} must map 1 to {MAX_LABELS} label values to their segments")
+    for value, entry in labels.items():
+        if not value.isdigit() or not 1 <= int(value) <= 65535:
+            raise InputError(f"{path.name}: label value {value!r} is not an integer from 1 to 65535")
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str) or not entry["name"]:
+            raise InputError(f"{path.name}: label {value} has no name")
+    return labels
+
+
+def check_mask_size(path: Path) -> None:
+    """Refuse a mask too large to convert, from its file size and header alone."""
+    if path.stat().st_size > MAX_NIFTI_BYTES:
+        raise InputError(f"{path.name} is larger than {MAX_NIFTI_BYTES} bytes")
+    reader = sitk.ImageFileReader()
+    reader.SetFileName(str(path))
+    reader.ReadImageInformation()
+    if reader.GetDimension() != 3 or np.prod(reader.GetSize(), dtype=np.int64) > MAX_VOXELS:
+        raise InputError(f"{path.name} is not a 3D label map of at most {MAX_VOXELS} voxels")
 
 
 class Xnat:
@@ -71,14 +107,24 @@ class Xnat:
                 (target / Path(name).name).write_bytes(archive.read(name))
 
     def store_roi_collection(self, project: str, experiment: str, label: str, seg: bytes) -> None:
-        # The OHIF viewer plugin's ROI API, which registers the SEG as an assessor on the session.
-        self._request(
-            "PUT",
-            f"/xapi/roi/projects/{project}/sessions/{experiment}/collections/{label}",
-            params={"type": "SEG", "overwrite": "true"},
-            data=seg,
-            headers={"Content-Type": "application/octet-stream"},
-        )
+        """Store the SEG through the OHIF viewer plugin's ROI API, which registers it as an assessor on the session.
+
+        Two runs for one resource (a job adding more than two files to it) can race to the same collection, and
+        XNAT fails the loser. The collection is then in place, written from the same files, so that is not an error.
+        """
+        try:
+            self._request(
+                "PUT",
+                f"/xapi/roi/projects/{project}/sessions/{experiment}/collections/{label}",
+                params={"type": "SEG", "overwrite": "true"},
+                data=seg,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+        except requests.HTTPError as error:
+            exists = self.session.get(f"{self.host}/xapi/roi/projects/{project}/exists/{label}", timeout=60)
+            if not (exists.ok and exists.text.strip() == "true"):
+                raise
+            print(f"Collection {label} was stored by a concurrent run ({error.response.status_code}).")
 
 
 def rgb_to_dicom_lab(rgb: list[int]) -> list[int]:
@@ -173,11 +219,17 @@ def main(argv: list[str] | None = None) -> int:
     if not labels_file.is_file():
         print(f"Nothing to do: resource {args.resource_label} has no labels.json.")
         return 0
-    labels = json.loads(labels_file.read_text())
     masks = sorted(p for p in args.input.rglob("*") if p.name.endswith((".nii", ".nii.gz")))
     if not masks:
         print(f"Nothing to do: resource {args.resource_label} holds no NIfTI.")
         return 0
+    try:
+        labels = read_labels(labels_file)
+        for mask in masks:
+            check_mask_size(mask)
+    except (InputError, json.JSONDecodeError) as error:
+        print(f"Not converting resource {args.resource_label}: {error}", file=sys.stderr)
+        return 1
 
     experiment, scan = match["experiment"], match["scan"]
     xnat = Xnat(os.environ["XNAT_HOST"], os.environ["XNAT_USER"], os.environ["XNAT_PASS"])

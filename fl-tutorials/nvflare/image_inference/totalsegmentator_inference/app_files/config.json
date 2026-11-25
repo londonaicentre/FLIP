@@ -20,6 +20,5 @@
     ],
     "fastest": false,
     "device": "gpu"
-  },
-  "mask_resource": "TOTALSEG"
+  }
 }

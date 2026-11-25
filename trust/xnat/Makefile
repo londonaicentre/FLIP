@@ -102,6 +102,9 @@ include ../../deploy/instance.mk
 # same default in trust/Makefile. (The OHIF viewer plugin MONAI Label registers through ships
 # by default in every mode since #1243, so this no longer gates the plugin download.)
 MONAI_LABEL ?= false
+# Registers XNAT's nifti_to_seg command (FL job masks -> DICOM-SEG for the OHIF viewer); see
+# xnat-configure-nifti-to-seg. Set in the kit file.
+NIFTI_TO_SEG ?= false
 # Slot NUMBER the hub assigned this trust, read from the kit file — NOT a
 # substring of the CODE. Drives the stack name (xnat<N>) and overlay network
 # ($(INSTANCE_PREFIX)deploy_trust-network-<N>); trust/Makefile derives TRUST_NUM from
@@ -870,12 +873,13 @@ else
 	@echo "⏭️  MONAI_LABEL is not true — skipping export_mask registration."
 endif
 
-# nifti_to_seg (an FL job's NIfTI masks -> a DICOM-SEG the OHIF viewer draws, FLIP#1945) is registered on
-# every trust: its site-wide subscription fires only on a resource labelled TOTALSEG
-# (NIFTI_TO_SEG_RESOURCE), which only a job writes, so a trust that runs no such job never launches it.
-# Against an xnat-web image that predates it the script is absent; that skips, rather than failing the
-# bring-up, since nothing on such a trust depends on it.
+# nifti_to_seg (an FL job's NIfTI masks -> a DICOM-SEG the OHIF viewer draws, FLIP#1945) is registered
+# only when the kit sets NIFTI_TO_SEG=true, as export_mask is gated on MONAI_LABEL: it adds a converter
+# image and a site-wide subscription (on resources labelled NIFTI_SEG, which flip.add_mask writes) that a
+# trust running no such job never needs, and every bring-up and upgrade re-runs xnat-configure.
+# Against an xnat-web image that predates it the script is absent; that skips, rather than failing.
 xnat-configure-nifti-to-seg:
+ifeq ($(strip $(NIFTI_TO_SEG)),true)
 	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
 	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_PROJECT))); \
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found"; exit 1; }; \
@@ -885,6 +889,9 @@ xnat-configure-nifti-to-seg:
 		exit 0; fi; \
 	rm -f "$(XNAT_CONFIGURE_LOG_DIR)/configure-nifti-to-seg-$(XNAT_PROJECT).log"; \
 	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-nifti-to-seg.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-nifti-to-seg-$(XNAT_PROJECT).log'"
+else
+	@echo "⏭️  NIFTI_TO_SEG is not true — skipping nifti_to_seg registration."
+endif
 
 # Guard: XNAT and the trust core services must share one network. up-trust brings the trust
 # compose up before invoking us, so the trust's real attachment is observable — compare it
