@@ -166,9 +166,8 @@ The trust offers the FL scheduler only the GPUs it is configured with. A trust l
 the trust as "waiting for resources". To lend a cluster's GPUs one per job instead of holding one around the clock,
 use NVFLARE job pods (``flClient.nvflare.jobPods``, with ``maxGpus`` set to the GPUs FLIP may use); see the chart
 README's "NVFLARE job pods" section.
-With job pods, run ``make -C trust/deploy/helm sync-project-studies KUBE_CONTEXT=<ctx>`` after the first deploy,
-after each project is approved at this trust, and after every upgrade: until a project has its NVFLARE study entry,
-NVFLARE does not start its jobs here.
+With job pods, each project's job gets its NVFLARE study entry (its job image, and the mount of its own studies) when
+it starts at this trust: there is nothing to run after an approval or an upgrade.
 
 Extra network egress
 ====================
@@ -739,7 +738,7 @@ Troubleshooting
      - The API server does not listen on 443 and ``networkPolicies.apiServer`` is not set:
        :ref:`ts-k8s-api-server-egress`.
    * - Job pods on: a project's jobs never start at this trust
-     - The project has no NVFLARE study entry yet: run ``sync-project-studies`` (:ref:`ts-k8s-job-pods-no-study`).
+     - The trust cannot build the project's NVFLARE study entry (:ref:`ts-k8s-job-pods-no-study`).
    * - Flower SuperNode logs ``Permission denied`` on ``/certs`` or ``/keys``
      - The kit was staged for the wrong backend. Re-stage from the slot's own kit directory, or pass
        ``FL_BACKEND=flower``.
