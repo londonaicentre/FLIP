@@ -254,7 +254,7 @@ case "$TUTORIAL" in
     export DEV_DATAFRAME="$DATA_ROOT/ad_biomarkers/dataframe.csv"
     DATASET_TARGET="convert-adni-cohort ADNI_DIR=<your IDA tables>"
     ACCESS_CONTROLLED=1 ;;
-  3d_prostate_segmentation)
+  3d_prostate_segmentation|3d_prostate_nnunet_fingerprint)
     # The XNAT-export-shaped tree prepare_prostate_local_data.py writes from the PI-CAI download
     # (three scans per study, masks beside each), honouring NUM_CASES.
     export DEV_IMAGES_DIR="$DATA_ROOT/prostate/images"

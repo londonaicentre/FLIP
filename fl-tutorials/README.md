@@ -21,7 +21,7 @@ the model-file contract, run an application locally, or provide the inputs to th
 | Backend | Examples |
 | --- | --- |
 | [`nvflare/`](nvflare/) | Chest X-ray classification, Ark+ fine-tuning and the two Ark+ evaluations (baseline and multi-model), spleen segmentation and evaluation, [image generation](nvflare/image_generation/README.md) (brain MRI latent diffusion in two jobs, chest X-ray diffusion), EHR risk prediction (tabular/OMOP-only), biomarker causal discovery (`biomarker_causal_discovery`: federated bootstrapped FCI, tabular/OMOP-only) |
-| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, prostate zonal segmentation (PI-CAI, nnU-Net-planned), EHR risk prediction (tabular/OMOP-only), biomarker causal discovery (`biomarker_causal_discovery`: federated bootstrapped FCI, tabular/OMOP-only) |
+| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, prostate zonal segmentation (PI-CAI, nnU-Net-planned) and the federated nnU-Net fingerprint job that plans it (`3d_prostate_nnunet_fingerprint`), EHR risk prediction (tabular/OMOP-only), biomarker causal discovery (`biomarker_causal_discovery`: federated bootstrapped FCI, tabular/OMOP-only) |
 
 Both trees are laid out as `fl-tutorials/<backend>/<category>/<name>/` (#1500). A tutorial's two copies sit at the
 same relative path. The category names the task family (`image_classification`, `image_segmentation`,
@@ -62,6 +62,7 @@ Each example needs its data step first, in place of `download-xray-data` above:
 | Brain MRI latent diffusion (stage 1 autoencoder, stage 2 diffusion) | FLARE only | `download-brain-mri-msd-raw`, then `download-brain-mri-data NUM_CASES=20`; stage 2 also needs `make prepare-checkpoint` in its directory |
 | Chest X-ray diffusion | FLARE only | `download-arkplus-finetuning-data` (or `download-xray-data` for the 300-image code check) |
 | Prostate zonal segmentation | Flower only | `prepare-prostate-local-data NUM_CASES=12` (simulator) |
+| Federated nnU-Net fingerprint (prostate; CPU is enough) | Flower only | `prepare-prostate-local-data NUM_CASES=40` (simulator) |
 
 - **ADNI:** the data is access-controlled and never enters the repository. You apply for ADNI access yourself, and the converter builds the cohort from the tables you download. The tutorial README has the application and download steps.
 - **Ark+ checkpoint:** run `make download-raw-checkpoint` in the tutorial directory; see its README.

@@ -73,6 +73,12 @@ NIFTI_APPS = (
         keys=("image", "whole_gland", "pz_tz"),
     ),
     NiftiApp(
+        "flower_prostate_fingerprint",
+        "flower/image_segmentation/3d_prostate_nnunet_fingerprint/app/dataset.py",
+        factories=("build_loader",),
+        keys=("image", "whole_gland", "pz_tz"),
+    ),
+    NiftiApp(
         "nvflare_brain_mri_autoencoder",
         "nvflare/image_generation/brain_mri_ldm_stage1_autoencoder/app_files/transforms.py",
         factories=("get_brain_mri_transforms",),

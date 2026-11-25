@@ -64,7 +64,7 @@ grew out of — see [Reference (standalone) trainer](#reference-standalone-train
 │   └── config.toml                         # platform run-config overrides (rounds, lr, best-model)
 ├── calculate_dataset_fingerprint_segmentation.py   # nnU-Net fingerprint + planner (host-side, needs nnunetv2)
 ├── nnunet_train.py, nnunet_infer.py, network.py    # REFERENCE ONLY: the standalone trainer the app was ported from
-├── Makefile                                # make plan
+├── Makefile                                # make plan (FINGERPRINT=<model> plans from the federated fingerprint job)
 ├── pyproject.toml                          # flwr app config for the simulator (+ `planning` dependency group)
 ├── query.sql                               # the cohort: every PI-CAI MRI series, with ISUP / csPCa / PI-RADS
 └── README.md
@@ -187,6 +187,19 @@ all the patches of one study (`batch-size = 1`), so a study is 1 patch, or 2 if 
 slices. A step then needs about 12 GiB in bf16. A smaller budget gives a smaller patch, which needs
 a 2 × 2 grid to cover the crop and actually uses more memory (8–12 patches of `[16, 320, 320]` at
 8 GB, which no longer fits on a 24 GB GPU for the deepest studies).
+
+### When no host can read every site
+
+`make plan` above reads every site's images in one place, which only public data allows. For a real
+federation, run the [fingerprint job](../3d_prostate_nnunet_fingerprint/README.md) first: each site
+sends histograms of its own cases, the server's weighted average pools them, and
+
+```bash
+make plan FINGERPRINT=<that job's FL_global_model.pt> PLAN_GPU_MEMORY_GB=<the smallest GPU in the federation>
+```
+
+runs the same planner on the pooled result. On PI-CAI fold 0 it gives the network committed here
+(that tutorial's "Agreement with the pooled plan").
 
 **Provenance of the committed plan** (`app/nnUNetPlans_segmentation.json`). Record the route, cohort,
 budget and date here whenever the plan is regenerated.

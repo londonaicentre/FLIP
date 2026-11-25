@@ -25,13 +25,24 @@ PLAN_MODALITY ?= t2w
 PLAN_GPU_MEMORY_GB ?= 24
 PLAN_PROCESSES ?= 8
 PLAN_OUT := configs
+# `make plan FINGERPRINT=<model.pt>` plans from the pooled fingerprint a federated job produced
+# (../3d_prostate_nnunet_fingerprint) instead of from site folders: the route for a federation
+# whose sites cannot all be read from one host. Set PLAN_GPU_MEMORY_GB to its smallest GPU.
+FINGERPRINT ?=
 
 .PHONY: plan
 plan:
-	@for site in $(PLAN_SITES); do [ -d "$$site" ] || { echo "❌ site folder missing: $$site (run make -C fl-tutorials partition-prostate-data)"; exit 1; }; done
 	@mkdir -p $(PLAN_OUT)
+ifeq ($(FINGERPRINT),)
+	@for site in $(PLAN_SITES); do [ -d "$$site" ] || { echo "❌ site folder missing: $$site (run make -C fl-tutorials partition-prostate-data)"; exit 1; }; done
 	uv run --group planning python calculate_dataset_fingerprint_segmentation.py \
 		--site-dir $(PLAN_SITES) --output-dir $(PLAN_OUT) --modality $(PLAN_MODALITY) \
 		--num-processes $(PLAN_PROCESSES) --gpu-memory-GB $(PLAN_GPU_MEMORY_GB)
+else
+	uv run --group planning python ../3d_prostate_nnunet_fingerprint/export_fingerprint.py $(FINGERPRINT) \
+		--output $(PLAN_OUT)/pooled_fingerprint.json
+	uv run --group planning python calculate_dataset_fingerprint_segmentation.py \
+		--fingerprint $(PLAN_OUT)/pooled_fingerprint.json --output-dir $(PLAN_OUT) --gpu-memory-GB $(PLAN_GPU_MEMORY_GB)
+endif
 	@cp $(PLAN_OUT)/nnUNetPlans_segmentation.json app/nnUNetPlans_segmentation.json
 	@echo "✅ plan written to app/nnUNetPlans_segmentation.json — commit it, and record the sites/date in README.md"

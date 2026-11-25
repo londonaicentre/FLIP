@@ -95,7 +95,11 @@ a tabular one only ``flip.get_dataframe``). Nor does the job have to train: the 
 tutorial (:gh:`fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
 <fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery>`) federates a bootstrapped FCI (Fast
 Causal Inference) analysis through ``standard`` by choosing what the sites send so that the weighted average
-*is* the analysis.
+*is* the analysis. The federated nnU-Net fingerprint tutorial
+(:gh:`fl-tutorials/flower/image_segmentation/3d_prostate_nnunet_fingerprint
+<fl-tutorials/flower/image_segmentation/3d_prostate_nnunet_fingerprint>`) does the same for imaging: a first
+``standard`` job pools histograms of each site's scans, and the network that a second job trains is planned from
+the result.
 
 Evaluation metrics
 ==================
