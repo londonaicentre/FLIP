@@ -508,6 +508,11 @@ shares, the same one as the VM node self-test, against the deployed release:
        network allows is your decision. It is a sample of two hosts, not a proof. The chart's default egress policy
        allows 443 to any address, so expect the warning unless you have narrowed it
        (:gh:`NETWORK-POLICY.md <trust/deploy/helm/NETWORK-POLICY.md>`) or a firewall does.
+   * - no configuration drift
+     - Every object of the release matches the manifest Helm deployed (``kubectl diff``), and nothing but Helm and the
+       cluster's own controllers has set a field of them. A failure names each object, and for a field set by hand,
+       which field, by what and when. It never prints a value. ``kubectl rollout restart``, labels, annotations and
+       the kit keys ``patch-kit-secrets`` writes are not drift.
 
 A check that needs sample data the release does not load passes as *skipped*, with the reason:
 
@@ -520,8 +525,9 @@ own, the self-test sends one to XNAT and converts one series, as a cohort pull w
 
 - **No hub needed.** An unreachable hub or FL server is not a failure, unless you ask for the heartbeat row with
   ``HUB_CHECK=1`` on a release that is joined to a hub.
-- **No extra permissions.** Every check runs in a pod the release already has, so it adds no RBAC or NetworkPolicy
-  exception.
+- **No extra permissions in the cluster.** The checks run in pods the release already has, so the self-test adds no
+  RBAC or NetworkPolicy exception. The drift row is the exception to "in a pod": it reads the release with your own
+  ``helm`` and ``kubectl``, and ``kubectl diff`` needs the right to dry-run a patch of the release's objects.
 - **Conversion check.** A C-STORE alone shows XNAT received a study, not that this cluster can convert it. So the
   check starts one dcm2niix job and deletes its ``FLIPSELFTEST`` project when it ends, pass or fail. If other
   conversions are queued, its job waits for a slot under the cap (:ref:`ts-k8s-dcm2niix-jobs-cap`), so run the

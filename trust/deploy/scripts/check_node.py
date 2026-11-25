@@ -191,7 +191,9 @@ def check_drift(node: DockerNode, declared: dict[str, str]) -> Check:
             differences.append(f"{service}: its configuration differs from the compose files and kit")
         image = container.get("Config", {}).get("Image", "")
         ok, current = node._run(["docker", "image", "inspect", "--format", "{{.Id}}", image])
-        if ok and current.strip() != container.get("Image"):
+        if not ok:
+            differences.append(f"{service}: its image {image or '(unnamed)'} is no longer on this host to compare with")
+        elif current.strip() != container.get("Image"):
             differences.append(f"{service}: runs an older {image} than this host now holds")
     differences += [f"{service}: declared, and has no container" for service in sorted(set(declared) - seen)]
     return node_checks.drift(

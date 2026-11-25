@@ -326,7 +326,9 @@ APIs answer, OMOP and Orthanc hold data, Orthanc refuses a request without crede
 reaches XNAT and is converted, the FL client stays up, trust-api's heartbeat has reached the hub, and the hub API and
 FL server answer from the containers that use them. It also tries two hosts no trust needs (``example.com``,
 ``www.wikipedia.org``) from inside the stack: one that answers is a ⚠️ row naming it, for your network and governance
-teams, and never fails the check. It writes the result as a report under ``build/checks/``. The check never changes the outcome of the install: a service that is still starting shows
+teams, and never fails the check. Last, it compares the running containers with what the compose files and your kit
+describe now, and names any service that differs: run it from the checkout the stack was started from. XNAT's own
+stack is not part of that comparison. It writes the result as a report under ``build/checks/``. The check never changes the outcome of the install: a service that is still starting shows
 as a ❌ row, and you run the check again when it has settled:
 
 .. code-block:: shell

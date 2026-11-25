@@ -284,11 +284,15 @@ class DriftNode(FakeDocker):
 
 def test_drift_names_each_service_that_no_longer_matches() -> None:
     declared = {"trust-api": "h1", "orthanc": "h2", "omop-db": "h3"}
-    images = {"ghcr.io/x/trust-api:v1": "sha256:aaa", "ghcr.io/x/orthanc:v1": "sha256:bbb"}
+    images = {
+        "ghcr.io/x/trust-api:v1": "sha256:aaa",
+        "ghcr.io/x/orthanc:v1": "sha256:bbb",
+        "ghcr.io/x/omop-db:v1": "sha256:ccc",
+    }
     clean = {
         "t-trust-api-1": ("trust-api", "h1", "ghcr.io/x/trust-api:v1", "sha256:aaa"),
         "t-orthanc-1": ("orthanc", "h2", "ghcr.io/x/orthanc:v1", "sha256:bbb"),
-        "t-omop-db-1": ("omop-db", "h3", "ghcr.io/x/omop-db:v1", "sha256:ccc"),  # its image is gone from the host
+        "t-omop-db-1": ("omop-db", "h3", "ghcr.io/x/omop-db:v1", "sha256:ccc"),
         "t-run-9": ("oneoff", "zz", "ghcr.io/x/trust-api:v1", "sha256:aaa"),  # a `compose run` is nobody's drift
     }
     check = check_node.check_drift(DriftNode(clean, images), declared)
@@ -313,6 +317,14 @@ def test_drift_names_each_service_that_no_longer_matches() -> None:
         "omop-db: declared, and has no container",
     ):
         _assert(expected in said, expected, said)
+    lost = dict(images)
+    del lost["ghcr.io/x/orthanc:v1"]
+    said = check_node.check_drift(DriftNode(clean, lost), declared).detail
+    _assert(
+        "orthanc: its image ghcr.io/x/orthanc:v1 is no longer on this host to compare with" in said,
+        "an image that cannot be looked up is a difference, never a silent pass",
+        said,
+    )
 
 
 def test_drift_without_a_declared_configuration_could_not_run_and_only_reads() -> None:

@@ -1141,6 +1141,47 @@ def test_a_field_set_by_hand_that_helm_also_sets_is_not_an_addition():
     assert selftest.check_drift(FakeCluster(objects=[shared])).status.value == "pass"
 
 
+def test_a_real_kubectl_set_env_is_read_as_one_change():
+    """The shape the API server returns: the list item's own marker, then the two fields set under it."""
+    item = 'f:spec/f:template/f:spec/f:containers/k:{"name":"trust-api"}/f:env/k:{"name":"CHANGED_BY_HAND"}'
+    patched = _owned(
+        "Deployment",
+        "trust-api",
+        helm=[_ENV % "ENV"],
+        **{"kubectl-set": [f"{item}/.", f"{item}/f:name", f"{item}/f:value"]},
+    )
+    detail = selftest.check_drift(FakeCluster(objects=[patched])).detail
+    assert detail.startswith("Deployment trust-api: spec.template.spec.containers[trust-api].env[CHANGED_BY_HAND].name")
+    assert "and 1 more set by kubectl-set" in detail
+
+
+def test_a_volume_bound_by_k3s_is_the_clusters_own_bookkeeping():
+    """k3s writes as `k3s`, not `kube-controller-manager`: seen on a k3s trust, on every claim (FLIP#2096 review)."""
+    claim = _owned("PersistentVolumeClaim", "orthanc", helm=["f:spec/f:resources"], k3s=["f:spec/f:volumeName"])
+    assert selftest.check_drift(FakeCluster(objects=[claim])).status.value == "pass"
+
+
+def test_a_kit_key_written_by_patch_kit_secrets_is_not_drift_even_once_helm_no_longer_owns_it():
+    """On Helm 3 `kubectl patch` takes the key over for good; a differing value is still kubectl diff's to report."""
+    rotated = _owned("Secret", "trust-secrets", helm=["f:type"], **{"kubectl-patch": ["f:data/f:trust-api-key"]})
+    assert selftest.check_drift(FakeCluster(objects=[rotated])).status.value == "pass"
+
+
+def test_an_object_deleted_by_hand_is_drift_naming_it_not_a_check_that_could_not_run():
+    gone = f"diff -u -N {_LIVE}{_POLICY} {_MERGED}{_POLICY}\n+kind: NetworkPolicy\n"
+    check = selftest.check_drift(FakeCluster(diff=(1, gone)))
+    assert check.status.value == "fail"
+    assert "NetworkPolicy trust-release-flip-trust-egress differs" in check.detail
+
+
+def test_objects_without_field_ownership_could_not_be_compared():
+    bare = {"kind": "ConfigMap", "metadata": {"name": "governance"}}
+    check = selftest.trust_checks.run(
+        "no configuration drift", lambda: selftest.check_drift(FakeCluster(objects=[bare]))
+    )
+    assert check.status.value == "error"
+
+
 def test_a_restart_or_a_label_is_not_drift():
     restart = "f:spec/f:template/f:metadata/f:annotations/f:kubectl.kubernetes.io~1restartedAt"
     restarted = _owned("Deployment", "trust-api", helm=[_ENV % "ENV"], **{"kubectl-rollout": [restart]})
@@ -1192,7 +1233,7 @@ def test_the_comparison_only_reads(monkeypatch):
         ["get", "manifest", "rel"],
         ["diff", "-f", "-"],
         ["get", "manifest", "rel"],
-        ["get", "-f", "-", "-o", "json", "--show-managed-fields"],
+        ["get", "-f", "-", "-o", "json", "--show-managed-fields", "--ignore-not-found"],
     ]
 
 
