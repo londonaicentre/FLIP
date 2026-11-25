@@ -60,7 +60,7 @@ the stream and asks the SuperLink (`flwr ls`) for the terminal status, because `
 returns 0 whatever became of the run — and it refuses to start while a local SuperLink it did not
 start still listens on `127.0.0.1:${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}` (#1249): `flwr run . local`
 reuses whatever is there, so a SuperLink another worktree left behind would run the app in *that*
-checkout's environment with nothing in the output saying so. The stale-process cleanup deliberately
+checkout's environment with nothing in the output saying so. Each checkout also keeps its own `FLWR_HOME` (`<checkout>/.flwr`, gitignored, #2069): flwr keeps the local SuperLink's database there, and shared, a SuperLink another checkout started on *another* port would pick this checkout's run up from it. The stale-process cleanup deliberately
 spares other checkouts (it matches this checkout's `flip-utils/` venv path, so the main checkout never
 matches a worktree nested under it), so the fix is to stop the named pid (or run from that checkout);
 an `ss` that cannot probe the port counts as taken, never as free. The tabular EHR tutorial maps
