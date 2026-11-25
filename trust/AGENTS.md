@@ -47,8 +47,9 @@ that `trust/deploy/scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distrib
 `flip-api/src/flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
 `FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_FL_TAG`,
-`NLB_SUBDOMAIN`, `FL_SERVER_PORT`, `FL_EDGE_PORT`). No registry: a deployed trust pulls from `ghcr.io/londonaicentre/`
-whatever an older kit says, as an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).
+`NLB_SUBDOMAIN`, `FL_SERVER_PORT`, `FL_EDGE_PORT`). The site-local `FL_EDGE_PORT_OVERRIDE` (never written by hub
+tooling) beats `FL_EDGE_PORT` for the port the trust dials (FLIP#2051). No registry: a deployed trust pulls from
+`ghcr.io/londonaicentre/` whatever an older kit says, as an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).
 `UPLOADED_FEDERATED_DATA_BUCKET` is hub-only (flip-api's; no FL image reads
 it); `DOCKER_FL_CLIENT_NAME` is derived from `FL_BACKEND` by
 `deploy/fl_backend.mk` (trust/Makefile includes it).
@@ -271,7 +272,12 @@ passes it) to create the read-only role on that first start. Adding a dataset me
 both agree before packaging). `prostate_project` (PI-CAI fold 0, 300 bpMRI studies, one center per
 `source_trust` — ZGT → 1, PCNN → 2, RUMC → 3 waiting for a third trust — in
 `fl-tutorials/datasets/prostate/`) publishes both halves but is not in the default `PROJECTS`: seed it
-with `make -C trust seed-trusts PROJECTS=prostate_project`; its masks reach a project via
+with `make -C trust seed-trusts PROJECTS=prostate_project`. `arkplus_project` (FLIP#2084, the Ark+
+tutorials' synthetic chest X-rays, `fl-tutorials/datasets/arkplus/`) is opt-in the same way, its
+`source_trust` the dataset's own site — `site1` → 1, `site2` → 2, two cohorts from different generators;
+`Chest X-ray` / `Chest X-ray (holdout)` in `procedure_source_value` separate training from evaluation rows. A trust the
+pre-#2084 loader filled (AICP, BDMS) first runs `make -C trust remove-stray-studies KIT=<CODE> PROJECTS=arkplus_project`
+(`DRY_RUN=1` counts): those rows carry other person ids, so the seed's clean never finds them. Prostate's masks reach a project via
 `upload_prostate_labels_to_xnat.py` (`make -C fl-tutorials upload-prostate-labels`), and
 `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` drives cohort → pull → enrichment → training of the
 `flower/image_segmentation/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate

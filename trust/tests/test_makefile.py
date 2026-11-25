@@ -172,7 +172,7 @@ class SampleDataOff(unittest.TestCase):
             assert "Sample data is off for SCR" in out, f"{line}:\n{out}"
 
     def test_the_explicit_seed_verbs_refuse_a_trust_with_the_sample_data_off_unless_forced(self):
-        for target in ("seed", "seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+        for target in ("seed", "seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc", "remove-stray-studies"):
             result = run_target(target, kit=self.KIT_OFF)
             assert result.returncode != 0, f"{target} ran with the sample data off:\n{result.stdout}"
             assert "has TRUST_DATA_SEED=false" in result.stdout, result.stdout + result.stderr
@@ -183,7 +183,7 @@ class SampleDataOff(unittest.TestCase):
 
     def test_the_seed_verbs_refuse_what_they_cannot_read_as_true_or_false(self):
         """A mistyped value, or a kit file that is not there, must not read as "sample data on"."""
-        for target in ("seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+        for target in ("seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc", "remove-stray-studies"):
             mistyped = run_target(target, kit=KIT + "TRUST_DATA_SEED=False\n")
             assert mistyped.returncode != 0, f"{target} ran on TRUST_DATA_SEED=False:\n{mistyped.stdout}"
             assert "TRUST_DATA_SEED must be true or false" in mistyped.stdout, mistyped.stdout + mistyped.stderr
@@ -201,8 +201,8 @@ class SampleDataOff(unittest.TestCase):
         assert "seed-omop TRUST_INDEX" not in result.stdout, result.stdout
 
     def test_a_dry_run_passes_only_where_it_writes_nothing(self):
-        """seed-orthanc / unseed-orthanc honour DRY_RUN=1; seed-omop / unseed-omop would ignore it and write."""
-        for target in ("seed-orthanc", "unseed-orthanc"):
+        """seed-orthanc, unseed-orthanc, remove-stray-studies honour DRY_RUN=1; seed-omop, unseed-omop write."""
+        for target in ("seed-orthanc", "unseed-orthanc", "remove-stray-studies"):
             result = run_target(target, "DRY_RUN=1", kit=self.KIT_OFF)
             assert "has TRUST_DATA_SEED=false" not in result.stdout, f"{target}:\n{result.stdout}"
             assert f"{target} TRUST_INDEX" in result.stdout, f"{target} never ran:\n{result.stdout}{result.stderr}"
@@ -220,6 +220,39 @@ class SampleDataOff(unittest.TestCase):
 
 
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
+
+
+class SyntheaEhr(unittest.TestCase):
+    """load-synthea-ehr reads the trust's kit like the seed verbs (FLIP#2107): its OMOP login, port and half."""
+
+    KIT_DB = KIT + "OMOP_POSTGRES_USER=site_user\nOMOP_POSTGRES_PASSWORD=rotated pw\nOMOP_POSTGRES_DB=site_db\n"
+
+    def test_a_kit_hands_the_loader_its_login_port_and_slot(self):
+        """Without them the loader logs in with the dev template's password and loads half 1 on every trust."""
+        out = dry_run("load-synthea-ehr", kit=self.KIT_DB)
+        assert "load-synthea-ehr TRUST_INDEX=9 OMOP_DB_PORT=5499" in out, out
+        login = "OMOP_POSTGRES_USER=site_user OMOP_POSTGRES_PASSWORD='rotated pw'"  # pragma: allowlist secret
+        assert login in out, out
+        assert "OMOP_POSTGRES_DB=site_db" in out, out
+
+    def test_the_half_follows_source_trust_and_an_explicit_index_wins(self):
+        assert "TRUST_INDEX=1 " in dry_run("load-synthea-ehr", "SOURCE_TRUST=1", kit=self.KIT_DB)
+        assert "TRUST_INDEX=2 " in dry_run("load-synthea-ehr", "SOURCE_TRUST=1", "TRUST_INDEX=2", kit=self.KIT_DB)
+
+    def test_without_a_kit_the_dev_usage_is_unchanged(self):
+        """The documented dev call passes the index and port by hand and needs no kit file."""
+        out = dry_run("load-synthea-ehr", "KIT=", "TRUST_INDEX=2", "OMOP_DB_PORT=5436")
+        assert "load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436" in out, out
+        assert "OMOP_POSTGRES_" not in out, out
+        assert "TRUST_DATA_SEED" not in out, out
+
+    def test_a_trust_with_the_sample_data_off_is_refused_unless_forced(self):
+        """A working login could otherwise put synthetic persons into a trust's own data."""
+        result = run_target("load-synthea-ehr", kit=self.KIT_DB + "TRUST_DATA_SEED=false\n")
+        assert result.returncode != 0, result.stdout
+        assert "has TRUST_DATA_SEED=false" in result.stdout, result.stdout + result.stderr
+        out = dry_run("load-synthea-ehr", "FORCE_SEED=1", kit=self.KIT_DB + "TRUST_DATA_SEED=false\n")
+        assert "load-synthea-ehr TRUST_INDEX=9" in out, out
 
 
 class MonaiLabelArchive(unittest.TestCase):

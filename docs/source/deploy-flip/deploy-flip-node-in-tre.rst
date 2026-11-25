@@ -300,9 +300,9 @@ reading AzureTRE v0.29.1 (September 2026) and cover what differs from the requir
   Docker from cloud-init on Ubuntu 22.04; a workspace service of its own is the longer-lived option. FLIP's Azure
   VM Terraform (:doc:`deploy-flip-node-azure`) does not drop in, because it creates its own network and kit drop.
 - **Open the FL port at both layers.** A workspace's network security group allows outbound internet traffic on
-  443 only, so the kit's FL port (8002 on production, 8003 on staging) needs an outbound NSG rule as well as a
-  firewall rule. The firewall runs no DNS proxy, so that rule names the FL endpoint's fixed IP addresses, not its
-  hostname.
+  443 only. That covers the production FL port (443); any other (8003 on staging, or an ``FL_EDGE_PORT_OVERRIDE``)
+  needs an outbound NSG rule. Either way the FL endpoint needs a firewall rule. The firewall runs no DNS proxy, so
+  that rule names the FL endpoint's fixed IP addresses, not its hostname.
 - **Allow the HTTPS hosts in the firewall.** Add the 443 hosts from :ref:`deploy-trust-node-network` as rules in
   the template's ``pipeline`` section (AzureTRE's
   `firewall rules guide <https://github.com/microsoft/AzureTRE/blob/main/docs/tre-workspace-authors/firewall-rules.md>`_).

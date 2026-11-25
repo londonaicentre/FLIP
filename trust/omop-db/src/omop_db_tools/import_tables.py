@@ -43,6 +43,7 @@ from omop_db_tools.dataset import (
     DEFAULT_PROJECTS,
     OPTIONAL_TABLES,
     PARTITION_MODES,
+    TEXT_COLUMNS,
     split_for_trust,
 )
 
@@ -166,6 +167,54 @@ def remove_projects(engine: Engine, data_dir: Path, projects: list[str]) -> None
     print("✅ Unseeded: " + ", ".join(projects))
 
 
+def stray_person_ids(conn: Connection, data_dir: Path, project: str) -> list[int]:
+    """Persons in the database holding one of ``project``'s studies under a ``person_id`` its tables do not give.
+
+    Such rows were written by something other than the seed — the pre-FLIP#2084 Ark+ loader, which
+    allocated ``MAX(id) + 1`` — so the seed's clean, keyed by the project's own person ids, never finds them.
+
+    Args:
+        conn (Connection): An open transaction on the target database.
+        data_dir (Path): Directory holding the canonical <project>/<table>.csv files.
+        project (str): Project name.
+
+    Returns:
+        list[int]: The stray persons' ids, ascending.
+    """
+    accessions = pd.read_csv(data_dir / project / "image_occurrence.csv", usecols=["accession_id"], dtype=TEXT_COLUMNS)
+    rows = conn.execute(
+        text(
+            "SELECT DISTINCT person_id FROM omop.image_occurrence "
+            "WHERE accession_id = ANY(:accessions) AND NOT person_id = ANY(:ours) ORDER BY person_id;"
+        ),
+        {"accessions": accessions["accession_id"].tolist(), "ours": project_person_ids(data_dir, project)},
+    )
+    return [int(row[0]) for row in rows]
+
+
+def remove_strays(engine: Engine, data_dir: Path, projects: list[str], dry_run: bool = False) -> None:
+    """Delete every row of the persons ``stray_person_ids`` finds, in one transaction; ``dry_run`` only counts.
+
+    For a trust that holds mock data only: a stray person is deleted from every mock-data table, as
+    ``clean_project`` deletes a project's own.
+
+    Raises:
+        FileNotFoundError: If a project's ``person.csv`` or ``image_occurrence.csv`` is absent — checked
+            before anything is deleted.
+    """
+    for project in projects:
+        for table_name in ("person", "image_occurrence"):
+            if not (data_dir / project / f"{table_name}.csv").is_file():
+                raise FileNotFoundError(f"Cannot look for strays of {project}: {table_name}.csv not in {data_dir}")
+    with engine.begin() as conn:
+        for project in projects:
+            person_ids = stray_person_ids(conn, data_dir, project)
+            print(f"🔎 {project}: {len(person_ids)} person(s) hold its studies under ids its tables do not give")
+            if person_ids and not dry_run:
+                clean_project(conn, person_ids)
+    print("✅ Dry run: nothing deleted" if dry_run else "✅ Strays removed: " + ", ".join(projects))
+
+
 def load_project(
     engine: Engine,
     data_dir: Path,
@@ -202,7 +251,7 @@ def load_project(
                     continue
                 raise FileNotFoundError(f"Required table CSV not found: {csv_file_path}")
 
-            full = pd.read_csv(csv_file_path)
+            full = pd.read_csv(csv_file_path, dtype=TEXT_COLUMNS)
             if full.empty and table_name not in OPTIONAL_TABLES:
                 raise ValueError(f"{csv_file_path} contains headers but no rows — refusing to load a truncated table")
             df = split_for_trust(full, num_trusts, trust_index, partition)
@@ -250,10 +299,20 @@ def main(argv: list[str] | None = None) -> None:
         "cut those tables describe) and load nothing — how a re-cut project's previous rows leave a running "
         "trust without touching any other project.",
     )
+    parser.add_argument(
+        "--remove-strays",
+        action="store_true",
+        help="Delete the persons holding the listed projects' studies (by accession_id) under person_ids the "
+        "projects' tables do not give — rows another loader wrote — and load nothing (FLIP#2084).",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="With --remove-strays: count, delete nothing.")
     args = parser.parse_args(argv)
 
     engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
 
+    if args.remove_strays:
+        remove_strays(engine, args.data_dir, args.projects, dry_run=args.dry_run)
+        return
     if args.remove_only:
         remove_projects(engine, args.data_dir, args.projects)
         return

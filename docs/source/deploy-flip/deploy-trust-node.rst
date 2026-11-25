@@ -219,7 +219,7 @@ different load balancers, so allow both. This is everything a node connects out 
      - Task polling, heartbeats and results (HTTPS, API key)
      - Yes, Oct 2026
    * - The hub's FL endpoint, for example ``fl.app.flip.aicentre.co.uk``
-     - Your kit's FL port: 8002 on production, 8003 on staging
+     - Your kit's FL port: 443 on production (8002 stays open for trusts set up before), 8003 on staging
      - Always
      - Federated training, over TLS. **Exempt it from TLS inspection**: a proxy that re-signs the traffic
        breaks the client's certificate check. It has a fixed IP, so a firewall that filters by name only in HTTP
@@ -240,25 +240,31 @@ different load balancers, so allow both. This is everything a node connects out 
      - FLIP's sample trust data, which the first install loads by default. Downloads redirect to ``*.hf.co``, so
        ``huggingface.co`` alone fails. Not needed with ``TRUST_DATA_SEED=false`` in the kit, unless you load the
        DICOM vocabulary (:ref:`onprem-core-vocabulary`).
-     - Not yet
+     - Yes, Nov 2026
    * - ``pypi.org``, ``files.pythonhosted.org``
      - 443
      - First install
      - The Python packages the sample-data loaders run. The same exceptions apply as for Hugging Face; a Kubernetes
        deployment host also fetches PyYAML for ``sync-kit``
-     - Not yet
+     - Yes, Nov 2026
    * - Ubuntu's package mirrors, or your own
      - 80
      - Provisioning and updates
      - OS packages and their security updates. ``esm.ubuntu.com`` is not expected to be needed
-     - Not yet
+     - Yes, Nov 2026
    * - ``download.docker.com``
      - 443
      - Provisioning and updates
      - Docker Engine and its updates, where FLIP's provisioning installs it
-     - Not yet
+     - Yes, Nov 2026
 
-*Measured* means a node ran behind a firewall that denied everything not listed (an Azure node, October 2026).
+*Measured* means a node ran behind a firewall that denied everything not listed: an Azure node in October 2026,
+and an EC2 node in the hub's own Landing Zone Accelerator account in November 2026, which installed from scratch and
+completed an FL round. That firewall also dropped the host's own background calls, none of which a
+node needs: Ubuntu's (``api.snapcraft.io``, ``motd.ubuntu.com``, ``changelogs.ubuntu.com``, ``entropy.ubuntu.com``,
+``contracts.canonical.com``, ``cdn.fwupd.org``) and the EC2 Instance Connect agent's. Expect them in your
+firewall's log, and leave them blocked. Grafana and XNAT's JavaMelody also called home in that run; the trust
+now turns both off.
 
 A registry allowlist works by host name, so it admits every public package on GHCR, not only FLIP's. What the
 node runs is fixed by the image references instead: FLIP's images by release tag, the third-party ones by digest
@@ -276,13 +282,15 @@ Check it from the node, with the FL endpoint and port from the kit:
 
    openssl s_client -connect <FL endpoint>:<FL port> -servername <FL endpoint> </dev/null
 
-- A server certificate chain comes back: the path is open. The handshake then fails for want of a client
-  certificate, which is expected outside the kit.
-- ``Connection timed out`` or ``Connection refused``: a blocked port, or no route. The usual firewall rule.
+- A server certificate chain comes back: the path is open. On production
+  (``fl.app.flip.aicentre.co.uk:443``) it is ``CN = fl.app.flip.aicentre.co.uk``, issued by ``CN = net-1``. The
+  handshake then fails for want of a client certificate, which is expected outside the kit.
+- ``Connection timed out`` or ``Connection refused``: a blocked port, no route, or an address the hub's FL edge has
+  not admitted yet.
 - The connection is reset with nothing read back after the TLS hello: an application-aware firewall rejecting TLS
-  on a non-default port. The network team must allow the ``ssl`` application to this endpoint on this port, or the
-  site needs a site-to-site VPN (:ref:`site-to-site-vpn`). :ref:`readiness-network` lists the questions that settle
-  this before the node is built.
+  on a non-default port. Dial 443, the production default. A trust that must dial another port needs the network
+  team to allow the ``ssl`` application on it. The :ref:`pre-onboarding check <readiness-fl-port-check>` shows
+  whether a site's firewall does this, before its address is admitted.
 
 The deploy commands always pull, so the registries are needed in a TRE too (see :doc:`deploy-flip-node-in-tre`). Some
 platforms add destinations of their own: the Kubernetes chart (:doc:`deploy-flip-node-kubernetes`), the Azure VM's

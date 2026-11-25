@@ -97,8 +97,9 @@ images that exist.
   (`trust-release-flip-trust-secrets`) over kubectl's TLS channel — never to disk — and writes the
   secret-free override `k8s-trust-<CODE>.yaml` (hub URL, FL backend, AWS region, `flClient.kitHostPath`
   from the kit's `FL_KIT_DIR`). It stamps a newly created Secret with Helm ownership metadata so the
-  first install can adopt it, and regenerates the FL-server egress port (and, for Flower,
-  `flClient.flower.superlink`) on every run so upgrades never lose them. `sync-kit-override` writes only
+  first install can adopt it, and regenerates the FL-server egress port (and `flClient.nvflare.serverPort` or,
+  for Flower, `flClient.flower.superlink`) on every run so upgrades never lose them. The port is the kit's
+  `FL_EDGE_PORT_OVERRIDE`, else `FL_EDGE_PORT`, else `FL_SERVER_PORT`. `sync-kit-override` writes only
   the override; `patch-kit-secrets` only patches the Secret and restarts the three API deployments.
 - **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy-release` and `xnat-init` with that
   override, then `patch-kit-secrets` — even when a step failed, so trust-api never polls with a stale key
@@ -238,7 +239,7 @@ from `dicom.log` and the container log alike. See
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `false` | Whether the chart creates the namespace (with the `podSecurity.*` labels). `make deploy` creates it with kubectl instead, without those labels |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20261019` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
+| `trustData.version` | `20261125` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
 | `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |

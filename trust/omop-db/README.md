@@ -341,6 +341,7 @@ regenerating the matching imaging data).
 - `seed-omop` uses the default `--clean projects`. `CLEAN=all` overrides it. You need that once when a project is re-cut and all its person ids change (e.g. spleen at the FLIP#1221 cut), because `projects` deletes by the *new* ids and would leave the old rows behind.
 - `seed-omop` fetches the published tables at the pinned tag (`fetch-dataset --projects $(PROJECTS)`). `CANONICAL_DIR=<dir>` loads a local canonical tree instead (`<dir>/<project>/<table>.csv`, what `omop_db_tools.dataset build` writes). This is how a project is proven on a running trust before its data version is tagged (`make -C fl-tutorials seed-brain-mri KIT=<CODE>`).
 - `unseed-omop` (`import_tables --remove-only`) is the surgical reverse: it deletes the listed projects' rows by the person ids in the given tables and loads nothing. Point it at the cut the trust actually holds, e.g. `HF_TRUST_DATA_REVISION=20260911`.
+- `remove-stray-studies` (`import_tables --remove-strays`) deletes the persons holding the listed projects' studies (matched by `accession_id`) under person ids the projects' tables do not give, and loads nothing. Those are rows another loader wrote, so no person-id clean finds them: the Ark+ rows the pre-FLIP#2084 loader put on AICP and BDMS. `DRY_RUN=1` only counts. Run it from the trust: `make -C trust remove-stray-studies KIT=<CODE> PROJECTS=arkplus_project DRY_RUN=1`.
 
 ### Publishing the image and the canonical tables
 
