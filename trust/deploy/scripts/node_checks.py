@@ -158,23 +158,38 @@ def check_health(node: Node, component: str) -> Check:
     )
 
 
-def check_hub_heartbeat(node: Node) -> Check:
-    """trust-api's last heartbeat reached the hub, and the hub holds the same key (its /health says both)."""
+def check_hub_heartbeat(
+    node: Node, wait_seconds: int = 90, sleep: Callable[[float], None] = time.sleep, poll: int = 10
+) -> Check:
+    """trust-api's last heartbeat reached the hub, and the hub holds the same key (its /health says both).
+
+    trust-api forgets the hub's answer whenever a heartbeat fails or is refused, so "no answer on record" after a
+    wait is a failure: a wrong API key looks exactly like that. Just after bring-up it only means "not yet", hence
+    the wait.
+    """
     name = "hub heartbeat"
     pod = node.pod("trust-api")
     if not pod:
         return failed(name, "no running trust-api container")
     port = node.container_port(pod) or 8000
-    ok, body = node.exec(
-        pod,
+    script = (
         'python3 -c "import urllib.request; '
-        f"print(urllib.request.urlopen('http://127.0.0.1:{port}/health', timeout=10).read().decode())\"",
+        f"print(urllib.request.urlopen('http://127.0.0.1:{port}/health', timeout=10).read().decode())\""
     )
-    try:
-        health = json.loads(body) if ok else {}
-    except json.JSONDecodeError:
-        health = {}
-    match = health.get("hub_key_match") if isinstance(health, dict) else None
+    waited = 0
+    while True:
+        ok, body = node.exec(pod, script)
+        try:
+            health = json.loads(body) if ok else None
+        except json.JSONDecodeError:
+            health = None
+        if not isinstance(health, dict):
+            raise RuntimeError(f"trust-api did not answer its own /health ({body[:120]})")
+        match = health.get("hub_key_match")
+        if match is not None or waited >= wait_seconds:
+            break
+        sleep(poll)
+        waited += poll
     if match is True:
         return passed(
             name, f"the hub answered (it runs {health.get('hub_version') or 'an unreported release'}), key matches"
@@ -183,7 +198,11 @@ def check_hub_heartbeat(node: Node) -> Check:
         return failed(
             name, "the hub answered, but its key differs from this trust's: refresh the kit's hub-shared block"
         )
-    return Check(name, trust_checks.Status.WARN, "no heartbeat reply yet; trust-api polls about once a minute")
+    return failed(
+        name,
+        f"trust-api has no accepted heartbeat on record after {waited}s: its last one failed or was refused "
+        "(a wrong TRUST_API_KEY looks like this). Its log says which",
+    )
 
 
 def probe(node: Node, pod: str, targets: list[str]) -> dict[str, str]:
@@ -281,34 +300,35 @@ def check_omop_seeded(node: Node) -> Check:
     return failed("omop seeded", f"omop.person is empty or unreadable ({count[:120]})")
 
 
-def check_orthanc(node: Node) -> tuple[Check, Check]:
-    """Orthanc holds studies, and refuses a request without credentials.
+def check_orthanc(node: Node) -> tuple[Check, Check, bool]:
+    """Orthanc holds studies, and refuses a request without credentials; and whether it answered that it is empty.
 
-    Both asked from the xnat-web pod, which the chart's NetworkPolicies already let reach Orthanc
-    (it is the C-STORE receiver smoke-cstore drives from there).
+    Both asked from the xnat-web container, which can reach Orthanc on every platform (it is the C-STORE receiver).
+    The third value is true only when Orthanc itself said it holds no instance: a count that could not be read is
+    a failure of this check, never an empty Orthanc.
     """
     pod = node.pod("xnat-web")
     if not pod:
-        missing = "no running xnat-web pod to ask Orthanc from"
-        return failed("orthanc seeded", missing), failed("orthanc requires auth", missing)
+        missing = "no running xnat-web container to ask Orthanc from"
+        return failed("orthanc seeded", missing), failed("orthanc requires auth", missing), False
 
     creds = node.orthanc_credentials()
+    empty = False
     if not creds:
-        seeded = failed("orthanc seeded", "could not read an Orthanc user from its Secret")
+        seeded = failed("orthanc seeded", "could not read an Orthanc user from its configuration")
     else:
-        # The credential travels on stdin, never in argv, where the pod's process list would show it.
-        ok, out = node.exec(
-            pod, f'read -r creds; exec curl -fsS --max-time 30 -u "$creds" {ORTHANC_URL}/statistics', stdin=creds
-        )
+        # The credential goes to curl as a config on stdin: in argv the container's process list would show it.
+        ok, out = node.exec(pod, f"{CURL_AUTH}\nread -r ocreds\n{ORTHANC_CURL} {ORTHANC_URL}/statistics", stdin=creds)
         try:
-            instances = int(json.loads(out).get("CountInstances", 0)) if ok else 0
-        except (json.JSONDecodeError, AttributeError, ValueError):
-            instances = 0
-        seeded = (
-            passed("orthanc seeded", f"{instances} instances")
-            if instances > 0
-            else failed("orthanc seeded", f"Orthanc holds no instances ({out[:120]})")
-        )
+            instances = int(json.loads(out)["CountInstances"]) if ok else None
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            instances = None
+        if instances is None:
+            seeded = failed("orthanc seeded", f"Orthanc did not say what it holds ({out[:120]})")
+        elif instances == 0:
+            seeded, empty = failed("orthanc seeded", "Orthanc holds no instances"), True
+        else:
+            seeded = passed("orthanc seeded", f"{instances} instances")
 
     _, code = node.exec(pod, f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 10 {ORTHANC_URL}/")
     code = code.strip()
@@ -317,7 +337,7 @@ def check_orthanc(node: Node) -> tuple[Check, Check]:
         if code == "401"
         else failed("orthanc requires auth", f"expected 401 from {ORTHANC_URL}/, got {code or 'no answer'}")
     )
-    return seeded, auth
+    return seeded, auth, empty
 
 
 def check_cstore(run_smoke: Callable[[], tuple[int, str, str]]) -> Check:
@@ -601,6 +621,7 @@ def run_checks(
     no_orthanc: str = "",
     no_study: str = "",
     no_hub: str = "",
+    hub_wait_seconds: int = 90,
     conversion_timeout: int = 600,
     fl_settle_seconds: int = 45,
 ) -> list[Check]:
@@ -637,11 +658,13 @@ def run_checks(
     # Orthanc's own count, not the seed setting, decides whether there is a study to send: a node whose Orthanc
     # holds studies all the same (loaded another way) still proves its DICOM path end to end.
     try:
-        orthanc_seeded, orthanc_auth = check_orthanc(node)
+        orthanc_seeded, orthanc_auth, orthanc_empty = check_orthanc(node)
     except Exception as error:  # noqa: BLE001 — as trust_checks.run: neither row could be checked
         orthanc_seeded = trust_checks.could_not_run("orthanc seeded", error)
         orthanc_auth = trust_checks.could_not_run("orthanc requires auth", error)
-    nothing_to_send = no_orthanc and not orthanc_seeded.ok
+        orthanc_empty = False
+    # Skipped only when Orthanc itself said it is empty: a count that could not be read stays a failure.
+    nothing_to_send = bool(no_orthanc) and orthanc_empty
     if nothing_to_send:
         skip("orthanc seeded", no_orthanc)
     else:
@@ -667,7 +690,7 @@ def run_checks(
         skip("hub heartbeat", no_hub)
         skip("declared endpoints reachable", no_hub)
     else:
-        attempt("hub heartbeat", lambda: check_hub_heartbeat(node))
+        attempt("hub heartbeat", lambda: check_hub_heartbeat(node, hub_wait_seconds))
         attempt("declared endpoints reachable", lambda: check_declared_reachable(node, backend, fl_enabled))
     attempt("undeclared destinations blocked", lambda: check_undeclared_blocked(node, fl_enabled))
     return checks

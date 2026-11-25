@@ -276,7 +276,7 @@ def test_omop_without_people_is_not_seeded(count):
 def test_orthanc_holding_instances_is_seeded_and_the_credential_goes_on_stdin():
     cluster = FakeCluster()
 
-    seeded, _auth = selftest.check_orthanc(cluster)
+    seeded, _auth, _ = selftest.check_orthanc(cluster)
 
     assert seeded.ok, seeded.detail
     stats_call = next(call for call in cluster.exec_log if "/statistics" in call[1])
@@ -285,7 +285,7 @@ def test_orthanc_holding_instances_is_seeded_and_the_credential_goes_on_stdin():
 
 
 def test_an_empty_orthanc_is_not_seeded():
-    seeded, _ = selftest.check_orthanc(FakeCluster(orthanc_statistics='{"CountInstances": 0}'))
+    seeded, _, _ = selftest.check_orthanc(FakeCluster(orthanc_statistics='{"CountInstances": 0}'))
 
     assert not seeded.ok
 
@@ -294,7 +294,7 @@ def test_an_empty_orthanc_is_not_seeded():
 
 
 def test_orthanc_refusing_an_anonymous_request_passes():
-    _, auth = selftest.check_orthanc(FakeCluster())
+    _, auth, _ = selftest.check_orthanc(FakeCluster())
 
     assert auth.ok, auth.detail
     assert auth.name == "orthanc requires auth"
@@ -302,7 +302,7 @@ def test_orthanc_refusing_an_anonymous_request_passes():
 
 @pytest.mark.parametrize("code", ["200", "000", ""])
 def test_orthanc_answering_anonymously_or_not_at_all_fails(code):
-    _, auth = selftest.check_orthanc(FakeCluster(orthanc_anonymous_code=code))
+    _, auth, _ = selftest.check_orthanc(FakeCluster(orthanc_anonymous_code=code))
 
     assert not auth.ok
 
@@ -835,16 +835,66 @@ def _checks(values, smoke=_no_smoke, **cluster):
     [
         ('{"status":"ok","hub_version":"v0.16.0","hub_key_match":true}', "pass", "it runs v0.16.0"),
         ('{"status":"ok","hub_key_match":false}', "fail", "key differs"),
-        ('{"status":"ok","hub_key_match":null}', "warn", "no heartbeat reply yet"),
-        ('{"status":"ok"}', "warn", "no heartbeat reply yet"),
-        (None, "warn", "no heartbeat reply yet"),
+        ('{"status":"ok","hub_key_match":null}', "fail", "no accepted heartbeat on record"),
+        ('{"status":"ok"}', "fail", "a wrong TRUST_API_KEY looks like this"),
+        (None, "error", "did not answer its own /health"),
     ],
-    ids=["matching key", "different key", "no reply yet", "older trust-api", "trust-api down"],
+    ids=["matching key", "different key", "refused or failed", "older trust-api", "trust-api down"],
 )
 def test_the_hub_heartbeat_is_read_from_trust_apis_health(health, status, says):
-    check = selftest.node_checks.check_hub_heartbeat(FakeCluster(health=health))
+    """trust-api forgets the hub's answer when a heartbeat is refused, so "nothing on record" is a failure."""
+    cluster = FakeCluster(health=health)
+    check = selftest.trust_checks.run(
+        "hub heartbeat", lambda: selftest.node_checks.check_hub_heartbeat(cluster, wait_seconds=0)
+    )
     assert check.status.value == status, check
     assert says in check.detail
+
+
+def test_the_heartbeat_waits_for_a_stack_that_has_only_just_come_up():
+    cluster, naps = FakeCluster(health='{"status":"ok","hub_key_match":null}'), []
+
+    def nap(seconds):
+        naps.append(seconds)
+        if len(naps) == 2:
+            cluster.health = '{"status":"ok","hub_key_match":true}'
+
+    check = selftest.node_checks.check_hub_heartbeat(cluster, wait_seconds=90, sleep=nap)
+    assert check.status.value == "pass"
+    assert naps == [10, 10]
+
+
+def test_an_orthanc_that_could_not_be_asked_is_a_failure_never_a_skip():
+    """Only Orthanc saying it is empty skips the rows that need a study (FLIP#2090 review)."""
+    unreadable = _checks(_values(orthanc=False), orthanc_statistics=None)
+    assert unreadable["orthanc seeded"].status.value == "fail"
+    assert unreadable["xnat c-store"].status.value != "skipped"
+    empty = _checks(_values(orthanc=False), orthanc_statistics='{"CountInstances": 0}')
+    assert empty["orthanc seeded"].status.value == "skipped"
+    assert empty["xnat c-store"].status.value == "skipped"
+
+
+def test_the_orthanc_credential_never_reaches_a_command_line():
+    cluster = FakeCluster()
+    selftest.check_orthanc(cluster)
+    asked = [(script, stdin) for _, script, stdin in cluster.exec_log if "/statistics" in script]
+    assert asked
+    for script, stdin in asked:
+        assert stdin
+        assert stdin not in script
+        assert " -u " not in script
+        assert "curl -fsS -K -" in script
+
+
+def test_a_kubectl_that_cannot_run_could_not_run(monkeypatch):
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("kubectl")
+
+    monkeypatch.setattr(selftest.subprocess, "run", missing)
+    cluster = selftest.KubectlCluster("ns", "rel", None)
+    check = selftest.trust_checks.run("trust-api health", lambda: selftest.check_health(cluster, "trust-api"))
+    assert check.status.value == "error"
+    assert "`kubectl` did not run" in check.detail
 
 
 def test_the_heartbeat_is_checked_only_when_asked_for():

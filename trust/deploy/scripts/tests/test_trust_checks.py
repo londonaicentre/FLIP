@@ -92,6 +92,13 @@ def test_a_check_that_could_not_run_is_neither_pass_nor_fail() -> None:
     )
 
 
+def test_equal_checks_are_equal_whatever_sequence_the_caller_passed() -> None:
+    listed = Check("a", Status.WARN, "d", hints=["ask IT"], refs=["SATRE 2.2.11"])
+    tupled = Check("a", Status.WARN, "d", hints=("ask IT",), refs=("SATRE 2.2.11",))
+    _assert(listed == tupled, "a check built with lists equals one built with tuples")
+    _assert(len({listed, tupled}) == 1, "and both hash")
+
+
 def test_report_json_shape_is_pinned() -> None:
     checks = [
         Check("hub reachable", Status.PASS, "200"),
@@ -132,6 +139,7 @@ def main() -> None:
     test_warnings_and_skips_do_not_fail_a_run()
     test_a_failure_or_a_pending_check_exits_1()
     test_a_check_that_could_not_run_is_neither_pass_nor_fail()
+    test_equal_checks_are_equal_whatever_sequence_the_caller_passed()
     test_report_json_shape_is_pinned()
     test_markdown_shows_each_status_and_the_headline()
     print("—")
