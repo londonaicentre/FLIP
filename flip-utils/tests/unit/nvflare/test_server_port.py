@@ -11,6 +11,8 @@
 #
 
 import json
+import runpy
+import sys
 
 import pytest
 
@@ -72,6 +74,28 @@ def test_a_kit_without_a_server_target_is_refused(fed_client):
     fed_client.write_text(json.dumps({"servers": []}))
     with pytest.raises(ValueError, match="no servers"):
         set_server_port(fed_client, "443")
+
+
+def test_a_target_without_a_port_is_refused(fed_client):
+    fed_client.write_text(json.dumps({"servers": [{"service": {"target": "fl.app.flip.aicentre.co.uk"}}]}))
+    with pytest.raises(ValueError, match="has no port"):
+        set_server_port(fed_client, "443")
+
+
+@pytest.mark.parametrize("argv", [[], ["a.json", "b.json"]])
+def test_main_needs_exactly_one_kit(argv, capsys):
+    assert main(argv) == 1
+    assert "usage:" in capsys.readouterr().err
+
+
+def test_it_runs_as_the_module_fl_client_init_calls(fed_client, monkeypatch):
+    monkeypatch.setenv("FL_EDGE_PORT", "443")
+    monkeypatch.setattr(sys, "argv", ["server_port", str(fed_client)])
+    monkeypatch.delitem(sys.modules, "flip.nvflare.server_port", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("flip.nvflare.server_port", run_name="__main__")
+    assert exc.value.code == 0
+    assert _target(fed_client).endswith(":443")
 
 
 def test_main_without_the_variable_does_nothing(fed_client, monkeypatch):
