@@ -171,7 +171,10 @@ def test_a_bare_provision_keeps_the_ref_the_node_was_moved_to(tmp_path):
     ("git", "why"),
     [
         ('[[ " $* " != *" symbolic-ref "* ]] || exit 128', "symbolic-ref itself failed (dubious ownership)"),
-        ('case " $* " in *" rev-parse "*|*" fetch "*) exit 128 ;; esac', "HEAD does not resolve (a damaged repo)"),
+        (
+            'case " $* " in *" symbolic-ref "*) exit 1 ;; *" rev-parse "*) exit 128 ;; esac',
+            "detached, but HEAD does not resolve (a damaged repo)",
+        ),
     ],
 )
 def test_a_bare_provision_stops_on_a_checkout_it_cannot_read(tmp_path, git, why):

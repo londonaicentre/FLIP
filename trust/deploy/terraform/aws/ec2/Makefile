@@ -70,7 +70,7 @@ endif
 TF_VARS = -var 'name=$(NAME)' -var 'region=$(REGION)' -var 'subnet_id=$(SUBNET_ID)' -var 'private_ip=$(PRIVATE_IP)' \
 	-var 'instance_type=$(INSTANCE_TYPE)' -var 'permissions_boundary_arn=$(BOUNDARY_ARN)' \
 	-var 'kit_bucket_name=$(TF_KIT_BUCKET)' $(if $(TF_KIT_BUCKET),-var 'kit_slot=$(KIT_SLOT)') \
-	-var 'kit_kms_key_arn=$(KIT_KMS_KEY_ARN)' -var 'fl_server_ports=[$(FL_PORT)]' \
+	-var 'kit_kms_key_arn=$(TF_KIT_KMS_KEY_ARN)' -var 'fl_server_ports=[$(FL_PORT)]' \
 	-var 'ssm_endpoints=$(SSM_ENDPOINTS)' -var 'schedule_enabled=$(SCHEDULE)'
 DESTROY_PUBLIC_KEY := ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINNJS9sQraFNfnq0au6+vksilL+ct4B2O0yRqzcYY+oe destroy-only
 
@@ -81,26 +81,31 @@ define require_kit
 		echo "❌ $(notdir $(KIT_FILE)) has no FL_KIT_SLOT_NUMBER / FL_EDGE_PORT yet: register the trust first (make register-trusts KIT=$(KIT) HUB=<env>)."; exit 1; }
 endef
 
-# What this root's state says of its node, as "<name> <kit bucket>": the bucket is given to plan once
-# and read back here, so no later verb is given it again (a forgotten one made the seed skip the
-# vocabulary and provision lay down an empty kit tree). The name is checked against this KIT's, since
+# What this root's state says of its node, as "<name> <kit bucket> <kit KMS key>", `-` for an empty
+# one: both are given to plan once and read back here, so no later verb is given them again (a
+# forgotten bucket made the seed skip the vocabulary and provision lay down an empty kit tree; a
+# forgotten key dropped the node's kms:Decrypt). The name is checked against this KIT's, since
 # .terraform/ points at whichever node `make init` last named. KIT_BUCKET= on the command line, empty
-# for none, wins and reads no state. The read replaces itself with its result: it runs once, and only
-# in a recipe that names it, so help, test and lint never run terraform for it. `!` is a node applied
-# before the state recorded these, `-` a root with no node yet or a state that cannot be read.
+# for none, wins and reads no state; the key then comes from KIT_KMS_KEY_ARN alone. The read replaces
+# itself with its result: it runs once, and only in a recipe that names it, so help, test and lint
+# never run terraform for it. `!` is a node applied before the state recorded these, `-` a root with
+# no node yet or a state that cannot be read.
 STATE_NODE_READ = n=$$($(TF) output -raw node_name 2>/dev/null) && b=$$($(TF) output -raw kit_bucket_name 2>/dev/null) \
-	&& echo "$$n $$b" || { $(TF) output -raw instance_id >/dev/null 2>&1 && echo '!' || echo '-'; }
+	&& k=$$($(TF) output -raw kit_kms_key_arn 2>/dev/null) && echo "$$n $${b:--} $${k:--}" \
+	|| { $(TF) output -raw instance_id >/dev/null 2>&1 && echo '!' || echo '-'; }
 STATE_NODE = $(eval STATE_NODE := $$(shell $$(STATE_NODE_READ)))$(STATE_NODE)
+state_value = $(filter-out -,$(word $(1),$(STATE_NODE)))
 KIT_BUCKET_TYPED = $(filter-out file,$(origin KIT_BUCKET))
-NODE_KIT_BUCKET = $(if $(KIT_BUCKET_TYPED),$(KIT_BUCKET),$(word 2,$(STATE_NODE)))
+NODE_KIT_BUCKET = $(if $(KIT_BUCKET_TYPED),$(KIT_BUCKET),$(call state_value,2))
+NODE_KIT_KMS_KEY_ARN = $(if $(KIT_BUCKET_TYPED)$(filter-out file,$(origin KIT_KMS_KEY_ARN)),$(KIT_KMS_KEY_ARN),$(call state_value,3))
 # $(call require_node_state,<non-empty where a root with no node yet is fine: plan>)
 define require_node_state
 	$(if $(KIT_BUCKET_TYPED),,@case "$(firstword $(STATE_NODE))" in \
 		($(NAME)) ;; \
 		(-) $(if $(1),,echo "❌ This root's state holds no node, or cannot be read. Run make init KIT=$(KIT) HUB=$(HUB) STATE_BUCKET=<state bucket>$(,) then plan and apply."; exit 1) ;; \
 		(!) echo "❌ This root's state does not say which node it holds or whether it reads a kit bucket: it was applied before"; \
-		   echo "   the root recorded them. Name the bucket once: make plan … KIT_BUCKET=<bucket>, or KIT_BUCKET="; \
-		   echo "   for a node with none, then apply. A typed KIT_BUCKET also runs this verb as it is."; exit 1 ;; \
+		   echo "   the root recorded them. Name the bucket once: make plan … KIT_BUCKET=<bucket> (with KIT_KMS_KEY_ARN=<key>"; \
+		   echo "   if it has one), or KIT_BUCKET= for a node with none, then apply. A typed KIT_BUCKET also runs this verb as it is."; exit 1 ;; \
 		(*) echo "❌ This root is initialised for node $(firstword $(STATE_NODE)), not $(NAME): its kit bucket is not this node's."; \
 		   echo "   Run: make init KIT=$(KIT) HUB=$(HUB) STATE_BUCKET=<state bucket>"; exit 1 ;; esac)
 endef
@@ -115,20 +120,25 @@ define require_node_dirs
 		echo "   Comment them out (each but FL_KIT_DIR defaults under /opt/flip) or make them absolute."; exit 1; }
 	@[ -n "$(call kit_get,FL_KIT_DIR)" ] || { \
 		echo "❌ $(notdir $(KIT_FILE)) has no FL_KIT_DIR, and compose has no default for it: the FL client would mount /net-1."; \
-		echo "   Set it to where the FL kit is on the node (stage-kit puts it in /opt/flip/fl-kit)."; exit 1; }
+		echo "   Set it to where provision and stage-kit put the FL kit on the node (usually /opt/flip/fl-kit)."; exit 1; }
 endef
 
-# A first install only (deploy). The play, stage-kit, the seed and the vocabulary load never read the
-# kit's paths: they prepare, stage and fill the trees below (the roles' defaults and
-# aws-ec2-host.yml's), so compose pointed anywhere else starts on directories that are empty, or that
-# the node's daemon created root-owned. Each path counts only where this install writes it: Orthanc's
-# with the sample data on, OMOP's with that or a kit bucket's vocabulary. upgrade writes none of them,
-# and a live node keeps the paths its kit names. XNAT_DATA_DIR and COHORT_SNAPSHOT_STORAGE_DIR are
-# prepared at bring-up from the kit's own value.
+# provision and stage-kit put the FL kit where the kit file says: a relative path names nothing on the node.
+FL_KIT = $(call kit_get,FL_KIT_DIR)
+define require_absolute_fl_kit_dir
+	@case "$(FL_KIT)" in ""|/*) ;; *) echo "❌ FL_KIT_DIR=$(FL_KIT) in $(notdir $(KIT_FILE)) is relative: name the path on the node."; exit 1 ;; esac
+endef
+
+# A first install only (deploy). The play, the seed and the vocabulary load read no kit path but
+# FL_KIT_DIR: they prepare and fill the trees below (the roles' defaults and aws-ec2-host.yml's), so
+# compose pointed anywhere else starts on directories that are empty, or that the node's daemon
+# created root-owned. Each path counts only where this install writes it: Orthanc's with the sample
+# data on, OMOP's with that or a kit bucket's vocabulary. upgrade writes none of them, and a live node
+# keeps the paths its kit names. XNAT_DATA_DIR and COHORT_SNAPSHOT_STORAGE_DIR are prepared at
+# bring-up from the kit's own value.
 # $(call node_dir_moved,<KEY>,<path>): KEY=<path> when the kit sets KEY to anything else.
 node_dir_moved = $(if $(filter-out $(2) $(2)/,$(call kit_get,$(1))),$(1)=$(2))
-NODE_DIRS_MOVED = $(call node_dir_moved,FL_KIT_DIR,/opt/flip/fl-kit) \
-	$(call node_dir_moved,BASE_IMAGES_DOWNLOAD_DIR,/opt/flip/data/trust-$(KIT_SLOT)) \
+NODE_DIRS_MOVED = $(call node_dir_moved,BASE_IMAGES_DOWNLOAD_DIR,/opt/flip/data/trust-$(KIT_SLOT)) \
 	$(if $(SAMPLE_DATA_OFF),,$(call node_dir_moved,ORTHANC_STORAGE_DIR,/opt/flip/orthanc/orthanc-storage)) \
 	$(if $(and $(SAMPLE_DATA_OFF),$(if $(NODE_KIT_BUCKET),,off)),,$(call node_dir_moved,OMOP_DATA_DIR,/opt/flip/omop/db_data))
 define require_provisioned_dirs
@@ -149,7 +159,7 @@ define play
 	cd $(ANSIBLE_DIR) && $(ANSIBLE) ansible-galaxy install -r requirements.yml >/dev/null && \
 	$(ANSIBLE) ansible-playbook aws-ec2.yml \
 		-e node_alias=$(NAME) -e trust_data_version=$(TRUST_DATA_VERSION) \
-		-e fl_backend=$(FL_BACKEND) -e trust_num=$(KIT_SLOT) \
+		-e fl_backend=$(FL_BACKEND) -e trust_num=$(KIT_SLOT) $(if $(FL_KIT),-e fl_kit_dir=$(FL_KIT)) \
 		$(KIT_SOURCE_ARGS) \
 		$(1)
 endef
@@ -174,9 +184,11 @@ init: ## Point the root at its state (STATE_BUCKET=, STATE_KEY= default trust-no
 	$(TF) init -input=false -reconfigure -backend-config="bucket=$(STATE_BUCKET)" \
 		-backend-config="key=$(STATE_KEY)" -backend-config="region=$(REGION)"
 
-# A later plan keeps the bucket the node was applied with: empty, it would drop the node's kit read.
+# A later plan keeps the bucket and key the node was applied with: empty, they would drop its kit read.
 TF_KIT_BUCKET = $(KIT_BUCKET)
+TF_KIT_KMS_KEY_ARN = $(KIT_KMS_KEY_ARN)
 plan: TF_KIT_BUCKET = $(NODE_KIT_BUCKET)
+plan: TF_KIT_KMS_KEY_ARN = $(NODE_KIT_KMS_KEY_ARN)
 plan: ## Plan the node (SUBNET_ID= for a site subnet; empty creates a VPC + NAT gateway)
 	$(require_kit)
 	$(call require_node_state,plan)
@@ -204,6 +216,7 @@ ssh-config: ## Write the ~/.ssh/config entry that reaches the node over SSM (Hos
 
 provision: ## Configure the host (aws-ec2.yml), all but the data plays
 	$(require_kit)
+	$(require_absolute_fl_kit_dir)
 	$(require_node_state)
 	@[ -n "$(TRUST_DATA_VERSION)" ] || { echo "❌ trust/.data_version not found."; exit 1; }
 	$(call play,--skip-tags omop-vocab$(,)seed)
@@ -213,6 +226,7 @@ provision: ## Configure the host (aws-ec2.yml), all but the data plays
 
 stage-kit: ## Stage the FL kit for the trust's registered slot (from the node's kit bucket, or KIT_SRC=<slot kit dir>)
 	$(require_kit)
+	$(require_absolute_fl_kit_dir)
 	$(require_node_state)
 	@[ -n "$(NODE_KIT_BUCKET)$(KIT_SRC)" ] || { echo "❌ The node was applied with no kit bucket: KIT_SRC=<dir holding this slot's kit> is required."; exit 1; }
 	@[ -z "$(KIT_SRC)" ] || [ -d "$(KIT_SRC)" ] || { echo "❌ KIT_SRC=$(KIT_SRC) is not a directory."; exit 1; }
@@ -257,7 +271,7 @@ deploy: ## First install: networks, seed with the stack down, then start the tru
 	@docker context inspect $(NAME) >/dev/null 2>&1 || docker context create $(NAME) --docker "host=ssh://$(NAME)"
 	@out=$$(docker --context $(NAME) swarm init 2>&1) || case "$$out" in \
 		*"already part of a swarm"*) echo "   Swarm already initialised";; \
-		(*) echo "$$out" >&2; exit 1;; esac
+		*) echo "$$out" >&2; exit 1;; esac
 	DOCKER_CONTEXT=$(NAME) $(MAKE) -C $(REPO_ROOT)/trust create-networks create-trust-network KIT=$(KIT) HUB=$(HUB)
 	DOCKER_CONTEXT=$(NAME) $(MAKE) -C $(REPO_ROOT)/trust down-trust-ec2 KIT=$(KIT) HUB=$(HUB) 2>/dev/null || true
 	$(MAKE) seed KIT=$(KIT) HUB=$(HUB)

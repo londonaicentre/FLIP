@@ -47,18 +47,20 @@ def make(
     env: dict[str, str] | None = None,
     state_bucket: str | None = "",
     state_name: str = "flip-stag-test",
+    state_key: str = "",
     applied: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     """Run a target. `terraform` is a stub that logs its arguments beside the kit and answers `output` from the
-    root's state: the node `state_name` and its kit bucket `state_bucket` (None: a state from before the root
-    recorded either), and an instance only when `applied`."""
+    root's state: the node `state_name`, its kit bucket `state_bucket` and KMS key `state_key` (bucket None: a state
+    from before the root recorded them), and an instance only when `applied`."""
     stub = kit.parent / "tf-stub" / "terraform"
     stub.parent.mkdir(exist_ok=True)
     recorded = "exit 1" if state_bucket is None else f"printf %s '{state_bucket}'"
     named = "exit 1" if state_bucket is None else f"printf %s '{state_name}'"
+    key = "exit 1" if state_bucket is None else f"printf %s '{state_key}'"
     stub.write_text(
         f'#!/bin/sh\necho "$*" >> {kit.parent}/terraform.calls\ncase "$*" in\n'
-        f"  *node_name) {named} ;;\n  *kit_bucket_name) {recorded} ;;\n"
+        f"  *node_name) {named} ;;\n  *kit_bucket_name) {recorded} ;;\n  *kit_kms_key_arn) {key} ;;\n"
         f"  *instance_id) exit {0 if applied else 1} ;;\nesac\n"
     )
     stub.chmod(0o755)
@@ -191,12 +193,11 @@ NODE_DIRS = (
     [
         "OMOP_DATA_DIR=/data/flip/omop/db_data",
         "ORTHANC_STORAGE_DIR=/data/flip/orthanc",  # pragma: allowlist secret
-        "FL_KIT_DIR=/data/flip/fl-kit",
         "BASE_IMAGES_DOWNLOAD_DIR=/opt/flip/data/trust-1",  # pragma: allowlist secret
     ],
 )
 def test_deploy_refuses_a_path_the_node_is_not_provisioned_with(tmp_path, line):
-    """The play, the seed and stage-kit hold these paths as literals: compose elsewhere starts on empty dirs."""
+    """The play and the seed hold these paths as literals: compose elsewhere starts on empty dirs."""
     moved = kit_with(tmp_path, NODE_DIRS + line + "\n")
     env, calls = stub_tools(tmp_path)
     result = make("deploy", moved, dry=False, env=env)
@@ -249,8 +250,12 @@ def test_deploy_refuses_a_kit_without_an_fl_kit_dir(kit, tmp_path):
 
 
 def test_deploy_takes_the_provisioned_paths_and_the_dirs_bring_up_prepares(tmp_path):
-    """XNAT's tree and the membership store are created from the kit's own value at bring-up, wherever it points."""
-    elsewhere = "XNAT_DATA_DIR=/data/xnat\nCOHORT_SNAPSHOT_STORAGE_DIR=/data/snapshots\n"  # pragma: allowlist secret
+    """XNAT's tree and the membership store are created from the kit's own value at bring-up, wherever it points,
+    and provision and stage-kit put the FL kit at the kit's FL_KIT_DIR."""
+    elsewhere = (
+        "XNAT_DATA_DIR=/data/xnat\nCOHORT_SNAPSHOT_STORAGE_DIR=/data/snapshots\n"  # pragma: allowlist secret
+        "FL_KIT_DIR=/data/flip/fl-kit\n"
+    )
     fine = kit_with(tmp_path, NODE_DIRS + elsewhere)
     env, calls = stub_tools(tmp_path)
     result = make("deploy", fine, dry=False, env=env)
@@ -263,7 +268,6 @@ def test_the_refused_paths_are_the_ones_the_roles_and_compose_use():
     makefile = (ROOT / "Makefile").read_text()
     trust = ROOT.parents[3]
     seed = (trust / "deploy/ansible/roles/flip_trust_seed/defaults/main.yml").read_text()
-    kit_role = (trust / "deploy/ansible/roles/flip_fl_kit/defaults/main.yml").read_text()
     compose = (trust / "deploy/compose/compose_trust.prod.yml").read_text()
     plays = (trust / "deploy/ansible/aws-ec2-host.yml").read_text()
     assert 'omop_dir: "/opt/flip/omop"' in seed
@@ -272,8 +276,6 @@ def test_the_refused_paths_are_the_ones_the_roles_and_compose_use():
         in (trust / "deploy/ansible/roles/flip_trust_seed/tasks/main.yml").read_text()
     )
     assert 'orthanc_data_dir: "/opt/flip/orthanc/orthanc-storage"' in seed
-    assert "flip_dir: /opt/flip\n" in kit_role
-    assert 'fl_kit_dir: "{{ flip_dir }}/fl-kit"' in kit_role
     assert "'/opt/flip/data/trust-' ~ trust_num" in plays
     for default in (
         "${OMOP_DATA_DIR:-/opt/flip/omop/db_data}",
@@ -285,9 +287,21 @@ def test_the_refused_paths_are_the_ones_the_roles_and_compose_use():
         "OMOP_DATA_DIR,/opt/flip/omop/db_data",
         "ORTHANC_STORAGE_DIR,/opt/flip/orthanc/orthanc-storage",  # pragma: allowlist secret
         "BASE_IMAGES_DOWNLOAD_DIR,/opt/flip/data/trust-$(KIT_SLOT)",
-        "FL_KIT_DIR,/opt/flip/fl-kit",
     ):
         assert fixed in makefile
+
+
+@pytest.mark.parametrize("target", ["provision", "stage-kit"])
+def test_the_fl_kit_is_staged_where_the_kit_file_says(tmp_path, target):
+    """Compose mounts the kit from FL_KIT_DIR, so the play stages it there, not at the role's default."""
+    moved = make(target, kit_with(tmp_path, "FL_KIT_DIR=/data/flip/fl-kit\n"), f"KIT_SRC={tmp_path}")
+    assert "-e fl_kit_dir=/data/flip/fl-kit" in moved.stdout
+    assert "fl_kit_dir" not in make(target, kit_with(tmp_path, ""), f"KIT_SRC={tmp_path}").stdout, "unset: the default"
+    env, calls = stub_tools(tmp_path)
+    relative = make(target, kit_with(tmp_path, "FL_KIT_DIR=./fl-kit\n"), f"KIT_SRC={tmp_path}", dry=False, env=env)
+    assert relative.returncode != 0
+    assert "FL_KIT_DIR=./fl-kit in .env.TEST.stag is relative" in relative.stdout
+    assert not calls.exists()
 
 
 def test_the_host_verbs_take_the_kit_bucket_the_node_was_applied_with(tmp_path):
@@ -301,7 +315,7 @@ def test_the_host_verbs_take_the_kit_bucket_the_node_was_applied_with(tmp_path):
     seed = make("seed", dated, state_bucket="hub-kits").stdout
     assert "--skip-tags omop-vocab" not in seed
     assert "-e vocab_s3_bucket=hub-kits" in seed
-    once = ["output -raw node_name", "output -raw kit_bucket_name"]
+    once = ["output -raw node_name", "output -raw kit_bucket_name", "output -raw kit_kms_key_arn"]
     assert (tmp_path / "terraform.calls").read_text().splitlines() == once * 3, "one read a run"
 
 
@@ -352,11 +366,19 @@ def test_the_host_verbs_refuse_a_root_with_no_node(tmp_path, target):
 
 
 def test_a_later_plan_keeps_the_bucket_the_node_was_applied_with(kit):
-    """Planned without it, the apply would drop the node's kit read and empty the recorded bucket."""
-    out = make("plan", kit, state_bucket="hub-kits").stdout
-    assert "-var 'kit_bucket_name=hub-kits' -var 'kit_slot=3'" in out
-    assert "-var 'kit_bucket_name='" in make("plan", kit, "KIT_BUCKET=", state_bucket="hub-kits").stdout, "typed wins"
-    assert "-var 'kit_bucket_name='" in make("plan", kit, state_bucket=None, applied=False).stdout, "a first plan"
+    """Planned without them, the apply would drop the node's kit read (or only its kms:Decrypt, and the next
+    stage-kit would wipe net-1/ and then be refused the objects) and empty what the state records."""
+    arn = "arn:aws:kms:eu-west-2:000000000000:key/k"
+    out = make("plan", kit, state_bucket="hub-kits", state_key=arn).stdout
+    assert f"-var 'kit_bucket_name=hub-kits' -var 'kit_slot=3' -var 'kit_kms_key_arn={arn}'" in out
+    assert "-var 'kit_kms_key_arn='" in make("plan", kit, state_bucket="hub-kits").stdout, "a bucket with no key"
+    typed = make("plan", kit, "KIT_KMS_KEY_ARN=", state_bucket="hub-kits", state_key=arn).stdout
+    assert "-var 'kit_bucket_name=hub-kits' -var 'kit_slot=3' -var 'kit_kms_key_arn='" in typed, "a typed key wins"
+    typed = make("plan", kit, "KIT_BUCKET=", state_bucket="hub-kits", state_key=arn)
+    first = make("plan", kit, state_bucket=None, applied=False)
+    for why, out in (("a typed bucket reads neither from the state", typed), ("a first plan", first)):
+        assert "-var 'kit_bucket_name='" in out.stdout, why
+        assert "-var 'kit_kms_key_arn='" in out.stdout, why
 
 
 def test_plan_refuses_a_node_whose_state_predates_the_record(kit, tmp_path):

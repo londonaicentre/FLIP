@@ -148,10 +148,11 @@ _fl-kit:
 
 # The overlays come from the kit file's K8S_PLATFORM_VALUES, which join recorded: passing AKS_VALUES
 # here would drop any join was given (MOCK_PACS=1, an operator's own).
-# A kit that records none is not deployed: the chart would leave out values-aks.yaml, moving PGDATA
-# and taking the FL kit from the node. An overlay typed to deploy is refused, not ignored.
+# A kit that records none, read as the chart reads it (its last line), is not deployed: the chart would
+# leave out values-aks.yaml, moving PGDATA and taking the FL kit from the node. An overlay typed to
+# deploy is refused, not ignored.
 define deploy_from_kit
-	@grep -q '^K8S_PLATFORM_VALUES=.' "$(KIT_FILE)" 2>/dev/null || { \
+	@[ -n "$$(sed -n 's/^K8S_PLATFORM_VALUES=//p' "$(KIT_FILE)" 2>/dev/null | tail -1)" ] || { \
 		echo "❌ $(notdir $(KIT_FILE)) records no K8S_PLATFORM_VALUES, so the chart would deploy without the AKS overlays."; \
 		echo "   make join records them; for a kit installed by hand add: K8S_PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"; exit 1; }
 	$(CHART) deploy-trust-k8s KIT=$(KIT) HUB=$(HUB)
