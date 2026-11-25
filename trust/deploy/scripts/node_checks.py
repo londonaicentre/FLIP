@@ -122,7 +122,7 @@ class Node(Protocol):
 def nvflare_startup_dir(node: Node, pod: str) -> str | None:
     """The fl-client's mount of the kit's startup/ folder, read from the pod (FLIP#1958).
 
-    templates/fl-client.yaml mounts it at /app/startup, or with job pods under the workspace the parent runs NVFLARE
+    It is mounted at /app/startup, or on Kubernetes with job pods under the workspace the parent runs NVFLARE
     in. Reading the pod follows the chart wherever it puts the kit.
     """
     mounts = node.mounts(pod, "fl-client")
@@ -130,7 +130,7 @@ def nvflare_startup_dir(node: Node, pod: str) -> str | None:
 
 
 def check_fl_kit(node: Node, backend: str) -> Check:
-    """The FL client sees its participant kit where the image reads it (templates/fl-client.yaml)."""
+    """The FL client sees its participant kit where the image reads it."""
     pod = node.pod("fl-client")
     if not pod:
         return failed("fl kit delivered", "no running fl-client pod")
@@ -385,9 +385,9 @@ def check_orthanc(node: Node) -> tuple[Check, Check, bool]:
 
 
 def check_cstore(run_smoke: Callable[[], tuple[int, str, str]]) -> Check:
-    """A real C-STORE from Orthanc into XNAT: smoke-cstore.sh's verdict and its last word.
+    """A real C-STORE from Orthanc into XNAT: the platform's smoke, its verdict and its last word.
 
-    The smoke speaks on stdout; stderr carries kubectl's own chatter ("Defaulted container ..."),
+    The smoke speaks on stdout; stderr carries the tool's own chatter (kubectl's "Defaulted container ..."),
     so it is read only when the smoke said nothing at all.
     """
     code, stdout, stderr = run_smoke()
@@ -491,7 +491,7 @@ def _project_xml(project: str) -> str:
     ET.SubElement(root, "ID").text = project
     ET.SubElement(root, "secondary_ID").text = project
     ET.SubElement(root, "name").text = SELFTEST_NAME
-    ET.SubElement(root, "description").text = "Created and deleted by make selftest (selftest_k8s.py)"
+    ET.SubElement(root, "description").text = "Created and deleted by the FLIP node check"
     return ET.tostring(root, encoding="unicode", short_empty_elements=False)
 
 
@@ -514,7 +514,7 @@ def check_conversion(
     """
     name = "dcm2niix conversion"
     if not orthanc_creds:
-        return failed(name, "could not read an Orthanc user from its Secret")
+        return failed(name, "could not read an Orthanc user from its configuration")
     status, body = xnat.request("GET", "/xapi/commands?name=dcm2niix")
     try:
         command = json.loads(body)[0]
@@ -624,7 +624,7 @@ def _convert(
             return failed(
                 name,
                 f"dcm2niix had not finished after {timeout}s (last status: {last}). If other conversions "
-                "are queued, `kubectl describe resourcequota` shows the cap is full; rerun when they finish",
+                "are queued, wait for them (Kubernetes: `kubectl describe resourcequota` shows a full cap) and rerun",
             )
         sleep(poll)
     elapsed = int(clock() - started)
