@@ -81,12 +81,14 @@ def main() -> int:
 
     run(*kubectl, "set", "env", deployment, "CHANGED_BY_HAND=1")
     run(*kubectl, "rollout", "status", deployment, "--timeout=180s")
-    expect("a Deployment changed by hand", rows("2-changed")[DRIFT], "fail", "trust-api differs")
+    expect("a Deployment changed by hand", rows("2-changed")[DRIFT], "fail", "env[CHANGED_BY_HAND]")
     run(*kubectl, "set", "env", deployment, "CHANGED_BY_HAND-")
     run(*kubectl, "rollout", "status", deployment, "--timeout=180s")
     expect("the change undone", rows("3-undone")[DRIFT], "pass")
 
-    run(*helm, "upgrade", args.release, str(CHART), "--reuse-values", *DNS_ONLY, "--wait", "--timeout", "5m")
+    # The sample data is loaded already, and its loader could not download anything through this policy.
+    seed_off = ["--set", "trustData.seed.enabled=false"]
+    run(*helm, "upgrade", args.release, str(CHART), "--reuse-values", *DNS_ONLY, *seed_off, "--wait", "--timeout", "5m")
     confined = rows("4-dns-only")
     expect("egress allows DNS only", confined[EGRESS], "pass", "a sample, not a proof")
     expect("egress allows DNS only", confined[DRIFT], "pass")
