@@ -35,16 +35,3 @@ class Utils:
             return True
         except ValueError:
             return False
-
-    @staticmethod
-    def is_string_empty(val: str) -> bool:
-        """
-        Check if a string is empty or contains only whitespace.
-
-        Args:
-            val: String to check
-
-        Returns:
-            bool: True if empty or whitespace-only, False otherwise
-        """
-        return val.strip() == ""

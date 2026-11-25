@@ -283,7 +283,7 @@ if [ -n "$KIT" ]; then
         fail "Kit file not found: ${KIT_FILE}"
         hint "Register the trust first (run from the repo root):"
         hint "  make new-trust TRUST_CODE=${KIT} TRUST_NAME=\"<Display Name>\""
-        hint "  make -C deploy/providers/AWS register-trusts KIT=${KIT} HUB=${HUB:-(env)}"
+        hint "  make -C deploy/aws register-trusts KIT=${KIT} HUB=${HUB:-(env)}"
         hint "  make sync-trust-kit KIT=${KIT} HUB=${HUB:-(env)}"
     else
         pass "Kit file: ${KIT_FILE#"${REPO_ROOT}"/}"
@@ -297,7 +297,7 @@ if [ -n "$KIT" ]; then
             if [ -z "$val" ] || [[ "$val" == "<"*">" ]]; then
                 fail "Kit key ${key} is empty or still a placeholder in ${KIT_FILE##*/}"
                 hint "Fill in real values by running the registration flow:"
-                hint "  make -C deploy/providers/AWS register-trusts KIT=${KIT} HUB=${HUB:-(env)}"
+                hint "  make -C deploy/aws register-trusts KIT=${KIT} HUB=${HUB:-(env)}"
                 hint "  make sync-trust-kit KIT=${KIT} HUB=${HUB:-(env)}"
                 ALL_FILLED=false
             fi

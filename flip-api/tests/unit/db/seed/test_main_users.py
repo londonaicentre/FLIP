@@ -214,7 +214,7 @@ def test_ensure_user_and_role_reraises_other_provider_errors(mock_session, idp):
 
 
 def test_ensure_user_and_role_grants_role_when_missing(mock_session, idp):
-    """Provider user exists but has no UserRole row → add the grant and commit."""
+    """First seeding of a provider user with no role → add the profile and the grant in one commit."""
     sub = uuid4()
     idp.get_user.return_value = CognitoUser(id=sub, email="alex@example.com", is_disabled=False)  # type: ignore[call-arg]
     mock_session.get.return_value = None
@@ -233,7 +233,7 @@ def test_ensure_user_and_role_grants_role_when_missing(mock_session, idp):
     assert isinstance(added_role, UserRole)
     assert added_role.user_id == sub
     assert added_role.role_id == RoleRef.RESEARCHER.value
-    assert mock_session.commit.call_count == 2
+    mock_session.commit.assert_called_once()
 
 
 def test_ensure_user_and_role_is_idempotent_when_grant_already_exists(mock_session, idp):
@@ -245,6 +245,19 @@ def test_ensure_user_and_role_is_idempotent_when_grant_already_exists(mock_sessi
     mock_session.get.return_value = UserProfile(user_id=sub, name="Alex Example", organisation="Example Org")
 
     ensure_user_and_role(idp, "alex@example.com", RoleRef.RESEARCHER, mock_session, "Alex Example", "Example Org")
+
+    mock_session.add.assert_not_called()
+    mock_session.commit.assert_not_called()
+
+
+def test_ensure_user_and_role_does_not_regrant_a_removed_role(mock_session, idp):
+    """The profile is already seeded and its role has since been removed → the removal stands on the next boot."""
+    sub = uuid4()
+    idp.get_user.return_value = CognitoUser(id=sub, email="alex@example.com", is_disabled=False)  # type: ignore[call-arg]
+    mock_session.get.return_value = UserProfile(user_id=sub, name="Alex Example", organisation="Example Org")
+    mock_session.exec.return_value.first.return_value = None
+
+    ensure_user_and_role(idp, "alex@example.com", RoleRef.ADMIN, mock_session, "Alex Example", "Example Org")
 
     mock_session.add.assert_not_called()
     mock_session.commit.assert_not_called()

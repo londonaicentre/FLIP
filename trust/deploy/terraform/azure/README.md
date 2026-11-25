@@ -135,7 +135,7 @@ with `values-aks.yaml`, `values-small-node.yaml` and no vocabulary load.
 ## Joining a hub
 
 The hub admin registers the trust and packages its kit exactly as for an on-prem trust
-(`new-trust`, `make -C deploy/providers/AWS register-trusts`, `sync-trust-kit`,
+(`new-trust`, `make -C deploy/aws register-trusts`, `sync-trust-kit`,
 `package-onprem-trust-kit`; see [Deploy a FLIP node on an Azure VM](../../../../docs/source/deploy-flip/deploy-flip-node-azure.rst)), then, in `vm/`:
 
 ```bash
@@ -162,7 +162,7 @@ then pass `LOCATION=<region>` to `plan`.
 ## Network and outbound traffic
 
 The node only makes outbound connections, and nothing listens on it. The hub admits it by its
-API key and its FL kit's mTLS certificates, never by its source address, so no target here keeps
+API key and the credentials in its FL kit, never by its source address, so no target here keeps
 a fixed IP for it.
 
 - **A site's own subnet (`SUBNET_ID=<subnet resource id>` on `plan` and `destroy`).** The node

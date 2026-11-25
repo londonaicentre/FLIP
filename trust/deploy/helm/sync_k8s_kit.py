@@ -26,7 +26,7 @@ Helm chart. It does NOT register anything with the hub — registration is done
 once, centrally, by the DB-backed `register_trust` CLI:
 
     make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."
-    make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
+    make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>
     make sync-trust-kit KIT=<CODE> HUB=<env>       # fills the Hub-shared block
 
 …which mints the per-trust credentials and writes them, together with the
@@ -861,7 +861,7 @@ def render_override(
         lines += ["", "dataAccessApi:", f"  cohortQueryThreshold: {threshold}"]
 
     # FL-server egress (FLIP#593 pt.3): the default-deny egress NetworkPolicy
-    # drops the fl-client's outbound gRPC to the FL server unless its dial port
+    # drops the fl-client's outbound connection to the FL server unless its dial port
     # is allow-listed. The FL server sits behind an internet-facing NLB with
     # AWS-managed IPs that rotate on recreation (and DNS returns a reordered
     # subset), so pinning resolved /32s would relocate the very drift it tries to
@@ -880,7 +880,7 @@ def render_override(
             "",
             "networkPolicies:",
             "  # Restates the chart-default egress ports (values.yaml) plus the",
-            "  # fl-client → fl-server gRPC port; Helm replaces this list wholesale.",
+            "  # fl-client → fl-server port; Helm replaces this list wholesale.",
             "  allowedEgressPorts:",
             "    - port: 53",
             "      protocol: UDP",
@@ -890,7 +890,7 @@ def render_override(
             "      protocol: TCP",
             "    - port: 443",
             "      protocol: TCP",
-            f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL dial port)",
+            f"    - port: {fl_port}  # fl-client → fl-server (FL dial port)",
             "      protocol: TCP",
         ]
 
@@ -956,7 +956,7 @@ def main(
         print(f"❌ Kit file not found: {kit_path}")
         print("   Register the trust first:")
         print(f'     make new-trust TRUST_CODE={code} TRUST_NAME="..."')
-        print(f"     make -C deploy/providers/AWS register-trusts KIT={code}{hub}")
+        print(f"     make -C deploy/aws register-trusts KIT={code}{hub}")
         print(f"     make sync-trust-kit KIT={code}{hub}")
         sys.exit(1)
 
@@ -966,7 +966,7 @@ def main(
     if missing:
         print(f"❌ Kit {kit_path.name} is missing real values for: {', '.join(missing)}")
         print("   These come from registration + the Hub-shared block. Run:")
-        print(f"     make -C deploy/providers/AWS register-trusts KIT={code}{hub}")
+        print(f"     make -C deploy/aws register-trusts KIT={code}{hub}")
         print(f"     make sync-trust-kit KIT={code}{hub}")
         sys.exit(1)
 

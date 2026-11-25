@@ -61,7 +61,7 @@ jobs:
         run: |
           # Immutable short-SHA tag (FLIP#751): the server/api images are consumed by
           # `make deploy-centralhub`; the base/client tags are pushed uniformly. Length 7
-          # must match the tag resolution in deploy/providers/AWS/Makefile.
+          # must match the tag resolution in deploy/aws/Makefile.
           # Persisted to GITHUB_ENV so the per-image build/push/cleanup steps see it.
           SHORT_SHA="$(echo "${{ github.sha }}" | cut -c1-7)"
           [[ -n "$SHORT_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }

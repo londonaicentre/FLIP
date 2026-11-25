@@ -18,10 +18,10 @@ be the fleet proxy's. A one-line slip here (the SuperLink back on the trust netw
 the trust port itself) hands every trust those APIs, and nothing but a manual end-to-end run would
 notice. Each check below pins one shape's wiring:
 
-- hub dev (``deploy/compose.development.flower.yml``): on ``fl-net-<N>`` the only hub service is
+- hub dev (``deploy/compose/compose.development.flower.yml``): on ``fl-net-<N>`` the only hub service is
   ``fl-fleet-proxy-net-<N>``, answering to ``fl-server-net-<N>``; the SuperLink is on ``default``
   alone, where the proxy reaches it by an alias of its own.
-- production harness (``deploy/compose.prod.flower.yml``): only the proxy publishes
+- production harness (``deploy/compose/compose.prod.flower.yml``): only the proxy publishes
   ``FL_SERVER_PORT``.
 - standalone secure stack (``fl-services/flower/compose.secure.yml``): the SuperNodes are on
   ``flwr-trust-net`` alone, the SuperLink is not on it, and the proxy is the one service on both.
@@ -40,8 +40,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_container_identity import REPO_ROOT, Service, parse_services  # noqa: E402
 
-HUB_DEV = REPO_ROOT / "deploy/compose.development.flower.yml"
-HUB_PROD = REPO_ROOT / "deploy/compose.prod.flower.yml"
+HUB_DEV = REPO_ROOT / "deploy/compose/compose.development.flower.yml"
+HUB_PROD = REPO_ROOT / "deploy/compose/compose.prod.flower.yml"
 SECURE = REPO_ROOT / "fl-services/flower/compose.secure.yml"
 NETS = (1, 2)
 

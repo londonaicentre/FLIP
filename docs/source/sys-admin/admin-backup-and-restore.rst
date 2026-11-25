@@ -76,7 +76,7 @@ but takes no final snapshot.
    * - UI bucket
      - The built web UI.
      - Versioning. Terraform refuses to destroy the bucket.
-     - Yes: ``make -C deploy/providers/AWS deploy-ui`` rebuilds and uploads it.
+     - Yes: ``make -C deploy/aws deploy-ui`` rebuilds and uploads it.
    * - Secrets Manager secret ``FLIP_API``
      - The AES key shared with every trust, and the FL API key.
      - A deleted secret can be restored for 30 days.
@@ -104,7 +104,7 @@ What ``make destroy`` keeps
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS destroy HUB=<env>
+   make -C deploy/aws destroy HUB=<env>
 
 It lists what it will remove and asks you to type ``yes``.
 
@@ -153,7 +153,7 @@ The hub database
    wrote the backup or a later one: flip-api upgrades the schema when it starts, but cannot move it backward.
 
    A trust registered after the restore point is unknown to the restored database, so the hub rejects its
-   credentials. Register it again (``make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>``), which
+   credentials. Register it again (``make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>``), which
    issues new credentials, and send the site its new kit. Or add it again with **Add Trust** and have the site
    download its kit (:ref:`onboarding-kit-from-ui`).
 
@@ -167,8 +167,8 @@ The ``FLIP_API`` secret
 
 A lost hub env file
    Rebuild the Terraform inputs from the deployed environment with
-   ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` (see the :gh:`AWS deployment README
-   <deploy/providers/AWS/README.md>`, "Recovering an environment's true values"). It recovers Terraform inputs only, not
+   ``deploy/aws/scripts/reconcile_ci_env.py`` (see the :gh:`AWS deployment README
+   <deploy/aws/README.md>`, "Recovering an environment's true values"). It recovers Terraform inputs only, not
    trust, XNAT, Orthanc or OMOP settings.
 
 The Cognito user pool
@@ -273,7 +273,9 @@ wipes XNAT (see the warning under `Restoring a trust node`_).
       make -C trust/xnat xnat-backup KIT=<CODE> HUB=prod
 
    It writes ``$XNAT_DATA_DIR/backups/xnat-db-<timestamp>.sql.gz`` and keeps it only if the dump is complete. Copy it
-   off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included.
+   off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included. The dump holds XNAT's
+   password hashes and token secrets, so it and ``backups/`` are readable only by the user that wrote them (the kit's
+   ``FLIP_UID``, or XNAT's own uid when the kit sets none): copy it as that user or as root.
 
 #. **Copy the XNAT archive** (``$XNAT_DATA_DIR/xnat-data/archive/``) with your backup tooling, at the same time as the
    dump. A database restored without its archive files, or the other way round, points at images that do not exist.
@@ -324,7 +326,7 @@ FLIP has no restore command for a trust. When you restore one with your own tool
 .. warning::
 
    **Do not delete a trust on the hub and register it again to give it new credentials**
-   (``make -C deploy/providers/AWS delete-trust NAME=<trust-name> HUB=<env>``). Deleting a
+   (``make -C deploy/aws delete-trust NAME=<trust-name> HUB=<env>``). Deleting a
    trust also deletes its records on the hub: its task queue, project and model links, FL job participation, metrics
    and logs, cohort results, cohort snapshot and imaging status, and user roles scoped to it.
 

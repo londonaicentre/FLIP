@@ -645,7 +645,7 @@ class TerraformApplyTakesTheReleaseTag(unittest.TestCase):
     def test_the_release_tag_is_forwarded_to_the_resolver(self) -> None:
         step = step_block(self.text, "Resolve the image tags to pin")
         assert "RELEASE_TAG: ${{ inputs.release_tag }}" in step
-        assert "deploy/providers/AWS/scripts/resolve-image-tags.sh" in step
+        assert "deploy/aws/scripts/resolve-image-tags.sh" in step
 
     def test_the_sha_path_is_still_what_a_push_resolves(self) -> None:
         """GIT_SHA stays the resolver's input; release_tag is additive, not a replacement."""

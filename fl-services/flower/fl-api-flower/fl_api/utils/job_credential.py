@@ -22,7 +22,6 @@ Byte-identical in the FLARE and Flower fl-api copies — ``scripts/check_fl_api_
 
 import os
 from pathlib import Path
-from uuid import UUID
 
 from fastapi import HTTPException, status
 
@@ -35,22 +34,15 @@ def deliver_job_credential(model_id: str, credential: str | None) -> None:
     """Make ``credential`` the one job credential the FL server can read.
 
     Args:
-        model_id (str): The hub's model id, which names the file. The route already types it as a UUID; it is
-            checked again here, before anything is touched, so the file name can never be a path.
+        model_id (str): The hub's model id (a UUID, checked by the route), which names the file.
         credential (str | None): The job's credential. None from a hub that mints none; it checks none either.
 
     Raises:
-        HTTPException: 400 when ``model_id`` is not a UUID. 500 when a credential was sent and
-            ``JOB_CREDENTIAL_DIR`` is not set, since the hub would refuse everything the job reported.
+        HTTPException: 500 when a credential was sent and ``JOB_CREDENTIAL_DIR`` is not set, since the hub
+            would refuse everything the job reported; 400 when ``model_id`` would name a path outside it.
     """
     if credential is None:
         return
-    try:
-        file_name = str(UUID(model_id))
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="The model id that names a job credential is not a UUID."
-        ) from None
     root = os.getenv(JOB_CREDENTIAL_DIR_ENV)
     if not root:
         raise HTTPException(
@@ -58,9 +50,8 @@ def deliver_job_credential(model_id: str, credential: str | None) -> None:
             detail=f"{JOB_CREDENTIAL_DIR_ENV} is not set: the job could not report to the hub.",
         )
     directory = Path(root)
-    target = safe_join(directory, file_name)
     directory.mkdir(parents=True, exist_ok=True)
     # A net runs one job at a time, so any other credential here belongs to a job that has ended.
     for other in directory.iterdir():
         other.unlink()
-    target.write_text(credential)
+    safe_join(directory, model_id).write_text(credential)

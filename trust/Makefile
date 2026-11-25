@@ -360,7 +360,7 @@ define ensure_data_dirs
 	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; $(prepare_host_dirs_hint); exit 1; }; \
 	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "$(ORTHANC_UID)" ]; then \
 	  chown $(ORTHANC_UID):$(ORTHANC_GID) "$$pacs" 2>/dev/null || \
-	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine:3.20 chown $(ORTHANC_UID):$(ORTHANC_GID) /d ||) { \
+	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$pacs" && pwd)":/d $(HOST_TOOLS_IMAGE) chown $(ORTHANC_UID):$(ORTHANC_GID) /d ||) { \
 	    echo "❌ $$pacs must be owned by uid $(ORTHANC_UID) (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
 	    echo "   Fix: sudo chown $(ORTHANC_UID):$(ORTHANC_GID) $$pacs"; $(prepare_host_dirs_hint); exit 1; }; \
 	fi; \
@@ -382,7 +382,7 @@ define ensure_snapshot_dir
 	@dir="$(COHORT_SNAPSHOT_DIR_HOST)"; owner="$(COHORT_SNAPSHOT_OWNER)"; \
 	if [ -n "$$DOCKER_CONTEXT" ] && [ "$${dir#/}" != "$$dir" ]; then \
 	  name="$$(basename "$$dir")"; \
-	  docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
+	  docker run --rm -v "$$(dirname "$$dir")":/parent $(HOST_TOOLS_IMAGE) \
 	    sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
 	    echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; }; \
 	  exit 0; \
@@ -390,7 +390,7 @@ define ensure_snapshot_dir
 	mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; $(prepare_host_dirs_hint); exit 1; }; \
 	if [ "$$($(call stat_fmt,%u:%g) "$$dir")" != "$$owner" ]; then \
 	  { chown "$$owner" "$$dir" && chmod 0750 "$$dir"; } 2>/dev/null || \
-	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d ||) { \
+	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$dir" && pwd)":/d $(HOST_TOOLS_IMAGE) chown "$$owner" /d ||) { \
 	    echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$($(call stat_fmt,%u:%g) "$$dir")"; \
 	    echo "   Fix: sudo chown $$owner $$dir"; $(prepare_host_dirs_hint); exit 1; }; \
 	fi

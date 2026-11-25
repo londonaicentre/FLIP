@@ -110,7 +110,7 @@ jobs:
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v6
         with:
-          # Keep in sync with TFLINT_VERSION in deploy/providers/AWS/scripts/tflint_lint.sh.
+          # Keep in sync with TFLINT_VERSION in deploy/aws/scripts/tflint_lint.sh.
           tflint_version: v0.64.0
 
       - name: TFLint
@@ -121,7 +121,7 @@ jobs:
           tflint --config="$PWD/.tflint.hcl"
 
       - name: Install checkov
-        # Keep in sync with CHECKOV_VERSION in deploy/providers/AWS/scripts/checkov_lint.sh.
+        # Keep in sync with CHECKOV_VERSION in deploy/aws/scripts/checkov_lint.sh.
         run: pip install checkov==3.3.14
 
       - name: Checkov

@@ -28,7 +28,7 @@ Architecture
    :align: center
    :width: 100%
    :alt: Three zones. A Trust site makes outbound connections only: its Trust API polls over HTTPS and its FL
-         client connects over mutual-TLS gRPC. In the networking account, CloudFront with WAF and an edge NLB
+         client connects over TLS. In the networking account, CloudFront with WAF and an edge NLB
          feed a Network Firewall and a Transit Gateway. In the workload account, with no internet gateway or NAT,
          the FLIP hub and FL server run on ECS Fargate next to Cognito, RDS PostgreSQL, S3 with KMS and an ECR
          pull-through cache.
@@ -67,7 +67,7 @@ Both paths then cross the estate's **Transit Gateway** and central **Network Fir
 **One internal NLB receives both.** The workload VPC has no internet gateway or NAT, so nothing in it can be
 public. A single internal network load balancer, with a fixed IP address in each subnet (the subnet's ``.251``
 address), forwards
-``:443`` to ``flip-api`` and passes ``:8002`` (mutual-TLS gRPC) through untouched to the FL server. Because the
+``:443`` to ``flip-api`` and passes ``:8002`` (TLS) through untouched to the FL server. Because the
 addresses never change, the edge registers them once. A private hosted zone resolves the FL server's name to the
 same addresses inside the VPC.
 
@@ -329,13 +329,13 @@ Deploying
 
 **CI applies this estate**, authenticated by GitHub OIDC with no long-lived AWS keys:
 
-- every pull request into ``main`` or ``develop`` that touches ``deploy/providers/AWS/**`` plans LZA staging;
+- every pull request into ``main`` or ``develop`` that touches ``deploy/aws/**`` plans LZA staging;
 - a push to ``develop`` applies LZA staging;
 - a merge to ``main`` applies **LZA production**;
 - a nightly plan reports drift.
 
 To point a GitHub environment at another account, change its values (the ``TF_HUB`` variable and the two role ARNs);
-see "Repointing CI at the LZA accounts" in :gh:`deploy/providers/AWS/README.md`.
+see "Repointing CI at the LZA accounts" in :gh:`deploy/aws/README.md`.
 
 .. list-table::
    :header-rows: 1
@@ -364,7 +364,7 @@ Break-glass deploy from a laptop
 
 .. code-block:: shell
 
-   cd deploy/providers/AWS
+   cd deploy/aws
    export AWS_PROFILE=stag   # or: prod
    export HUB=stag           # or: prod
 
@@ -409,7 +409,7 @@ The Makefile refuses to run when ``AWS_PROFILE`` does not match ``HUB``, and nee
 Further reading
 ***************
 
-- :gh:`deploy/providers/AWS/README.md` — maintainer notes: how the stack is built, the Terraform CI pipeline and
+- :gh:`deploy/aws/README.md` — maintainer notes: how the stack is built, the Terraform CI pipeline and
   the design rationale.
 - :ref:`security` — the "Cloud infrastructure" controls, including the estate-level ones the accelerator adds.
 - The AI Centre's estate configuration (``londonaicentre/lza``) and its edge stack

@@ -64,7 +64,7 @@ def _stage_server_checkpoint(url: str, model_id: str, file_name: str) -> None:
     mount-presence check, so without one the ``mkdir`` below lands on the container's own disk and
     the fl-server never sees the checkpoint (its locators log "not found" and skip the model). On
     AWS this combination cannot occur: ``enable_efs`` gates the whole fl-api task definition, env
-    var and volume together (see ``deploy/providers/AWS/variables.tf``).
+    var and volume together (see ``deploy/aws/variables.tf``).
     """
     dest_dir = safe_join(_server_checkpoint_root(), model_id)
     dest_dir.mkdir(parents=True, exist_ok=True)

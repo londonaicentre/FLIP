@@ -6,7 +6,7 @@ Deploy the Central Hub
 
 The Central Hub is the cloud-hosted side of FLIP. It manages projects and users, runs the federated learning server
 and serves the web UI. It runs on AWS and is provisioned with Terraform (or OpenTofu) from one root module,
-``deploy/providers/AWS/``.
+``deploy/aws/``.
 
 This page covers what every hub deployment shares; :doc:`deploy-central-hub-aws-lza` has the architecture and the
 runbook. To deploy a trust, see :doc:`deploy-trust-node`.
@@ -111,9 +111,9 @@ Prerequisites
         ssh-keygen -t ed25519 -f ~/.ssh/host-aws -C "<your email>"
 
    - the **AWS Session Manager plugin**, needed for ``ssh flip``. See
-     "Remote Access via SSM Session Manager" in :gh:`deploy/providers/AWS/README.md`.
+     "Remote Access via SSM Session Manager" in :gh:`deploy/aws/README.md`.
 
-**Choose the hub with** ``HUB``, which every target in ``deploy/providers/AWS`` requires:
+**Choose the hub with** ``HUB``, which every target in ``deploy/aws`` requires:
 
 .. list-table::
    :header-rows: 1
@@ -258,7 +258,7 @@ team runs.
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>
+      make -C deploy/aws register-trusts KIT=<CODE> HUB=<hub>
 
    Leave out ``KIT`` to register every kit file present for the environment. This writes the trust's
    **credentials** (API key, trust-internal service key and FL kit slot) into the kit file, and mints the trust's
@@ -284,7 +284,7 @@ file are kept.
 
   .. code-block:: shell
 
-     make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<hub>
+     make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<hub>
 
 If registration fails
 =====================
@@ -307,7 +307,7 @@ nothing to add, so try again and check the hub's log.) One command adds more, on
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS add-fl-kits N=2 HUB=<stag|prod>
+   make -C deploy/aws add-fl-kits N=2 HUB=<stag|prod>
 
 ``N`` is the number of new kits to make. Existing kits are never touched and no CA is rotated.
 
@@ -365,7 +365,7 @@ trust-internal service key are reissued in place, without re-registering it:
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS rotate-trust-keys KIT=<CODE> HUB=<env>
+   make -C deploy/aws rotate-trust-keys KIT=<CODE> HUB=<env>
 
 ``KIT`` is required, and exactly one trust rotates per run. The trust keeps its id, its code and its FL kit slot,
 and the change is recorded as a ``ROTATED`` entry in the trust audit log. The new credentials are written into
@@ -387,7 +387,7 @@ the 14-day default; only a local hub reads it from ``.env.<hub>``.
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS rotate-trust-keys KIT=<CODE> HUB=<env> REVOKE_OLD=1
+   make -C deploy/aws rotate-trust-keys KIT=<CODE> HUB=<env> REVOKE_OLD=1
 
 The hub then refuses the old key the moment the rotation commits, and the trust is offline until its containers are
 recreated from the new kit. Plan that as a short outage for the site.
@@ -411,7 +411,7 @@ Two more things to plan for:
 
     .. code-block:: shell
 
-       make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>
+       make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
   Do **not** use that root's ``deploy``: it is a first-install command that re-seeds the trust's data and resets XNAT.
 
@@ -446,7 +446,7 @@ and publishes the UI. Every deploy pins an immutable image tag.
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS deploy-centralhub HUB=<hub>
+      make -C deploy/aws deploy-centralhub HUB=<hub>
 
    This deploys the build of the tip of ``origin/main`` (``HUB=prod``) or ``origin/develop`` (``HUB=stag``), tagged
    ``sha-<short7>``. It checks that every service has an image at that tag **before** changing anything, so a
@@ -471,12 +471,12 @@ Rolling back
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS rollback-centralhub HUB=<hub>
+   make -C deploy/aws rollback-centralhub HUB=<hub>
 
 This points each service back at its previous revision in seconds, with no rebuild, and retires the revision it
 rolled away from so a later Terraform apply cannot bring it back.
 
-- **The UI does not move.** Re-run ``make -C deploy/providers/AWS deploy-ui HUB=<hub>`` from the matching commit if
+- **The UI does not move.** Re-run ``make -C deploy/aws deploy-ui HUB=<hub>`` from the matching commit if
   it must.
 - **On a FLARE hub** it first resets the FL server's local state on EFS and re-syncs the kit, which takes a
   minute or two. If that step fails, nothing is rolled back. ``SKIP_FL_LOCAL_RESET=1`` skips it.
@@ -527,7 +527,7 @@ one maintenance window.
 
    ``AES_KEY_BASE64`` must be identical on the hub and on every trust, and decode to exactly 32 bytes. On staging and
    production, the hub's value is the one CI wrote into Secrets Manager, which may differ from your checked-out
-   ``.env.<hub>``. Recover the deployed value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` before you
+   ``.env.<hub>``. Recover the deployed value with ``deploy/aws/scripts/reconcile_ci_env.py`` before you
    create or refresh trust kits.
 
    A mismatched key fails closed: the trust reports every task as ``Invalid payload: failed authentication``, and
@@ -586,7 +586,7 @@ If SES is still in its sandbox, request production access from the SES console. 
 verified addresses.
 
 **If the verification link has expired**, delete the FLIP identity in the SES console (*Configuration → Identities*),
-then run ``make -C deploy/providers/AWS plan apply HUB=<hub>`` to create it again and send a new link.
+then run ``make -C deploy/aws plan apply HUB=<hub>`` to create it again and send a new link.
 
 Sending from your own domain
 ============================
@@ -687,7 +687,7 @@ who has lost their **own** authenticator cannot use it.
 
    .. code-block:: shell
 
-      cd deploy/providers/AWS
+      cd deploy/aws
       USER_POOL_ID=$(terraform output -raw CognitoUserPoolId)
 
 2. **Clear the administrator's TOTP setting.**

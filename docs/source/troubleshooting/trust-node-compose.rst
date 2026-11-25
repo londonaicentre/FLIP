@@ -128,9 +128,11 @@ Nothing has been changed at that point.
 
 **Cause.** The checklist asks whether you can write the folder that holds each data directory, because a first
 install writes its seed marker there. On a site that root installed, those folders belong to root. An upgrade
-never seeds and writes nothing there, but it runs the same checklist.
+never seeds and writes nothing there, but before v0.16 it ran the same checklist. From v0.16,
+``upgrade-onprem-trust`` skips that part of the row.
 
-**Fix.** Read the checklist once on its own and confirm this is the only failing row:
+**Fix.** On a checkout older than v0.16, read the checklist once on its own and confirm this is the only failing
+row:
 
 .. code-block:: shell
 

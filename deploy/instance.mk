@@ -19,7 +19,7 @@
 #
 # The compose files derive the same prefix themselves, from ${FLIP_INSTANCE} rather than
 # from INSTANCE_PREFIX: they are also invoked directly, without make (`docker compose -f
-# deploy/compose.development.yml ...` — see CONTRIBUTING.md and the per-service
+# deploy/compose/compose.development.yml ...` — see CONTRIBUTING.md and the per-service
 # Makefiles), where only the environment exists and a make variable would render empty —
 # silently de-prefixing a secondary stack onto the default stack's networks. FLIP_INSTANCE
 # is therefore the single user-facing knob and is exported here, which is what makes the

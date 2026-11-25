@@ -125,7 +125,7 @@ placeholders:
 
 Leave these alone: ``FL_API_KEY`` (``make up`` generates it), the Cognito and SES settings (staging and
 production only) and the object-store keys (defaults are in
-``deploy/compose.development.yml``).
+``deploy/compose/compose.development.yml``).
 
 .. warning::
 

@@ -89,7 +89,7 @@ if [ -n "${missing}" ]; then
 fi
 
 # FLARE writes private keys 0600, and in development the FL API reads its admin key through the
-# host group (group_add in deploy/compose.development.nvflare.yml). `make provision` opens the key to
+# host group (group_add in deploy/compose/compose.development.nvflare.yml). `make provision` opens the key to
 # that group; a workspace provisioned before it did, or by another user, leaves a key the FL API
 # cannot open, and it would die at boot with a bare PermissionError (FLIP#1384). The marker above is
 # the FL server's kit, so a workspace with no FL API kit (an interrupted or partial provision) passes

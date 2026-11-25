@@ -12,7 +12,7 @@
 
 # Build-only smoke test for the flip-ui local-dev Dockerfile.
 #
-# Stag/prod serve the UI from S3 + CloudFront (see deploy/providers/AWS/), so
+# Stag/prod serve the UI from S3 + CloudFront (see deploy/aws/), so
 # nothing pulls a flip-ui image from GHCR. This workflow just proves the
 # Dockerfile still builds on the current branch — no push, no tagging.
 

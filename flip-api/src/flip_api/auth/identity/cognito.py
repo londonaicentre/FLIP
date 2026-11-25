@@ -57,20 +57,6 @@ def _safe_email_for_filter(email: str) -> str:
     return validated
 
 
-def _safe_uuid_for_filter(user_id: str | UUID) -> str:
-    """Coerce ``user_id`` to its canonical string UUID form.
-
-    A valid UUID's string form is hex+hyphen only, so once normalised it can
-    be interpolated into Cognito's filter syntax without escaping.
-    """
-    if isinstance(user_id, UUID):
-        return str(user_id)
-    try:
-        return str(UUID(user_id))
-    except (ValueError, AttributeError, TypeError) as exc:
-        raise InvalidIdentifierError("Invalid user ID format") from exc
-
-
 class CognitoIdentityProvider(IdentityProvider):
     """The Cognito user pool behind ``AWS_COGNITO_USER_POOL_ID``.
 
@@ -131,7 +117,7 @@ class CognitoIdentityProvider(IdentityProvider):
     def list_users(self) -> list[CognitoUser]:
         return self._list()
 
-    def get_user(self, *, user_id: UUID | str | None = None, email: str | None = None) -> CognitoUser:
+    def get_user(self, *, user_id: UUID | None = None, email: str | None = None) -> CognitoUser:
         if not email and not user_id:
             logger.error("No user email address or ID provided")
             raise InvalidIdentifierError("No user email address or ID provided")
@@ -139,8 +125,8 @@ class CognitoIdentityProvider(IdentityProvider):
         if email:
             filter_expr = f'email = "{_safe_email_for_filter(email)}"'
         else:
-            assert user_id is not None  # guaranteed by the guard above
-            filter_expr = f'sub = "{_safe_uuid_for_filter(user_id)}"'
+            # A UUID's string form is hex and hyphens, so it needs no escaping in the filter.
+            filter_expr = f'sub = "{user_id}"'
 
         users = self._list(Filter=filter_expr, Limit=1)
         if not users:
@@ -148,7 +134,7 @@ class CognitoIdentityProvider(IdentityProvider):
             raise UserNotFoundError(f"User with email: {email} or ID: {user_id} is not registered.")
         return users[0]
 
-    def get_username(self, user_id: UUID | str) -> str:
+    def get_username(self, user_id: UUID) -> str:
         try:
             return super().get_username(user_id)
         except UserNotFoundError as exc:
@@ -256,7 +242,7 @@ class CognitoIdentityProvider(IdentityProvider):
 
         The same Cognito app client that authenticates UI logins already
         enumerates the trusted UI origins per environment (see
-        ``deploy/providers/AWS/services.tf``); reusing it keeps "where users
+        ``deploy/aws/services.tf``); reusing it keeps "where users
         can sign in" and "where the UI may call this API" in lockstep.
         """
         try:

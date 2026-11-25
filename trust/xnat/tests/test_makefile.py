@@ -177,7 +177,7 @@ class XnatDbMajorUpgrade(unittest.TestCase):
 
 # A stand-in for the docker CLI, just enough of it for xnat-backup: `ps` finds the db by its service
 # label (NO_DB hides it), `exec` is the db container's `pg_dumpall | gzip` (DUMP=ok|fail|truncated),
-# `context` is a local daemon, and `run alpine …` runs the command here — under bash, as the
+# `context` is a local daemon, and `run <HOST_TOOLS_IMAGE> …` runs the command here — under bash, as the
 # containers' busybox sh has pipefail and dash does not — with each `-v src:dst` mount rewritten
 # to its host path.
 STUB_DOCKER = r"""#!/bin/bash
@@ -205,7 +205,7 @@ case "$1" in
         --rm|-i) shift ;;
         --user) [ -n "$RUN_USERS" ] && echo "$2" >> "$RUN_USERS"; shift 2 ;;
         -v) mounts+=("$2"); shift 2 ;;
-        alpine:*) shift; break ;;
+        ghcr.io/londonaicentre/mirror/library/busybox:*@sha256:*) shift; break ;;
         *) shift ;;
       esac
     done
@@ -227,11 +227,22 @@ exit 0
 class XnatBackup(unittest.TestCase):
     """xnat-backup, run for real against a stub docker: only a complete dump counts as a backup."""
 
-    def _backup(self, *, locked_backups: bool = False, locked_data: bool = False, extra_kit: str = "", **env: str):
+    def _backup(
+        self,
+        *,
+        locked_backups: bool = False,
+        locked_data: bool = False,
+        open_backups: bool = False,
+        extra_kit: str = "",
+        **env: str,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             path = _path_with(tmp, docker=STUB_DOCKER)
             data = Path(tmp) / "xnat"
             data.mkdir()
+            if open_backups:  # a backups/ an earlier upgrade left readable by every host user
+                (data / "backups").mkdir()
+                (data / "backups").chmod(0o755)
             if locked_backups:  # a backups/ an earlier upgrade made as root: this uid cannot write it
                 (data / "backups").mkdir(mode=0o555)
             if locked_data:  # no backups/ yet, in a data dir this uid cannot write
@@ -246,6 +257,8 @@ class XnatBackup(unittest.TestCase):
                 )
                 backups = data / "backups"
                 kept = sorted(b.name for b in backups.glob("*.sql.gz")) if backups.exists() else []
+                written = (backups, *backups.glob("*.sql.gz")) if kept else ()
+                self.modes = [oct(p.stat().st_mode & 0o777) for p in written]
             finally:
                 if locked_backups:
                     (data / "backups").chmod(0o755)
@@ -257,6 +270,14 @@ class XnatBackup(unittest.TestCase):
         code, out, kept = self._backup(DUMP="ok")
         assert code == 0, out
         assert len(kept) == 1, (kept, out)
+
+    def test_the_dump_is_readable_by_its_owner_only(self):
+        """It holds every XNAT password hash and token secret, so no other user of the host may read it."""
+        for open_backups in (False, True):
+            with self.subTest(open_backups=open_backups):
+                code, out, _ = self._backup(DUMP="ok", open_backups=open_backups)
+                assert code == 0, out
+                assert self.modes == ["0o700", "0o600"], f"backups/ and the dump are {self.modes}\n{out}"
 
     def test_a_failed_dump_fails_and_leaves_no_file(self):
         """pg_dumpall's exit status fails the backup even when its stream looks complete (pipefail)."""

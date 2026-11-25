@@ -68,8 +68,8 @@ The shifted ports let a prod-pointed trust run on a developer laptop next to `ma
 
 1. **Operator workstation** — The machine where you run the commands (typically your laptop). It needs:
    - Python 3.13+ and [UV](https://docs.astral.sh/uv/guides/install-python/)
-   - Ansible (installed via `uv sync` in `deploy/providers/AWS/`)
-   - Terraform outputs available (you must have run `make init` + `make apply` in `deploy/providers/AWS/` first)
+   - Ansible (installed via `uv sync` in `deploy/aws/`)
+   - Terraform outputs available (you must have run `make init` + `make apply` in `deploy/aws/` first)
    - SSH access to the trust host (if provisioning remotely)
 
 2. **Trust host** — An Ubuntu 22.04+ machine (physical or VM) with:
@@ -77,14 +77,14 @@ The shifted ports let a prod-pointed trust run on a developer laptop next to `ma
    - SSH access from the operator workstation (if remote), or local access
    - Internet connectivity (to pull Docker images and packages)
 
-3. **AWS Central Hub deployed** — The Central Hub must be running in AWS (required for Terraform outputs and the FL participant kits in S3). See [`deploy/providers/AWS/`](../../../deploy/providers/AWS/README.md).
+3. **AWS Central Hub deployed** — The Central Hub must be running in AWS (required for Terraform outputs and the FL participant kits in S3). See [`deploy/aws/`](../../../deploy/aws/README.md).
 
 ## Quick Start
 
-All commands are run from the `deploy/providers/AWS/` directory since the Makefile targets there orchestrate both cloud and local infrastructure:
+All commands are run from the `deploy/aws/` directory since the Makefile targets there orchestrate both cloud and local infrastructure:
 
 ```bash
-cd deploy/providers/AWS
+cd deploy/aws
 ```
 
 ### Running docker on the trust host
@@ -120,13 +120,13 @@ Any direct `docker`, `docker compose`, or
 
 Run this **on the trust host**: `provision-local-trust` runs Ansible against the machine it runs on.
 To provision a remote host over SSH, use [Direct usage](#onpremyml) instead. The target lives in the
-AWS provider Makefile, so run it from `deploy/providers/AWS/`:
+AWS provider Makefile, so run it from `deploy/aws/`:
 
 ```bash
 # Set the sudo password (bash; fish: set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: '))
 read -rsp 'Sudo password: ' ANSIBLE_BECOME_PASS && export ANSIBLE_BECOME_PASS
 
-cd deploy/providers/AWS       # first time only, if you didn't `cd` earlier
+cd deploy/aws       # first time only, if you didn't `cd` earlier
 make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 ```
 
@@ -202,7 +202,7 @@ make provision-local-trust KIT=<CODE> HUB=<stag|prod>
    [Running docker on the trust host](#running-docker-on-the-trust-host):
 
    ```bash
-   cd ../../..   # back to the repo root from deploy/providers/AWS
+   cd ../../..   # back to the repo root from deploy/aws
    sudo -E make -C trust up-trust KIT=<CODE> HUB=<stag|prod>   # the trust code you registered
    ```
 
@@ -214,7 +214,7 @@ Any machine with the correct credentials can act as a trust: the hub identifies 
 
 | Variable | Purpose |
 | --- | --- |
-| `TRUST_API_KEY` | Per-trust secret key, written into the trust's kit file at registration (`make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>` on a deployed hub) |
+| `TRUST_API_KEY` | Per-trust secret key, written into the trust's kit file at registration (`make -C deploy/aws register-trusts KIT=<CODE> HUB=<hub>` on a deployed hub) |
 | `CENTRAL_HUB_API_URL` | Hub URL the trust polls (e.g. `https://app.flip.aicentre.co.uk`) |
 | `AES_KEY_BASE64` | Shared encryption key for trust-hub payloads |
 
@@ -249,7 +249,7 @@ instance role. On-prem, load it yourself with `make -C trust/omop-db load-omop-v
 **Direct usage** (without the Makefile):
 
 ```bash
-cd deploy/providers/AWS
+cd deploy/aws
 uv run ansible-galaxy install -r ../../../trust/deploy/ansible/requirements.yml
 
 uv run ansible-playbook \
@@ -265,7 +265,7 @@ Ansible Galaxy dependencies:
 
 - `geerlingguy.docker` — Docker installation role
 
-Install it as shown in [Direct usage](#onpremyml) (from `deploy/providers/AWS/`, where `uv sync` installs Ansible); `provision-local-trust` does this for you.
+Install it as shown in [Direct usage](#onpremyml) (from `deploy/aws/`, where `uv sync` installs Ansible); `provision-local-trust` does this for you.
 
 ## Network and Firewall Configuration
 
@@ -276,7 +276,7 @@ Install it as shown in [Direct usage](#onpremyml) (from `deploy/providers/AWS/`,
 The host/network firewall must allow outbound to **two separate Central Hub hosts** (different load balancers — both must be allowlisted):
 
 - **`app.flip.aicentre.co.uk`** — the edge CloudFront (HTTPS API, port 443).
-- **`fl.app.flip.aicentre.co.uk`** — the edge NLB (FL gRPC, default port 8002).
+- **`fl.app.flip.aicentre.co.uk`** — the edge NLB (FL traffic over TLS, default port 8002).
 
 ### Dynamic Public IP
 
@@ -287,12 +287,12 @@ The hub keeps no per-trust allowlist, so a changed public IP (common with reside
 | Symptom | Check |
 | --- | --- |
 | Trust not polling hub | Trust stack running? (`sudo docker ps` on trust host). Check trust-api logs for polling errors. |
-| `Connection timed out` (FL) or other outbound failures | Host/router firewall must allow outbound HTTPS (443) and gRPC (8002) to the two hosts in [Port Forwarding (NAT)](#port-forwarding-nat) |
+| `Connection timed out` (FL) or other outbound failures | Host/router firewall must allow outbound HTTPS (443) and the FL port (8002) to the two hosts in [Port Forwarding (NAT)](#port-forwarding-nat) |
 | Ansible `Permission denied` | SSH key correct? User has sudo? `ANSIBLE_BECOME_PASS` set for local mode? |
 
 ## Related Documentation
 
-- [AWS Provider README](../../../deploy/providers/AWS/README.md) — Central Hub and cloud Trust deployment
+- [AWS Provider README](../../../deploy/aws/README.md) — Central Hub and cloud Trust deployment
 - [Helm chart README](../helm/README.md) — the same trust stack rendered for Kubernetes
 - [Trust Compose stack README](../README.md) — the compose files
 - [Trust README](../../README.md) — Trust service stack details

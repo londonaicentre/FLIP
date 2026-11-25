@@ -21,7 +21,7 @@ The FLARE server typically uses two ports. Both are configurable in the project 
 
 | Port | Purpose |
 |------|---------|
-| 8002 | Clients (training sites or edge devices) connect over gRPC to send and receive job data. |
+| 8002 | Clients (training sites or edge devices) connect over a WebSocket inside mutual TLS to send and receive job data. |
 | 8003 | Communication with the Admin API, which manages the system and job scheduling. |
 
 From FLARE 2.7 onwards, [one port can serve both controller and admin API traffic](https://nvflare.readthedocs.io/en/2.9.0/user_guide/admin_guide/configurations/server_port_consolidation.html).
@@ -66,7 +66,7 @@ Where the file lives:
 
 - **Compose host, production:** `/opt/flip/services/fl-server-net-<N>/local/`
 - **Compose host, development:** `$FL_PROVISIONED_DIR/net-<N>/services/fl-server-net-<N>/local/`
-- **ECS:** `local/` is an EFS volume. `make rollback-centralhub` (in `deploy/providers/AWS`) handles it for you. Before repointing any service, it runs the one-shot `efs-provision-certs` task that Terraform runs when the kit changes. That task empties `local/` and re-syncs the kit from S3 (`scripts/reset-fl-server-local.sh`).
+- **ECS:** `local/` is an EFS volume. `make rollback-centralhub` (in `deploy/aws`) handles it for you. Before repointing any service, it runs the one-shot `efs-provision-certs` task that Terraform runs when the kit changes. That task empties `local/` and re-syncs the kit from S3 (`scripts/reset-fl-server-local.sh`).
 
 To do the ECS step by hand, for instance before rolling back with plain `aws ecs update-service`:
 

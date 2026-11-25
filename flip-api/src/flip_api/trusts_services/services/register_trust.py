@@ -224,7 +224,7 @@ def register_trust(
         # remediation lives here in the logs.
         logger.error(
             "No free FL kit slot among those the slot source names. Development: add slots to FL_KIT_SLOT_NAMES and "
-            "restart flip-api. Stag/prod: `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>`. "
+            "restart flip-api. Stag/prod: `make -C deploy/aws add-fl-kits N=<n> HUB=<stag|prod>`. "
             "If kits already exist and still don't appear, check earlier logs for a kit left out as incomplete."
         )
         raise NoFreeKitSlotError("No FL kit slots available. Pre-provision more FL kits and try again.")

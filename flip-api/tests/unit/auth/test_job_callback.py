@@ -12,6 +12,7 @@
 
 """Which callbacks about a model the hub accepts from the FL server."""
 
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -23,10 +24,16 @@ from flip_api.db.models.main_models import FLJob, Model
 from flip_api.domain.schemas.status import JobStatus, ModelStatus
 
 
+def _completed(job_status: JobStatus) -> datetime | None:
+    return datetime.utcnow() if job_status == JobStatus.COMPLETED else None
+
+
 def _session(job_statuses: list[JobStatus], model_status: ModelStatus) -> tuple[MagicMock, list[FLJob]]:
     """A session whose model has these non-deleted jobs, newest first."""
     model_id = uuid4()
-    jobs = [FLJob(model_id=model_id, status=job_status) for job_status in job_statuses]
+    jobs = [
+        FLJob(model_id=model_id, status=job_status, completed=_completed(job_status)) for job_status in job_statuses
+    ]
     session = MagicMock()
     session.exec.return_value.all.return_value = jobs
     session.get.return_value = MagicMock(spec=Model, status=model_status)
@@ -62,6 +69,15 @@ def test_reporting_jobs(job_statuses: list[JobStatus], model_status: ModelStatus
     session, jobs = _session(job_statuses, model_status)
 
     assert reporting_jobs(uuid4(), session) == [jobs[index] for index in reporting]
+
+
+@pytest.mark.parametrize("completed", [datetime.utcnow() - timedelta(days=30), None])
+def test_a_completed_job_stops_reporting_once_the_grace_period_is_over(completed: datetime | None) -> None:
+    """A model can stay in ERROR indefinitely; its last job's credential must not stay valid with it."""
+    session, jobs = _session([JobStatus.COMPLETED], ModelStatus.ERROR)
+    jobs[0].completed = completed
+
+    assert reporting_jobs(uuid4(), session) == []
 
 
 def _job(credential: str | None) -> FLJob:
