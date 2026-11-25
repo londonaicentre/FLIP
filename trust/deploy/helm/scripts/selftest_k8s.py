@@ -64,6 +64,7 @@ class Cluster(node_checks.Node, Protocol):
 
     def workloads(self) -> list[dict]: ...
     def manifest_diff(self) -> tuple[int, str]: ...
+    def manifest_objects(self) -> list[dict] | None: ...
 
 
 def _is_ready(pod: dict) -> bool:
@@ -173,6 +174,18 @@ class KubectlCluster:
                     return next((f"{user}:{password}" for user, password in users.items()), None)
         return None
 
+    def manifest_objects(self) -> list[dict] | None:
+        """The release's objects as the cluster holds them, with who owns each field; None when they cannot be read."""
+        ok, manifest = self._run([*self.helm, "get", "manifest", self.release])
+        if not ok or not manifest.strip():
+            return None
+        ok, out = self._run([*self.kubectl, "get", "-f", "-", "-o", "json", "--show-managed-fields"], stdin=manifest)
+        try:
+            found = json.loads(out) if ok else None
+        except json.JSONDecodeError:
+            return None
+        return None if found is None else found.get("items", [found])
+
     def manifest_diff(self) -> tuple[int, str]:
         """`kubectl diff` of the release's own manifest against the cluster: (exit code, output).
 
@@ -239,11 +252,71 @@ def check_release_ready(cluster: Cluster) -> Check:
 DIFFED = re.compile(r"^diff -u.* \S*/LIVE-[^/]+/(\S+)", re.M)
 
 
+# Field managers whose writes are what was deployed, the cluster's own bookkeeping, or a restart.
+OWN_MANAGERS = ("helm", "kube-controller-manager", "kube-scheduler", "kubelet", "kubectl-rollout")
+
+
+def _fields(tree: dict, path: tuple[str, ...] = ()) -> set[tuple[str, ...]]:
+    """Every field a managedFields entry names, as paths: its fieldsV1 tree flattened."""
+    found = set()
+    for key, below in tree.items():
+        found |= _fields(below, (*path, key)) if below else {(*path, key)}
+    return found
+
+
+def _readable(path: tuple[str, ...]) -> str:
+    """A field path as a person would write it: spec.template.spec.containers[trust-api].env[NAME]."""
+    text = ""
+    for key in path:
+        if key.startswith("f:"):
+            text += f".{key[2:]}"
+        elif key.startswith("k:"):
+            try:
+                text += f"[{next(iter(json.loads(key[2:]).values()))}]"
+            except (json.JSONDecodeError, StopIteration, AttributeError):
+                text += "[…]"
+    return text.lstrip(".")
+
+
+def changed_by_hand(objects: list[dict]) -> list[str]:
+    """Objects holding a field that Helm did not write, from the API server's own record of who wrote what.
+
+    `kubectl diff` shows what applying the manifest would change, so it misses what was only added (a new
+    environment variable, say): applying the manifest would leave that in place. Kubernetes records who wrote each
+    field (managedFields), which catches additions too. A field someone set by hand that Helm also sets is not an
+    addition: if the two values differed, `kubectl diff` would say so. Status and metadata are not what was deployed.
+    """
+    found = []
+    for item in objects:
+        managed = item.get("metadata", {}).get("managedFields", [])
+        ours = set().union(*(_fields(e.get("fieldsV1", {})) for e in managed if _own(e)))
+        for entry in managed:
+            added = sorted(
+                path
+                for path in _fields(entry.get("fieldsV1", {})) - ours
+                if path[0] not in ("f:status", "f:metadata") and path[-1] != "."
+            )
+            if added and not _own(entry):
+                more = f" and {len(added) - 1} more" if len(added) > 1 else ""
+                found.append(
+                    f"{item.get('kind')} {item['metadata'].get('name')}: {_readable(added[0])}{more} set by "
+                    f"{entry.get('manager')} on {entry.get('time', 'an unrecorded date')}, not by Helm"
+                )
+    return found
+
+
+def _own(entry: dict) -> bool:
+    return entry.get("manager", "").startswith(OWN_MANAGERS)
+
+
 def check_drift(cluster: Cluster) -> Check:
     """Every object of the release still matches the manifest Helm deployed (FLIP#2078).
 
     Names the objects that differ and never prints the difference: it can hold a Secret's content.
     """
+    objects = cluster.manifest_objects()
+    if objects is None:
+        raise RuntimeError("could not read the release's objects from the cluster")
     code, out = cluster.manifest_diff()
     if code not in (0, 1):
         raise RuntimeError(f"kubectl diff did not run: {out.strip()[:200]}")
@@ -254,7 +327,10 @@ def check_drift(cluster: Cluster) -> Check:
         differing.append(f"{parts[kind]} {'.'.join(parts[kind + 2 :])} differs from the release's manifest")
     if code == 1 and not differing:
         raise RuntimeError(f"kubectl diff reported a difference this check could not read: {out[:200]}")
-    return node_checks.drift(differing, "every object of the release matches its Helm manifest (kubectl diff)")
+    return node_checks.drift(
+        differing + changed_by_hand(objects),
+        f"all {len(objects)} objects of the release match its Helm manifest, and only Helm has written to them",
+    )
 
 
 def run_smoke(namespace: str, release: str, context: str | None) -> tuple[int, str, str]:

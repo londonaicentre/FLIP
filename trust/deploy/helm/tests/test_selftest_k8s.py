@@ -33,6 +33,27 @@ sys.modules["selftest_k8s"] = selftest
 _spec.loader.exec_module(selftest)
 
 
+def _owned(kind, name, **writers):
+    """An object as `kubectl get --show-managed-fields` returns it: each writer and the field paths it owns."""
+
+    def tree(paths):
+        root: dict = {}
+        for path in paths:
+            node = root
+            for key in path.split("/"):
+                node = node.setdefault(key, {})
+        return root
+
+    managed = [
+        {"manager": manager, "time": "2026-11-25T14:00:00Z", "fieldsV1": tree(paths)}
+        for manager, paths in writers.items()
+    ]
+    return {"kind": kind, "metadata": {"name": name, "managedFields": managed}}
+
+
+_ENV = 'f:spec/f:template/f:spec/f:containers/k:{"name":"trust-api"}/f:env/k:{"name":"%s"}/f:value'
+
+
 class FakeCluster:
     """Answers the questions selftest_k8s asks of a cluster, from canned values."""
 
@@ -71,6 +92,12 @@ class FakeCluster:
         self.fl_target = "fl.hub.example:8002"
         self.unreachable = {"https://example.com/", "https://www.wikipedia.org/"}  # what the node's network blocks
         self.diff = (0, "")  # kubectl diff of the release's manifest: exit code and output
+        # The release's objects with who wrote which fields: Helm the spec, the cluster's controllers the status.
+        self.objects = [
+            _owned(
+                "Deployment", "trust-api", helm=[_ENV % "ENV"], **{"kube-controller-manager": ["f:status/f:replicas"]}
+            )
+        ]
         self.person_count = "4166"
         self.orthanc_creds = "flip:s3cret"
         self.orthanc_statistics = '{"CountInstances": 250, "CountStudies": 25}'
@@ -104,6 +131,9 @@ class FakeCluster:
 
     def manifest_diff(self):
         return self.diff
+
+    def manifest_objects(self):
+        return self.objects
 
     def exec(self, pod, script, stdin=None):
         self.exec_log.append((pod, script, stdin))
@@ -953,6 +983,40 @@ def test_a_release_that_matches_its_manifest_has_no_drift():
     assert check.refs == ("SATRE 5.5.01", "SATRE 2.4.03", "SATRE 2.4.04")
 
 
+def test_a_field_added_by_hand_is_drift_even_though_applying_the_manifest_would_keep_it():
+    """`kubectl set env` adds a variable; kubectl diff shows nothing, the API server's record of who wrote it does."""
+    patched = _owned("Deployment", "trust-api", helm=[_ENV % "ENV"], **{"kubectl-set": [_ENV % "CHANGED_BY_HAND"]})
+    check = selftest.check_drift(FakeCluster(objects=[patched]))
+    assert check.status.value == "fail"
+    assert check.detail == (
+        "Deployment trust-api: spec.template.spec.containers[trust-api].env[CHANGED_BY_HAND].value "
+        "set by kubectl-set on 2026-11-25T14:00:00Z, not by Helm"
+    )
+
+
+def test_a_field_set_by_hand_that_helm_also_sets_is_not_an_addition():
+    """patch-kit-secrets writes keys the chart templates too; were the values to differ, kubectl diff says so."""
+    key = "f:data/f:trust-api-key"
+    shared = _owned("Secret", "trust-secrets", helm=[key], **{"kubectl-patch": [key]})
+    assert selftest.check_drift(FakeCluster(objects=[shared])).status.value == "pass"
+
+
+def test_a_restart_or_a_label_is_not_drift():
+    restart = "f:spec/f:template/f:metadata/f:annotations/f:kubectl.kubernetes.io~1restartedAt"
+    restarted = _owned("Deployment", "trust-api", helm=[_ENV % "ENV"], **{"kubectl-rollout": [restart]})
+    labelled = _owned(
+        "ConfigMap", "governance", helm=["f:data/f:doc"], **{"kubectl-label": ["f:metadata/f:labels/f:x"]}
+    )
+    check = selftest.check_drift(FakeCluster(objects=[restarted, labelled]))
+    assert check.status.value == "pass", check
+    assert "all 2 objects" in check.detail
+
+
+def test_objects_that_cannot_be_read_could_not_run():
+    check = selftest.trust_checks.run("no configuration drift", lambda: selftest.check_drift(FakeCluster(objects=None)))
+    assert check.status.value == "error"
+
+
 def test_each_object_that_differs_is_named_and_its_content_never_printed():
     check = selftest.check_drift(FakeCluster(diff=(1, KUBECTL_DIFF)))
     assert check.status.value == "fail"
@@ -981,8 +1045,15 @@ def test_the_comparison_only_reads(monkeypatch):
         return subprocess.CompletedProcess(args, 0, stdout="kind: ConfigMap\n", stderr="")
 
     monkeypatch.setattr(selftest.subprocess, "run", fake_run)
-    assert selftest.KubectlCluster("ns", "rel", "ctx").manifest_diff() == (0, "")
-    assert [a[a.index("ns") + 1 :] for a in ran] == [["get", "manifest", "rel"], ["diff", "-f", "-"]]
+    cluster = selftest.KubectlCluster("ns", "rel", "ctx")
+    assert cluster.manifest_diff() == (0, "")
+    cluster.manifest_objects()
+    assert [a[a.index("ns") + 1 :] for a in ran] == [
+        ["get", "manifest", "rel"],
+        ["diff", "-f", "-"],
+        ["get", "manifest", "rel"],
+        ["get", "-f", "-", "-o", "json", "--show-managed-fields"],
+    ]
 
 
 def test_the_release_reports_the_rows_every_platform_reports():
