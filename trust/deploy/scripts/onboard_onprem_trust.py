@@ -54,14 +54,15 @@ import tempfile
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
-from enum import Enum
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import site_upgrade  # noqa: E402 — resolves a CI-deployed hub's sha build to this checkout's release
+import trust_checks  # noqa: E402 — the result type and report every trust check shares
 import trust_kit_lib  # noqa: E402 — the one Python reader of TRUST_DATA_SEED
+from trust_checks import Check, Status  # noqa: E402
 
 WIDTH = 71
 
@@ -115,29 +116,7 @@ RED = "\033[31m" if _TTY else ""
 YELLOW = "\033[33m" if _TTY else ""
 
 
-class Status(Enum):
-    PASS = ("✅", GREEN)
-    FAIL = ("❌", RED)
-    PENDING = ("⏳", YELLOW)
-    WARN = ("⚠️ ", YELLOW)  # trailing space — ⚠️ renders narrow on some terminals
-
-    @property
-    def glyph(self) -> str:
-        return self.value[0]
-
-    @property
-    def colour(self) -> str:
-        return self.value[1]
-
-
-@dataclass
-class Check:
-    """One row of the checklist."""
-
-    label: str
-    status: Status
-    detail: str = ""
-    hints: list[str] = field(default_factory=list)
+COLOUR = {Status.PASS: GREEN, Status.FAIL: RED, Status.PENDING: YELLOW, Status.WARN: YELLOW}
 
 
 def rule(char: str = "═") -> None:
@@ -152,8 +131,10 @@ def heading(text: str) -> None:
 
 def render_check(c: Check, label_width: int) -> None:
     """Render one check row + any indented hints."""
-    label = f"{c.label}:".ljust(label_width)
-    print(f"  {c.status.colour}{c.status.glyph}{RESET} {label} {c.detail}")
+    label = f"{c.name}:".ljust(label_width)
+    # ⚠️ renders narrow on some terminals, so it takes a trailing space.
+    glyph = c.status.glyph + (" " if c.status is Status.WARN else "")
+    print(f"  {COLOUR.get(c.status, '')}{glyph}{RESET} {label} {c.detail}")
     for hint in c.hints:
         print(f"       {DIM}→ {hint}{RESET}")
 
@@ -1404,6 +1385,27 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None, upgrade:
     ]
 
 
+def write_report(checks: list[Check], out: Path, kit: str, started: datetime) -> None:
+    """The checklist as a report file. A folder that cannot be written is a note, never a failed checklist."""
+    form = "%Y-%m-%dT%H:%M:%SZ"
+    try:
+        path = trust_checks.write_report(
+            checks,
+            out,
+            stem=f"checklist-{kit}-{started:%Y%m%dT%H%M%SZ}",
+            latest=f"latest-checklist-{kit}",
+            title=f"Onboarding checklist: {kit}",
+            started=started.strftime(form),
+            finished=datetime.now(timezone.utc).strftime(form),
+            shape="compose",
+            kit=kit,
+        )
+    except OSError as error:
+        print(f"\n  Report not written to {out}: {error}")
+        return
+    print(f"\n  Report: {path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
@@ -1431,6 +1433,7 @@ def main() -> None:
         action="store_true",
         help="Judge the kit for an upgrade of a running site (upgrade-onprem-trust), which never seeds.",
     )
+    parser.add_argument("--out", type=Path, help="Also write the checklist as a JSON and markdown report here.")
     args = parser.parse_args()
 
     # The governance and site-privacy checks run stdlib tomllib under this interpreter.
@@ -1455,10 +1458,13 @@ def main() -> None:
     print(f"  {BOLD}Checks:{RESET}")
     print()
 
+    started = datetime.now(timezone.utc)
     checks = run_checks(kit, repo_root, kit_file, args.upgrade)
-    label_width = max(len(c.label) + 1 for c in checks)  # +1 for the trailing ":"
+    label_width = max(len(c.name) + 1 for c in checks)  # +1 for the trailing ":"
     for c in checks:
         render_check(c, label_width)
+    if args.out:
+        write_report(checks, args.out, kit, started)
 
     n_pass = sum(1 for c in checks if c.status == Status.PASS)
     n_fail = sum(1 for c in checks if c.status == Status.FAIL)

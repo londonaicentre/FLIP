@@ -426,6 +426,39 @@ def test_18_a_gate_never_suggests_a_command() -> None:
         _assert(named == expect_first_install, f"{argv[1:]}: footer names up-onprem-trust = {expect_first_install}")
 
 
+def test_63_out_writes_the_checklist_as_a_report_and_never_fails_on_it() -> None:
+    """--out adds the report every trust check writes; a folder that cannot be written changes nothing else."""
+    print("▶ --out: the checklist is also written as JSON + markdown")
+    checks = [
+        mod.Check("Kit file present", mod.Status.PASS, "trust/.env.Trust_9"),
+        mod.Check("x", mod.Status.WARN, "w"),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        blocked = Path(tmp) / "a-file"
+        blocked.write_text("")
+        for out, written in ((Path(tmp) / "reports", True), (blocked / "reports", False)):
+            text = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", ["prog", "Trust_9", "--out", str(out)]),
+                mock.patch.object(sys, "stdout", text),
+                mock.patch.object(mod, "run_checks", return_value=checks),
+            ):
+                try:
+                    mod.main()
+                except SystemExit as e:
+                    _assert(e.code == 0, f"READY exits 0 whether or not the report was written ({written})")
+            if not written:
+                _assert("Report not written" in text.getvalue(), "an unwritable folder is a note")
+                continue
+            report = json.loads(next(out.glob("checklist-Trust_9-*.json")).read_text())
+            _assert(report["shape"] == "compose" and report["kit"] == "Trust_9", "the report names the kit")
+            _assert(
+                report["ok"] is True and [c["status"] for c in report["checks"]] == ["pass", "warn"],
+                "rows keep their status",
+            )
+            _assert((out / "latest-checklist-Trust_9.md").is_file(), "latest-checklist-<kit>.md is written")
+
+
 def test_19_hub_on_its_release_sha_build_is_not_behind() -> None:
     """A CI-applied hub reports the sha build of its release commit; from that release's checkout the
     kit pinning the release is current, not "behind"."""
@@ -538,10 +571,10 @@ def test_27_selected_kit_controls_values_and_filename_hints() -> None:
             mock.patch.object(mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "invalid")),
         ):
             checks = mod.run_checks("SITE", root, selected)
-        present = next(check for check in checks if check.label == "Kit file present")
+        present = next(check for check in checks if check.name == "Kit file present")
         _assert(present.status == mod.Status.PASS, "selected file is present")
         _assert(present.detail == "trust/.env.SITE.prod", "names the selected file", present.detail)
-        identity = next(check for check in checks if check.label == "EXPECTED_TRUST_ID self-check")
+        identity = next(check for check in checks if check.name == "EXPECTED_TRUST_ID self-check")
         _assert(identity.detail == "set to selected-file", "reads the selected kit's values", identity.detail)
         hints = "\n".join(hint for check in checks for hint in check.hints)
         _assert("trust/.env.SITE.prod" in hints, "edit hints name the selected kit", hints)
@@ -628,7 +661,7 @@ def test_30_governance_action_preserves_and_quotes_the_selected_kit() -> None:
                 ),
             ):
                 checks = mod.run_checks("SITE", root, selected)
-            result = next(check for check in checks if check.label == "Governance document")
+            result = next(check for check in checks if check.name == "Governance document")
             _assert(result.status == mod.Status.FAIL, "governance validation still fails")
             hint = next(hint for hint in result.hints if "check-governance" in hint)
             command = hint[1 : hint.rfind("`")]
@@ -786,12 +819,12 @@ def test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub() -> None:
             mock.patch.object(mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")),
         ):
             checks = mod.run_checks("SITE", root, kit_file)
-    labels = [check.label for check in checks]
+    labels = [check.name for check in checks]
     for label in ("Hub API reachable", "FL endpoint reachable", "Image registries reachable"):
         _assert(label in labels, f"row present: {label}")
-    hub = next(check for check in checks if check.label == "Hub API reachable")
+    hub = next(check for check in checks if check.name == "Hub API reachable")
     _assert(hub.status == mod.Status.FAIL, "unreachable hub is a FAIL (blocks --gate)", str(hub))
-    registries = next(check for check in checks if check.label == "Image registries reachable")
+    registries = next(check for check in checks if check.name == "Image registries reachable")
     _assert(registries.status == mod.Status.PASS, "registries probed through probe_tcp", str(registries))
 
 
@@ -1184,7 +1217,7 @@ def test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones() -> None
     _assert(mod.HUB_SHARED_KEYS == expected, "the ten required keys, in order", repr(mod.HUB_SHARED_KEYS))
     _assert("FL_EDGE_PORT" not in mod.HUB_SHARED_KEYS, "FL_EDGE_PORT is not required")
     check = mod.check_hub_shared({}, False)
-    _assert(check.label == "Hub-shared block (10 keys)", "the row label still counts ten keys", check.label)
+    _assert(check.name == "Hub-shared block (10 keys)", "the row label still counts ten keys", check.name)
 
 
 def test_56_fl_kit_contents_a_kit_private_to_another_uid_is_not_called_missing() -> None:
@@ -1377,6 +1410,7 @@ def main() -> None:
     test_60_log_level_passes_only_a_level_quieter_than_debug()
     test_61_an_empty_trust_local_password_is_not_a_rotated_one()
     test_62_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked()
+    test_63_out_writes_the_checklist_as_a_report_and_never_fails_on_it()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
