@@ -140,6 +140,17 @@ class CheckOnpremTrust(unittest.TestCase):
         ):
             assert expected in out[out.index(line) :], f"{expected} missing from:\n{out}"
 
+    def test_the_drift_row_is_given_what_up_trust_would_render(self):
+        """The declared hashes come from the compose files and variables up-trust uses, DEBUG included (FLIP#2078)."""
+        out = dry_run("check-node")
+        up = dry_run("up-trust")
+        started = next(line for line in up.splitlines() if " up -d" in line and "docker compose" in line)
+        for flag in re.findall(r"-f \S+|-p \S+", started):
+            assert flag in out, f"check-node renders without {flag}:\n{out}"
+        assert "DEBUG=" in out[: out.index("config --hash")], out
+        assert "--declared-hashes /dev/stdin" in out, out
+        assert "2>/dev/null" not in out, "compose's own complaints explain a hash that cannot be computed"
+
     def test_check_node_refuses_a_kit_that_is_not_there(self):
         """An empty kit would read as "sample data on" and send a study into a site's own XNAT."""
         result = run_target("check-node", "KIT=NOPE", dry=False)
