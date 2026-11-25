@@ -81,12 +81,14 @@ def test_claim_templates_are_identical_across_releases(next_release_chart: Path)
     assert current == nxt
 
 
-def test_claim_template_labels_carry_nothing_release_specific():
-    for name, templates in _claim_templates(_render(CHART_DIR)).items():
+def test_claim_template_labels_carry_nothing_release_specific(next_release_chart: Path):
+    """The claim templates keep the labels every installed trust was created with (chart 0.1.0, app 1.0), not this
+    release's: see `flip-trust.claimTemplateLabels` and tests/test_claim_template_labels.py."""
+    for name, templates in _claim_templates(_render(next_release_chart)).items():
         for template in templates:
             labels = template["metadata"].get("labels", {})
-            assert "helm.sh/chart" not in labels, name
-            assert "app.kubernetes.io/version" not in labels, name
+            assert labels.get("helm.sh/chart") == "flip-trust-0.1.0", name
+            assert labels.get("app.kubernetes.io/version") == "1.0", name
 
 
 def _policies(*extra: str) -> dict[str, dict]:
