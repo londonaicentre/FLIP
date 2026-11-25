@@ -62,22 +62,26 @@ ROWS = (
 # A sample: a node that blocks both may still allow others. test_trust_endpoints.py keeps them off the declared list.
 UNDECLARED = ("example.com", "www.wikipedia.org")
 EGRESS_REFS = ("SATRE 5.5.01", "SATRE 2.2.11")
-# Run inside a container: says for each target whether anything answered. A URL goes the way the
-# container's own traffic does (its proxy settings included); a host:port is dialled directly with a TLS hello,
-# which is what a firewall that filters by server name judges. A certificate this container does not trust still
-# means the far side answered. Reads the targets as JSON on its last line; prints {target: "reached" | why not}.
+# Run inside a container: says for each target what answered. A URL goes the way the container's own traffic
+# does (its proxy settings included); a host:port is dialled directly with a TLS hello, which is what a firewall
+# that filters by server name judges. Reads the targets as JSON on its last line and prints {target: answer}:
+# "reached" (a 2xx, or a completed handshake), "answered …" (something replied, but not that: an HTTP error, a
+# certificate the container does not trust, a refused hello), or the reason nothing did. `answered()` reads it.
 PROBE = r"""
 import json, socket, ssl, sys, urllib.error, urllib.request
+
+UNTRUSTED = "answered with a certificate this container does not trust"
 
 def url(url):
     try:
         urllib.request.urlopen(url, timeout=8)
-    except urllib.error.HTTPError:
-        pass
+    except urllib.error.HTTPError as error:
+        return f"answered HTTP {error.code}"
     except Exception as error:
         reason = getattr(error, "reason", error)
-        if not isinstance(reason, ssl.SSLCertVerificationError):
-            return f"{type(reason).__name__}: {reason}"
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return UNTRUSTED
+        return f"{type(reason).__name__}: {reason}"
     return "reached"
 
 def tls(target):
@@ -86,10 +90,13 @@ def tls(target):
         with socket.create_connection((host, int(port)), timeout=8) as raw:
             with ssl.create_default_context().wrap_socket(raw, server_hostname=host):
                 pass
+    except ssl.SSLCertVerificationError:
+        return UNTRUSTED
     except (ssl.SSLEOFError, ssl.SSLZeroReturnError) as error:
         return f"closed during the TLS hello: {error}"
-    except ssl.SSLError:
-        pass
+    except ssl.SSLError as error:
+        # Any other TLS error is a reply from a peer: an FL server that wants a client certificate sends one.
+        return f"answered, refusing the TLS hello ({error.reason})"
     except Exception as error:
         return f"{type(error).__name__}: {error}"
     return "reached"
@@ -232,46 +239,69 @@ def fl_server(node: Node, pod: str, backend: str) -> str | None:
     return args[args.index("--superlink") + 1] if "--superlink" in args[:-1] else None
 
 
+def answered(answer: str) -> bool:
+    """Whether a probe's answer means the far side replied at all, whatever it said."""
+    return answer.startswith(("reached", "answered"))
+
+
 def check_declared_reachable(node: Node, backend: str, fl_enabled: bool) -> Check:
-    """The two endpoints a running node needs answer from the containers that use them: the hub API, the FL server."""
+    """The hub API answers trust-api and the FL server answers the FL client, each asked from its own container.
+
+    The hub must answer its /health with a 2xx over a connection the container trusts: an error page, or a
+    certificate a firewall put in the way, is not the hub. The FL server only has to reply: its certificate comes
+    from the FL network's own CA, which the client holds and this probe does not, so the client is its judge.
+    The image registry is not asked from here: the host pulls images, and the onboarding checklist probes it.
+    """
     name = "declared endpoints reachable"
     api = node.pod("trust-api")
     if not api:
         return failed(name, "no running trust-api container")
-    _, hub = node.exec(api, "printenv CENTRAL_HUB_API_URL")
+    ok, hub = node.exec(api, "printenv CENTRAL_HUB_API_URL")
     health = f"{hub.strip()}/health"
-    if not health.startswith("http"):
-        return failed(name, f"trust-api's CENTRAL_HUB_API_URL is not a URL ({hub.strip()[:80] or 'unset'})")
-    answers = {f"hub API {health}": probe(node, api, [health])[health]}
-    client = node.pod("fl-client") if fl_enabled else None
-    if client:
+    if not ok or not health.startswith("http"):
+        return failed(name, "trust-api has no CENTRAL_HUB_API_URL, or it is not a URL")
+    found = [f"hub API {health}"]
+    problems = []
+    answer = probe(node, api, [health])[health]
+    if answer != "reached":
+        problems.append(f"hub API {health}: {answer}")
+    if fl_enabled:
+        client = node.pod("fl-client")
+        if not client:
+            return failed(name, "no running fl-client container to ask the FL server from")
         target = fl_server(node, client, backend)
         if not target:
             return failed(name, f"could not read the FL server's address from {client}")
-        answers[f"FL server {target}"] = probe(node, client, [target])[target]
-    blocked = [f"{what}: {why}" for what, why in answers.items() if why != "reached"]
-    if blocked:
-        return Check(name, trust_checks.Status.FAIL, "; ".join(blocked), refs=EGRESS_REFS)
-    return Check(name, trust_checks.Status.PASS, ", ".join(answers) + " answered", refs=EGRESS_REFS)
+        answer = probe(node, client, [target])[target]
+        found.append(f"FL server {target}")
+        if not answered(answer):
+            problems.append(f"FL server {target}: {answer}")
+    if problems:
+        return Check(name, trust_checks.Status.FAIL, "; ".join(problems), refs=EGRESS_REFS)
+    return Check(name, trust_checks.Status.PASS, ", ".join(found) + " answered", refs=EGRESS_REFS)
 
 
 def check_undeclared_blocked(node: Node, fl_enabled: bool) -> Check:
     """The node's network lets nothing out to a sample of destinations no trust needs.
 
-    A warning, never a failure: what a site's network allows is the site's decision, and this row tells its IT and
-    governance teams what it found. Asked from trust-api and from the FL client, which runs the researcher's code.
+    A destination that answers is a warning, never a failure: what a site's network allows is the site's decision,
+    and this row tells its IT and governance teams what it found. Asked from trust-api and from the FL client,
+    which runs the researcher's code; a container that should be there and is not fails the row, since nothing
+    was learned about it. A pass gives the reason each attempt failed, so "blocked" can be told from "no DNS".
     """
     name = "undeclared destinations blocked"
-    pods = [pod for pod in (node.pod("trust-api"), node.pod("fl-client") if fl_enabled else None) if pod]
-    if not pods:
-        return failed(name, "no running trust-api or fl-client container to ask from")
+    pods = [node.pod("trust-api"), node.pod("fl-client") if fl_enabled else "skip"]
+    if not all(pods):
+        return failed(name, "trust-api or the fl-client is not running, so its network could not be sampled")
     targets = [f"https://{host}/" for host in UNDECLARED]
-    reached = [
-        f"{host} from {pod}"
-        for pod in pods
-        for host, (_, answer) in zip(UNDECLARED, probe(node, pod, targets).items())
-        if answer == "reached"
-    ]
+    reached, reasons = [], []
+    for pod in pods:
+        if pod == "skip":
+            continue
+        for host, answer in zip(UNDECLARED, probe(node, pod, targets).values()):
+            (reached if answered(answer) else reasons).append(
+                f"{host} from {pod}" + ("" if answered(answer) else f": {answer}")
+            )
     if reached:
         return Check(
             name,
@@ -283,7 +313,7 @@ def check_undeclared_blocked(node: Node, fl_enabled: bool) -> Check:
     return Check(
         name,
         trust_checks.Status.PASS,
-        f"none of {', '.join(UNDECLARED)} answered from {', '.join(pods)} (a sample, not a proof)",
+        "none answered (a sample, not a proof): " + "; ".join(reasons),
         refs=EGRESS_REFS,
     )
 

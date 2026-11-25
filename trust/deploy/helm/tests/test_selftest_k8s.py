@@ -70,6 +70,7 @@ class FakeCluster:
         self.hub_url = "https://hub.example/api"
         self.fl_target = "fl.hub.example:8002"
         self.unreachable = {"https://example.com/", "https://www.wikipedia.org/"}  # what the node's network blocks
+        self.answers = {}  # a target that answers something other than "reached"
         self.person_count = "4166"
         self.orthanc_creds = "flip:s3cret"
         self.orthanc_statistics = '{"CountInstances": 250, "CountStudies": 25}'
@@ -105,7 +106,7 @@ class FakeCluster:
         self.exec_log.append((pod, script, stdin))
         if "urllib.error" in script:  # the egress probe: its targets arrive on stdin
             answers = {t: "TimeoutError: timed out" if t in self.unreachable else "reached" for t in json.loads(stdin)}
-            return True, json.dumps(answers)
+            return True, json.dumps({t: self.answers.get(t, answer) for t, answer in answers.items()})
         if script == "printenv CENTRAL_HUB_API_URL":
             return True, self.hub_url
         if script.startswith("cat ") and "fed_client.json" in script:
@@ -933,7 +934,7 @@ def test_a_trust_api_with_no_hub_url_is_a_failure_before_anything_is_dialled():
     cluster = FakeCluster(hub_url="")
     check = selftest.node_checks.check_declared_reachable(cluster, "nvflare", fl_enabled=True)
     assert check.status.value == "fail"
-    assert "not a URL (unset)" in check.detail
+    assert "no CENTRAL_HUB_API_URL" in check.detail
     assert not [1 for _, script, _ in cluster.exec_log if "urllib.error" in script]
 
 
@@ -943,10 +944,99 @@ def test_a_development_hub_over_plain_http_is_asked_like_any_other():
     assert check.status.value == "pass", check
 
 
+@pytest.mark.parametrize(
+    "answer",
+    ["answered HTTP 403", "answered with a certificate this container does not trust"],
+    ids=["an error page", "a certificate put in the way"],
+)
+def test_a_hub_that_answers_but_is_not_the_hub_is_a_failure(answer):
+    """A refused request, or a firewall's own certificate, is an answer and not the hub (FLIP#2094 review)."""
+    cluster = FakeCluster(answers={"https://hub.example/api/health": answer})
+    check = selftest.node_checks.check_declared_reachable(cluster, "nvflare", fl_enabled=True)
+    assert check.status.value == "fail"
+    assert check.detail == f"hub API https://hub.example/api/health: {answer}"
+
+
+def test_the_fl_servers_certificate_is_the_clients_to_judge_not_the_probes():
+    """It is signed by the FL network's own CA, which the probe does not hold: any reply is the server."""
+    untrusted = "answered with a certificate this container does not trust"
+    cluster = FakeCluster(answers={"fl.hub.example:8002": untrusted})
+    assert selftest.node_checks.check_declared_reachable(cluster, "nvflare", fl_enabled=True).status.value == "pass"
+
+
+def test_an_fl_client_that_should_be_there_and_is_not_fails_both_rows():
+    """It runs the researcher's code: a pass that never asked from it would say nothing about it."""
+    cluster = FakeCluster()
+    del cluster.pods["fl-client"]
+    declared = selftest.node_checks.check_declared_reachable(cluster, "nvflare", fl_enabled=True)
+    sampled = selftest.node_checks.check_undeclared_blocked(cluster, fl_enabled=True)
+    assert declared.status.value == "fail"
+    assert "no running fl-client" in declared.detail
+    assert sampled.status.value == "fail"
+    assert selftest.node_checks.check_undeclared_blocked(cluster, fl_enabled=False).status.value == "pass"
+
+
 def test_a_node_whose_network_blocks_the_sample_passes_and_says_it_is_a_sample():
     check = selftest.node_checks.check_undeclared_blocked(FakeCluster(), fl_enabled=True)
     assert check.status.value == "pass", check
     assert "a sample, not a proof" in check.detail
+    assert "example.com from trust-api-0: TimeoutError: timed out" in check.detail, "each attempt's reason is kept"
+
+
+def test_an_error_page_from_an_undeclared_host_still_means_the_network_let_it_out():
+    cluster = FakeCluster(
+        unreachable={"https://www.wikipedia.org/"}, answers={"https://example.com/": "answered HTTP 403"}
+    )
+    check = selftest.node_checks.check_undeclared_blocked(cluster, fl_enabled=False)
+    assert check.status.value == "warn"
+    assert "example.com from trust-api-0" in check.detail
+
+
+# The probe itself, run for real against sockets on this machine: the fakes above answer in its place.
+
+
+def _probe(targets):
+    out = subprocess.run(
+        [sys.executable, "-c", selftest.node_checks.PROBE], input=json.dumps(targets), capture_output=True, text=True
+    )
+    return json.loads(out.stdout)
+
+
+def _serve(reply):
+    """A one-connection server on a free local port that sends `reply` (None: just close) and its address."""
+    import socket
+    import threading
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+
+    def answer():
+        connection, _ = server.accept()
+        connection.recv(4096)
+        if reply:
+            connection.sendall(reply)
+        connection.close()
+        server.close()
+
+    threading.Thread(target=answer, daemon=True).start()
+    return f"127.0.0.1:{server.getsockname()[1]}"
+
+
+def test_the_probe_tells_an_answer_from_silence():
+    ok = _serve(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+    refused = _serve(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+    hung_up, not_tls = _serve(None), _serve(b"this is not a TLS server hello\r\n")
+    closed = "127.0.0.1:1"  # nothing listens on port 1
+    answers = _probe([f"http://{ok}/", f"http://{refused}/", hung_up, not_tls, closed, "https://no-such-host.invalid/"])
+    assert answers[f"http://{ok}/"] == "reached"
+    assert answers[f"http://{refused}/"] == "answered HTTP 403"
+    assert answers[hung_up].startswith("closed during the TLS hello")
+    assert answers[not_tls].startswith("answered, refusing the TLS hello")
+    assert "refused" in answers[closed].lower()
+    assert "gaierror" in answers["https://no-such-host.invalid/"]
+    judged = {target: selftest.node_checks.answered(answer) for target, answer in answers.items()}
+    assert list(judged.values()) == [True, True, False, True, False, False]
 
 
 def test_an_open_network_is_a_warning_that_names_what_answered_and_never_fails_the_run():
