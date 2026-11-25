@@ -23,6 +23,7 @@ from flip_api.db.models.main_models import Model, ModelTrustIntersect, ProjectTr
 from flip_api.domain.interfaces.model import ISaveModel
 from flip_api.domain.interfaces.shared import IId
 from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustApprovalStatus, TrustIntersectStatus
+from flip_api.model_services.services.model_service import validate_derived_from
 from flip_api.utils.logger import logger
 from flip_api.utils.project_manager import get_project_by_id
 
@@ -90,6 +91,8 @@ def save_model(
 
     logger.debug(f"Found {len(approved_trusts)} approved trusts")
 
+    validate_derived_from(payload.derived_from_model_id, payload.project_id, db)
+
     try:
         # Create model
         model = Model(
@@ -98,6 +101,7 @@ def save_model(
             status=ModelStatus.PENDING,
             project_id=payload.project_id,
             owner_id=user_id,
+            derived_from_model_id=payload.derived_from_model_id,
         )
         db.add(model)
         db.flush()  # Ensure model.id is available

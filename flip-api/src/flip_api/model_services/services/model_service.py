@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlmodel import Session, and_, col, desc, func, or_, select
 
 from flip_api.db.models.main_models import (
@@ -50,6 +51,30 @@ from flip_api.utils.paging_utils import IPagedResponse, PagingInfo
 from flip_api.utils.user_roles import profile_display_name
 
 
+def validate_derived_from(
+    derived_from_model_id: UUID | None, project_id: UUID | None, session: Session, model_id: UUID | None = None
+) -> None:
+    """Refuse a "derived from" link that is not another live model of the same project.
+
+    Args:
+        derived_from_model_id (UUID | None): The model named as the source; None means no link.
+        project_id (UUID | None): The project of the model carrying the link.
+        session (Session): The database session.
+        model_id (UUID | None): The model carrying the link, when it already exists.
+
+    Raises:
+        HTTPException: 400 when the named model is missing, deleted, in another project or the model itself.
+    """
+    if derived_from_model_id is None:
+        return
+    source = session.get(Model, derived_from_model_id)
+    if source is None or source.deleted or source.project_id != project_id or source.id == model_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="derivedFromModelId must name another model of the same project",
+        )
+
+
 def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, session: Session) -> None:
     """
     Edit the model details
@@ -62,15 +87,18 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
 
     Raises:
         ValueError: If no model exists with the given ``model_id``.
+        HTTPException: 400 when the "derived from" link is not another model of the same project.
     """
     logger.debug("Attempting to update model details...")
 
     model = session.get(Model, model_id)
     if not model:
         raise ValueError(f"Model {model_id} not found")
+    validate_derived_from(model_details.derived_from_model_id, model.project_id, session, model_id)
 
     model.name = model_details.name
     model.description = model_details.description
+    model.derived_from_model_id = model_details.derived_from_model_id
 
     session.add(model)
     session.commit()

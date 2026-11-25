@@ -20,13 +20,15 @@ import { useModalsStore } from "@/store/modals";
 import { Snackbar } from "@/utils/snackbar";
 
 const mockCreateModel = vi.fn();
+const mockGetModels = vi.fn();
 
 vi.mock("@/services/model-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/model-service")>();
 
     return {
         ...actual,
-        createModel: (...args: unknown[]) => mockCreateModel(...args)
+        createModel: (...args: unknown[]) => mockCreateModel(...args),
+        getModels: (...args: unknown[]) => mockGetModels(...args)
     };
 });
 
@@ -91,6 +93,32 @@ describe("Create Model Modal", () => {
         vi.clearAllMocks();
         mockRoute.params = {};
         mockCreateModel.mockResolvedValue({ id: "created-model-id" });
+        mockGetModels.mockResolvedValue({ data: [] });
+    });
+
+    it("records the model this one is derived from when one is chosen", async () => {
+        mockGetModels.mockResolvedValue({
+            data: [{
+                id: "fingerprint-model",
+                name: "Fingerprint"
+            }]
+        });
+        const component = mountModal({
+            open: true,
+            projectId: "prop-project-id"
+        });
+
+        await flushPromises();
+        await component.find("[data-test=derived-from-select]").setValue("fingerprint-model");
+        await component.find("form").trigger("submit");
+        await flushPromises();
+
+        expect(mockCreateModel).toHaveBeenCalledWith("/model", {
+            name: "Test model",
+            description: "A model description",
+            projectId: "prop-project-id",
+            derivedFromModelId: "fingerprint-model"
+        });
     });
 
     it("creates the model against the projectId prop, preferring it over the route param", async () => {

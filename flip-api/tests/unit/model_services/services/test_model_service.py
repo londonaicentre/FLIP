@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from flip_api.db.models.main_models import FLMetrics, Model
 from flip_api.domain.interfaces.model import IModelDetails
@@ -31,6 +32,7 @@ from flip_api.model_services.services.model_service import (
     queued_positions_by_model,
     resolve_trust_from_fl_client_name,
     update_model_status,
+    validate_derived_from,
     validate_trust_ids,
 )
 
@@ -50,6 +52,51 @@ def test_edit_model_success():
     assert mock_model.name == model_details.name
     assert mock_model.description == model_details.description
     session.commit.assert_called()
+
+
+def test_edit_model_records_the_model_it_was_derived_from():
+    session = MagicMock()
+    project_id, source_id = uuid4(), uuid4()
+    model = MagicMock(project_id=project_id)
+    source = MagicMock(id=source_id, project_id=project_id, deleted=False)
+    session.get.side_effect = [model, source]
+
+    edit_model(uuid4(), IModelDetails(name="training", derivedFromModelId=source_id), "user", session)
+
+    assert model.derived_from_model_id == source_id
+
+
+def test_edit_model_clears_the_link_when_none_is_sent():
+    session = MagicMock()
+    model = MagicMock(derived_from_model_id=uuid4())
+    session.get.return_value = model
+
+    edit_model(uuid4(), IModelDetails(name="training"), "user", session)
+
+    assert model.derived_from_model_id is None
+
+
+@pytest.mark.parametrize("problem", ["missing", "deleted", "other_project", "itself"])
+def test_a_derived_from_link_must_name_another_live_model_of_the_project(problem):
+    session = MagicMock()
+    project_id, model_id, source_id = uuid4(), uuid4(), uuid4()
+    session.get.return_value = {
+        "missing": None,
+        "deleted": MagicMock(id=source_id, project_id=project_id, deleted=True),
+        "other_project": MagicMock(id=source_id, project_id=uuid4(), deleted=False),
+        "itself": MagicMock(id=model_id, project_id=project_id, deleted=False),
+    }[problem]
+
+    with pytest.raises(HTTPException) as refusal:
+        validate_derived_from(source_id, project_id, session, model_id)
+
+    assert refusal.value.status_code == 400
+
+
+def test_no_derived_from_link_needs_no_lookup():
+    session = MagicMock()
+    validate_derived_from(None, uuid4(), session)
+    session.get.assert_not_called()
 
 
 def test_edit_model_not_found():

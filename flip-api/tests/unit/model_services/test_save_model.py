@@ -11,7 +11,7 @@
 #
 
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import status
@@ -108,6 +108,39 @@ def test_save_model_success(
     print(response.json())
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"id": str(test_model_id)}
+
+
+def test_save_model_records_the_model_it_was_derived_from(
+    override_dependencies,
+    mock_can_contribute_to_project_true,
+    mock_get_project_approved,
+):
+    source_id = uuid4()
+    override_dependencies.exec.return_value.all.return_value = [uuid4()]
+    override_dependencies.get.return_value = MagicMock(
+        id=source_id, project_id=UUID(test_payload["projectId"]), deleted=False
+    )
+    saved = []
+    override_dependencies.add.side_effect = lambda obj: saved.append(obj)
+
+    response = client.post("/api/model", json={**test_payload, "derivedFromModelId": str(source_id)})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert next(obj for obj in saved if isinstance(obj, Model)).derived_from_model_id == source_id
+
+
+def test_save_model_refuses_a_link_to_a_model_outside_the_project(
+    override_dependencies,
+    mock_can_contribute_to_project_true,
+    mock_get_project_approved,
+):
+    override_dependencies.exec.return_value.all.return_value = [uuid4()]
+    override_dependencies.get.return_value = MagicMock(project_id=uuid4(), deleted=False)
+
+    response = client.post("/api/model", json={**test_payload, "derivedFromModelId": str(uuid4())})
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    override_dependencies.add.assert_not_called()
 
 
 def test_save_model_forbidden(mock_can_contribute_to_project_false):

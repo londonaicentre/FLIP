@@ -41,7 +41,21 @@ vi.mock("@/router", () => ({
     }
 }));
 
-vi.mock("@/services/model-service", () => ({ deleteModel: vi.fn() }));
+vi.mock("@/services/model-service", () => ({
+    deleteModel: vi.fn(),
+    getModels: vi.fn().mockResolvedValue({
+        data: [
+            {
+                id: "model-1",
+                name: "Acme"
+            },
+            {
+                id: "model-0",
+                name: "Fingerprint"
+            }
+        ]
+    })
+}));
 
 vi.mock("@/utils/snackbar", () => ({
     Snackbar: {
@@ -144,8 +158,36 @@ describe("EditModelDrawer editing and deleting", () => {
 
         await vi.waitFor(() => expect(wrapper.emitted("save")).toEqual([[{
             name: "Renamed",
-            description: "desc"
+            description: "desc",
+            derivedFromModelId: null
         }]]));
+    });
+
+    it("keeps the recorded source model on save, and offers every model but this one", async () => {
+        const wrapper = mountDrawer({ derivedFromModelId: "model-0" });
+
+        await flushPromises();
+
+        expect(wrapper.findAll("[data-test=derived-from-select] option").map(option => option.text()))
+            .toEqual(["None", "Fingerprint"]);
+
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(wrapper.emitted("save")).toEqual([[{
+            name: "Acme",
+            description: "desc",
+            derivedFromModelId: "model-0"
+        }]]));
+    });
+
+    it("clears the source model when None is chosen", async () => {
+        const wrapper = mountDrawer({ derivedFromModelId: "model-0" });
+
+        await flushPromises();
+        await wrapper.find("[data-test=derived-from-select]").setValue("");
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(wrapper.emitted("save")?.[0]?.[0]).toMatchObject({ derivedFromModelId: null }));
     });
 
     it("emits close from the header close button", async () => {

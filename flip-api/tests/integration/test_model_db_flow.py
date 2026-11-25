@@ -276,6 +276,23 @@ def test_edit_model_updates_name_and_description_and_writes_audit(session, model
     assert audits[0].user_id == user_id
 
 
+def test_a_derived_from_link_is_stored_and_refused_across_projects(session, model_in_db, model_factory):
+    """``edit_model`` records the source model of the same project; one from elsewhere is a 400."""
+    model, user_id = model_in_db["model"], model_in_db["user"].id
+    source = model_factory.build(project_id=model.project_id, owner_id=user_id, deleted=False)
+    elsewhere = model_factory.build(project_id=None, owner_id=user_id, deleted=False)
+    session.add_all([source, elsewhere])
+    session.commit()
+
+    edit_model(model.id, IModelDetails(name="training", derivedFromModelId=source.id), user_id, session)
+    assert session.get(Model, model.id).derived_from_model_id == source.id
+
+    with pytest.raises(HTTPException) as refusal:
+        edit_model(model.id, IModelDetails(name="training", derivedFromModelId=elsewhere.id), user_id, session)
+    assert refusal.value.status_code == 400
+    assert session.get(Model, model.id).derived_from_model_id == source.id
+
+
 def test_edit_model_raises_when_model_missing(session, user_factory):
     with pytest.raises(ValueError, match="not found"):
         edit_model(uuid4(), IModelDetails(name="x", description=""), user_factory().id, session)

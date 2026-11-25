@@ -82,6 +82,19 @@
                         />
                     </div>
                 </div>
+                <p
+                    v-if="modelData.derivedFromModelId"
+                    data-test="derived-from"
+                    class="mt-1 text-sm text-gray-500 dark:text-gray-300"
+                >
+                    Derived from
+                    <router-link
+                        :to="`/project/${modelData.projectId}/model/${modelData.derivedFromModelId}`"
+                        class="font-medium text-primary-600 hover:underline dark:text-primary-300"
+                    >
+                        {{ modelData.derivedFromModelName }}
+                    </router-link>
+                </p>
             </header>
 
             <!-- pb-8 matches the px-8 side margins, so the window-filling cards keep
@@ -158,6 +171,7 @@
                 :name="modelData.modelName"
                 :model-pending="isTrainingPending()"
                 :description="modelData.modelDescription"
+                :derived-from-model-id="modelData.derivedFromModelId"
                 :updating="modelUpdating"
                 :owner-id="project?.ownerId || ''"
                 @close="closeEditModelDrawer"

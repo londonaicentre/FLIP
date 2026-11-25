@@ -85,6 +85,11 @@
                                                 placeholder="Optional description"
                                                 hint="A small description of what your model is trying to achieve."
                                             />
+                                            <DerivedFromSelect
+                                                v-if="targetProjectId"
+                                                v-model="derivedFromModelId"
+                                                :project-id="targetProjectId"
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -115,13 +120,14 @@
 <script setup lang="ts">
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from "@headlessui/vue";
 import { Form } from "vee-validate";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import AiTextArea from "@/components/AiTextArea/AiTextArea.vue";
+import DerivedFromSelect from "@/partials/models/DerivedFromSelect.vue";
 import { routeChange } from "@/router";
 import { createModel, IModelCreate } from "@/services/model-service";
 import { useModalsStore } from "@/store/modals";
@@ -142,6 +148,10 @@ const modalStore = useModalsStore();
 const schema = modelSchema;
 const formSubmitting = ref(false);
 const route = useRoute();
+const derivedFromModelId = ref<string | null>(null);
+// Prop first, route second: the Models page opens this with a project from its ?project=
+// query, where there is no :projectId route param to read.
+const targetProjectId = computed(() => props.projectId ?? route.params["projectId"]?.toString());
 
 const closeModal = () => {
     modalStore.toggleCreateModel();
@@ -156,9 +166,7 @@ const submitForm = async (v: unknown) => {
 
     try {
         const values = v as IModelCreate;
-        // Prop first, route second: the Models page opens this with a project from its ?project=
-        // query, where there is no :projectId route param to read.
-        const projectId = props.projectId ?? route.params["projectId"]?.toString();
+        const projectId = targetProjectId.value;
 
         if (!projectId) {
             // Previously this threw on `.toString()` of undefined, which surfaced as a silent
@@ -173,7 +181,8 @@ const submitForm = async (v: unknown) => {
 
         const { id: modelId } = await createModel("/model", {
             ...values,
-            projectId: projectId
+            projectId: projectId,
+            ...(derivedFromModelId.value && { derivedFromModelId: derivedFromModelId.value })
         });
 
         modalStore.toggleCreateModel();
