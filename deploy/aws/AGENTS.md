@@ -17,7 +17,7 @@
 | `ecs.tf` | ECS cluster, capacity providers, ECS CloudWatch log groups (the target groups live in `main.tf`, the NLB in `fl_ingress_lza.tf`) |
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |
 | `ecs_tasks.tf` | ECS task definitions for Central Hub services (flip-api + FL) |
-| `efs.tf` | EFS file system, mount targets, and access points (FL workspace) |
+| `efs.tf` | EFS file system, mount targets, access points (FL workspace), and the file system policy (TLS-only, mounting limited to the three FL task roles through those access points) |
 | `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (FLARE kit or Flower creds, by `fl_backend`) |
 | `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
 | `ecs_sg.tf` | ECS security groups |
