@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""The federated nnU-Net fingerprint (``3d_prostate_nnunet_fingerprint``).
+"""The fingerprint job type (``fl-apps/flower/fingerprint``) through its tutorial, ``3d_prostate_nnunet_fingerprint``.
 
 The job exists so the planner gets, from histograms pooled by FedAvg, the numbers it would have read
 from every site's cases in one place. These tests pin that equivalence on invented cohorts, the
@@ -253,9 +253,10 @@ def client_app(monkeypatch, tmp_path):
 
     Trust.cases = 12
     with flower_client_app(TUTORIAL) as module:
+        cases = importlib.import_module("app.cases")
         monkeypatch.setattr(module, "Message", lambda content, reply_to: SimpleNamespace(content=content))
-        monkeypatch.setattr(module, "FLIP_BASE", Trust)
-        monkeypatch.setattr(module, "partition_cohort", lambda dataframe, context: dataframe)
+        monkeypatch.setattr(cases, "FLIP_BASE", Trust)
+        monkeypatch.setattr(cases, "partition_cohort", lambda dataframe, context: dataframe)
         monkeypatch.setattr(identity, "FlipConstants", SimpleNamespace(LOCAL_DEV=True))
         monkeypatch.delenv("SUPERNODE_NAME", raising=False)
         module.Trust = Trust
@@ -264,7 +265,7 @@ def client_app(monkeypatch, tmp_path):
 
 def _context(**run_config) -> SimpleNamespace:
     return SimpleNamespace(
-        run_config={"dp-enabled": False, **run_config},
+        run_config=run_config,
         node_config={"partition-id": "0", "num-partitions": "1"},
         state=RecordDict(),
     )
@@ -281,13 +282,11 @@ def _message(client_app) -> SimpleNamespace:
     )
 
 
-def test_a_run_config_without_dp_enabled_is_refused_as_the_mod_reads_it(client_app):
-    without_key = _context()
-    del without_key.run_config["dp-enabled"]
-    for context in (without_key, _context(**{"dp-enabled": True})):
-        with pytest.raises(ValueError, match="dp-enabled is true"):
-            client_app.train(_message(client_app), context)
-    assert client_app.Trust.pulls == 0
+def test_the_platform_client_registers_no_local_dp_mod():
+    """Clip-and-noise would turn the histograms into noise silently, so the template never wires it in."""
+    source = (TUTORIAL / "app" / "client_app.py").read_text()
+    assert "@app.train()" in source
+    assert "flip_local_dp_mod" not in source
 
 
 def test_the_client_sends_its_histograms_in_nnunet_axis_order_weighted_by_cases(client_app, fp, config):

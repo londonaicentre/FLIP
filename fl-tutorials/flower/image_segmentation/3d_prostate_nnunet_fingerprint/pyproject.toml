@@ -16,7 +16,7 @@
 # https://flower.ai/docs/framework/how-to-configure-pyproject-toml.html
 #
 # This file serves the flwr simulator (`make -C fl-tutorials sim-tutorial`) and local `flwr run`.
-# On the platform the standard template's pyproject (fl-apps/flower/standard/) is what runs, so
+# On the platform the fingerprint template's pyproject (fl-apps/flower/fingerprint/) is what runs, so
 # every run-config key below must exist there too.
 # =====================================================================
 
@@ -25,7 +25,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "standard-app"
+name = "fingerprint-app"
 version = "1.0.0"
 description = "Tutorial for the federated nnU-Net dataset fingerprint of PI-CAI bpMRI: histograms pooled by FedAvg, nothing trained."
 license = "Apache-2.0"
@@ -37,8 +37,8 @@ license = "Apache-2.0"
 # the image's copy, which is what the platform runs. Pick up flip-utils changes with
 # `make build-fl FL_BACKEND=flower`.
 #
-# nnunetv2 is NOT a dependency: app/fingerprint.py carries the one piece of its extractor the job
-# needs (the crop to the non-zero region). The planner that reads the result lives with the
+# nnunetv2 is NOT a dependency: the template's app/fingerprint.py carries the one piece of its
+# extractor the job needs (the crop to the non-zero region). The planner that reads the result lives with the
 # segmentation tutorial (../3d_prostate_segmentation, `make plan FINGERPRINT=`).
 dependencies = [
     "flwr[simulation]>=1.43.0",
@@ -71,12 +71,6 @@ clientapp = "app.client_app:app"
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
 num-server-rounds = 1 # what a site sends does not depend on what it receives
-# Off: the mod's clip-and-noise is calibrated for weight deltas and would corrupt the histograms silently (README, Privacy).
-dp-enabled = false
-dp-clipping-norm = 1.0
-dp-sensitivity = 1e-4
-dp-epsilon = 10.0
-dp-delta = 1e-5
 # FLIP configuration - needs to be set here so it can be overridden by flwr run command
 # See https://flower.ai/docs/framework/ref-api-cli.html#flwr-run for more details
 flip-model-id = "uuid"

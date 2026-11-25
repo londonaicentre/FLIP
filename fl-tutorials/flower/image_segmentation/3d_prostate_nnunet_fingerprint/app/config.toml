@@ -15,7 +15,3 @@
 #
 # One round: what a site sends does not depend on what it receives.
 num-server-rounds = 1
-# Off: the mod's clip-and-noise is calibrated for weight deltas and would corrupt the histograms silently (README, Privacy).
-dp-enabled = false
-# No best-model selection: the "model" is the pooled fingerprint.
-best-model-metric = ""

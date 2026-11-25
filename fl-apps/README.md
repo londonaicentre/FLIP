@@ -26,6 +26,7 @@ fl-apps/
 ├── flower/
 │   ├── standard/          # job_type=standard         — FedAvg
 │   ├── evaluation/        # job_type=evaluation       — federated evaluation
+│   ├── fingerprint/       # job_type=fingerprint      — pooled nnU-Net dataset fingerprint (FLIP-owned client)
 │   └── required_files.json
 └── check_required_files.sh
 ```
@@ -35,7 +36,8 @@ a declaration of which files the researcher must upload alongside it. See each t
 README for what it does and what its `required_files.json` requires:
 [`nvflare/standard`](nvflare/standard/README.md), [`nvflare/evaluation`](nvflare/evaluation/README.md),
 [`nvflare/fed_opt`](nvflare/fed_opt/README.md),
-[`flower/standard`](flower/standard/README.md), [`flower/evaluation`](flower/evaluation/README.md).
+[`flower/standard`](flower/standard/README.md), [`flower/evaluation`](flower/evaluation/README.md),
+[`flower/fingerprint`](flower/fingerprint/README.md).
 
 All FLARE templates are **Client API** apps (`ClientAPIExecutor`, in-process mode); the legacy
 Executor-based templates are retired. Models created under the old `*_client_api` job-type names

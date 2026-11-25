@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Flower Labs GmbH
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -10,4 +11,4 @@
 # limitations under the License.
 #
 
-"""3d-prostate-nnunet-fingerprint: the federated nnU-Net dataset fingerprint for PI-CAI bpMRI (Flower)."""
+"""3d-prostate-nnunet-fingerprint: the cases of a PI-CAI bpMRI cohort for the fingerprint job (Flower)."""

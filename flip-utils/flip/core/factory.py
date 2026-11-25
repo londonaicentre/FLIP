@@ -35,7 +35,7 @@ def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs: Any) -> FL
         2. The environment (LOCAL_DEV or production)
 
     Args:
-        job_type: One of "standard", "evaluation", "fed_opt"
+        job_type: One of "standard", "evaluation", "fed_opt", "fingerprint"
                   or a JobType enum value. Defaults to "standard".
         **kwargs: Additional arguments passed to the constructor
 
@@ -74,7 +74,7 @@ def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs: Any) -> FL
             raise ValueError(f"Unknown job_type: {job_type}. Must be one of {valid_types}")
 
     # Map job types to their implementations
-    if job_type in (JobType.STANDARD, JobType.EVALUATION, JobType.FED_OPT):
+    if job_type in (JobType.STANDARD, JobType.EVALUATION, JobType.FED_OPT, JobType.FINGERPRINT):
         return _create_standard_flip(is_dev, **kwargs)
     else:
         valid_types = [t.value for t in JobType]

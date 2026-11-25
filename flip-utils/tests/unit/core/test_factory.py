@@ -26,7 +26,16 @@ class TestFLIPFactory:
 
     @pytest.mark.parametrize(
         "job_type",
-        [JobType.STANDARD, JobType.EVALUATION, JobType.FED_OPT, "standard", "evaluation", "fed_opt"],
+        [
+            JobType.STANDARD,
+            JobType.EVALUATION,
+            JobType.FED_OPT,
+            JobType.FINGERPRINT,
+            "standard",
+            "evaluation",
+            "fed_opt",
+            "fingerprint",
+        ],
     )
     @patch("flip.core.factory.FlipConstants")
     def test_factory_creates_dev(self, mock_constants, job_type):

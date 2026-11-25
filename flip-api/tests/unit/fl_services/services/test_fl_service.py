@@ -2639,6 +2639,19 @@ class TestRealRequiredFilesManifests:
             "models.py",
         ]
 
+    def test_flower_fingerprint_client_is_platform_owned(self, real_manifest_settings):
+        """The fingerprint job type exists to keep the release floors out of the upload (FLIP#2060).
+
+        The bundler skips an uploaded file whose name a template file already holds, so the client
+        and the module carrying the floors must be template files, and must not be required uploads.
+        """
+        required = fl_service.JobRequiredFiles.get_required_files("fingerprint", FLBackend.FLOWER)
+        assert required == ["cases.py", "config.json"]
+
+        template = fl_service.list_local_base_files(REPO_FL_APPS / "flower" / "fingerprint", FLBackend.FLOWER)
+        assert {"app/client_app.py", "app/fingerprint.py", "app/models.py"} <= set(template)
+        assert "flip_local_dp_mod" not in (REPO_FL_APPS / "flower/fingerprint/app/client_app.py").read_text()
+
 
 # ── GPU request (FLIP#70) ───────────────────────────────────────────────────────────
 

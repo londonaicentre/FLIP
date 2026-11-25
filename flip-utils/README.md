@@ -206,6 +206,7 @@ Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` 
 | `standard` | Federated training with FedAvg aggregation (default) |
 | `evaluation` | Distributed model evaluation without training |
 | `fed_opt` | Adaptive federated optimisation (FedOpt) |
+| `fingerprint` | Pooled nnU-Net dataset fingerprint, nothing trained (Flower only) |
 
 The FLARE templates under `fl-apps/nvflare/` (`standard`, `evaluation`, `fed_opt`) are all
 Client-API apps with recipe-generated configs. The corresponding configs live

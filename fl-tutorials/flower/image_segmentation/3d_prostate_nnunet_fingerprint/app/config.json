@@ -1,5 +1,5 @@
 {
-  "job_type": "standard",
+  "job_type": "fingerprint",
   "MODALITY": "t2w",
   "NUM_CHANNELS": 1,
   "MIN_SITE_CASES": 10,

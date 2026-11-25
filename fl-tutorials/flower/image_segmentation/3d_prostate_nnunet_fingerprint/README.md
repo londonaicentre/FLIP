@@ -22,6 +22,9 @@ cohort as a handful of histograms and the server's ordinary weighted average tur
 fingerprint of the pooled dataset. The plan is then made from that, and the training job runs as
 before.
 
+The job type is `fingerprint`, whose client is FLIP's own: you upload only the code that loads your
+cases, and the platform's code decides what leaves a site.
+
 On PI-CAI fold 0 the plan made this way is the same network as the committed one, see
 [Agreement with the pooled plan](#agreement-with-the-pooled-plan).
 
@@ -29,8 +32,8 @@ On PI-CAI fold 0 the plan made this way is the same network as the committed one
 
 | Item | Value |
 |---|---|
-| What you upload | everything in `app/` |
-| Job type | standard |
+| What you upload | `cases.py`, `config.json`, `data_loading.py` and `dataset.py` from `app/` |
+| Job type | [fingerprint](../../../../fl-apps/flower/fingerprint/README.md) |
 | Imaging | on, DICOM to NIfTI on; masks uploaded as data enrichment |
 | Cohort query | [`../3d_prostate_segmentation/query.sql`](../3d_prostate_segmentation/query.sql) |
 | Dataset | `make -C fl-tutorials prepare-prostate-local-data NUM_CASES=40` (simulator) |
@@ -72,21 +75,25 @@ One round is enough: what a site sends does not depend on what it receives.
 
 ```text
 3d_prostate_nnunet_fingerprint
-├── app/                      # FLAT: everything here is uploaded to the platform
-│   ├── client_app.py         # Flower ClientApp: cohort -> pull -> histograms -> reply
-│   ├── fingerprint.py        # the per-case crop, the histograms, and the way back to a fingerprint
-│   ├── models.py             # the "model": a module whose buffers are the histograms
-│   ├── server_app.py         # byte-copy of fl-apps/flower/standard
-│   ├── strategy.py           # byte-copy of fl-apps/flower/standard
-│   ├── data_loading.py       # byte-copy of the segmentation tutorial's (series selection, masks)
-│   ├── dataset.py            # byte-copy of the segmentation tutorial's (affine-matched loading)
-│   ├── config.json           # job_type, MODALITY, the case floor and the histogram grids
-│   └── config.toml           # platform run-config overrides: one round, dp-enabled = false
+├── app/
+│   ├── cases.py              # UPLOAD: iter_cases(context), this cohort's studies in nnU-Net's axis order
+│   ├── config.json           # UPLOAD: job_type, MODALITY, the floors and the histogram grids
+│   ├── data_loading.py       # UPLOAD: byte-copy of the segmentation tutorial's (series selection, masks)
+│   ├── dataset.py            # UPLOAD: byte-copy of the segmentation tutorial's (affine-matched loading)
+│   ├── config.toml           # run-config overrides (one round; the template's default too)
+│   ├── client_app.py         # byte-copy of fl-apps/flower/fingerprint: cases -> histograms -> reply
+│   ├── fingerprint.py        # byte-copy: the per-case crop, the histograms, the floors, the way back
+│   ├── models.py             # byte-copy: the "model", a module whose buffers are the histograms
+│   ├── server_app.py         # byte-copy: FedAvg + FLIP status
+│   └── strategy.py           # byte-copy: per-client metrics
 ├── docs/picai_fold0_geometry.csv   # PI-CAI fold 0's spacings and shapes, for the agreement test
 ├── export_fingerprint.py     # host-side: the downloaded model -> dataset_fingerprint.json
 ├── pyproject.toml            # flwr app config for the simulator
 └── README.md
 ```
+
+The five byte-copies are there for the simulator. On the platform the template's own copies run
+whatever is uploaded under those names.
 
 ## Running this tutorial
 
@@ -119,15 +126,15 @@ pulled into XNAT, so the two jobs need no second approval and no second image pu
 
 1. Create the project with the segmentation tutorial's `query.sql`, wait for the image pull, and
    upload the masks as data enrichment, exactly as that tutorial describes.
-2. Add a model, upload this `app/`, and run it with **every** trust that will train: a site missing
-   from this job is missing from the plan.
+2. Add a model, upload the four files marked UPLOAD above, and run it with **every** trust that will
+   train: a site missing from this job is missing from the plan.
 3. Download the result and run `make plan FINGERPRINT=<FL_global_model.pt>` as above.
-4. Add a second model, upload the segmentation tutorial's `app/` with the new
-   `nnUNetPlans_segmentation.json`, and train.
+4. Add a second model, choose the first under **Derived from**, upload the segmentation tutorial's
+   `app/` with the new `nnUNetPlans_segmentation.json`, and train.
 
-The hub does not record that the second model's plan came from the first. Write it in the second
-model's description, and record the plan's provenance in the segmentation README as that tutorial
-asks.
+**Derived from** is how the hub records that the second model's plan came from the first: the
+training model's page links to the fingerprint model. It is a record, not a check, so also note the
+plan's provenance in the segmentation README as that tutorial asks.
 
 ## Agreement with the pooled plan
 
@@ -185,22 +192,24 @@ What this does and does not protect:
   histograms, so no bin of it is a count of studies, but it is not covered by the small-cell rule.
 - **The hub sees each site's arrays in the clear.** FLIP has no secure aggregation, so the pooling
   hides a site from the researcher who downloads the result, not from the server.
-- **Local differential privacy is off, and the app refuses to run with it on.** The platform's
-  clip-and-noise step is calibrated for weight updates and would turn the histograms into noise without
-  any error. `app/config.toml` sets `dp-enabled = false`; a run without that file is refused, because
-  a missing key means on.
+- **No local differential privacy.** The platform's clip-and-noise step is calibrated for weight
+  updates and would turn the histograms into noise without any error, so the job type's client does not
+  apply it.
 
 Three floors apply, enforced in different places:
 
 | Floor | Enforced by | Value |
 | --- | --- | --- |
 | The trust's disclosure floor on the cohort (`COHORT_QUERY_THRESHOLD`, distinct patients) | the trust's own data-access-api, before the app sees a row | set by each trust, default 10 |
-| A minimum number of usable studies before a site releases its histograms | this app (`app/fingerprint.py`) | 10; `MIN_SITE_CASES` in `app/config.json` can raise it, not lower it |
-| A minimum number of studies in any released geometry bin | this app (`app/fingerprint.py`) | 5; `MIN_CELL_COUNT` can raise it, not lower it |
+| A minimum number of usable studies before a site releases its histograms | the job type's client (platform code) | 10; `MIN_SITE_CASES` in `app/config.json` can raise it, not lower it |
+| A minimum number of studies in any released geometry bin | the job type's client (platform code) | 5; `MIN_CELL_COUNT` can raise it, not lower it |
 
-The last two floors are researcher-uploaded code: a trust reviewing the upload can read them, but the
-platform does not enforce them. A refusal says only that the site has too few usable cases; the count
-goes to the site's own log, since Flower forwards a client's error text to the hub.
+The last two floors are in the job type's `client_app.py` and `fingerprint.py`, which ship with the
+platform and which an upload cannot replace: a file uploaded under either name is discarded. That is
+a fixed code path, not a sandbox. `cases.py` runs in the same process, so reviewing it before approval
+is still what stands between a site's data and anything else it might do. A refusal says only that the
+site has too few usable cases; the count goes to the site's own log, since Flower forwards a client's
+error text to the hub.
 
 ## Configuration
 
@@ -225,12 +234,10 @@ a mismatch fails at the first round with a shape error. The intensity grid suits
 
 ## Limitations
 
-- The floors and the DP refusal live in the uploaded client code. A platform-owned fingerprint job
-  type would move them to the platform.
 - Flower only, like the segmentation tutorial. On NVFLARE the percentile-privacy filter would need
-  the same treatment the local-DP mod gets here.
+  to be kept off the histograms, as the local-DP mod is here.
 - One image channel. nnU-Net's CT normalisation reads the intensity statistics per channel; a
-  multi-channel fingerprint needs the app to load several series.
+  multi-channel fingerprint needs `cases.py` to yield several series.
 
 ## References
 
@@ -258,7 +265,7 @@ a mismatch fails at the first round with a shape error. The intensity grid suits
 
 This tutorial departs from all three in what leaves a site. There, every case's spacing and shape goes
 to the server and on to the other sites. Here a site sends per-axis histograms with small cells folded
-away, so no per-case record leaves, the platform's unmodified weighted average does the merging, and
+away, so no per-case record leaves, the platform's ordinary weighted average does the merging, and
 the pooled intensity median and percentiles are those of the pooled data, not an average of site
 values. The plan is made by the researcher from the downloaded result, not at each site.
 
