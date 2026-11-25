@@ -26,7 +26,11 @@ describe("Project Users Modal", () => {
 
     beforeEach(() => {
         component = mount(AddUser, {
-            props: { users: [] },
+            props: {
+                users: [],
+                ownerId: "owner-1",
+                ownerEmail: "owner@e.com"
+            },
             global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,

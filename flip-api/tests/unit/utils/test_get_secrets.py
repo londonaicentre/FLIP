@@ -77,8 +77,11 @@ def test_get_secrets_invalid_json_secret_string(mock_settings, mock_boto3_sessio
     _, mock_client = mock_boto3_session
     mock_client.get_secret_value.return_value = {"SecretString": "{'aes_key':'abc'}"}
 
-    with pytest.raises(ValueError, match="has invalid JSON in SecretString"):
+    with pytest.raises(ValueError, match="has invalid JSON in SecretString") as excinfo:
         get_secrets()
+
+    # The message reaches logs and tracebacks, so it names the fault and never quotes the secret.
+    assert "abc" not in str(excinfo.value)
 
 
 def test_get_secrets_non_object_json_secret_string(mock_settings, mock_boto3_session):

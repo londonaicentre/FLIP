@@ -1173,7 +1173,7 @@ networkPolicies:
   # allowedEgressCIDRsWithPorts is what makes the chart check it for you.
   allowedEgressCIDRs: []
   #   - 10.0.0.0/8
-  # CIDRs allowed for egress on a specific port, e.g. fl-server gRPC (port 8002)
+  # CIDRs allowed for egress on a specific port, e.g. the fl-server (port 8002)
   # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP)
   allowedEgressCIDRsWithPorts: []
   # - cidrs:

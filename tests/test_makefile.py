@@ -129,7 +129,7 @@ class HostDirsArePreparedNotEscalated(unittest.TestCase):
 
     def test_deployed_up_trust_runs_no_root_container_and_names_the_remedy(self):
         out = dry_run("up-trust")
-        assert "alpine:3.20 chown" not in out, out
+        assert not re.search(r"busybox:1\.36@sha256:[0-9a-f]{64} chown", out), out
         assert "make -C trust prepare-host-dirs KIT=SCR HUB=prod" in out, out
 
     def test_prepare_host_dirs_creates_every_mount_source(self):
@@ -698,6 +698,8 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     gate = next(line for line in output.splitlines() if "onboard_onprem_trust.py" in line)
                     args = shlex.split(gate)
                     assert "--gate" in args, gate
+                    # Only the upgrade's gate skips the seed-marker folder: it never seeds (FLIP#1985).
+                    assert ("--upgrade" in args) == (target == "upgrade-onprem-trust"), gate
                     assert Path(args[args.index("--kit-file") + 1]) == kit_file, gate
                     if target == "upgrade-onprem-trust":
                         plan = next(line for line in output.splitlines() if "site_upgrade.py plan" in line)

@@ -195,9 +195,13 @@ drops off the FL network. The pod's events carry::
    MountVolume.SetUp failed for volume "fl-client-kit" : hostPath type check failed, /opt/flip/fl-kit is not a directory
 
 **Cause.** The kit was staged at a path other than the default, with ``KIT_DEST=<path>`` on ``stage-kit`` and on
-the first deploy, and the upgrade was run without it. Every deploy target passes ``flClient.kitHostPath`` on the
-Helm command line, where it beats the kit file and any values file, and its default is ``/opt/flip/fl-kit``. The
-upgrade's rollout wait does not cover the FL client, so the command can still exit 0.
+the first deploy, and the upgrade was run without it. Before v0.16, every deploy target passed
+``flClient.kitHostPath`` on the Helm command line with the default ``/opt/flip/fl-kit``, and the upgrade's rollout
+wait did not cover the FL client, so the command exited 0.
+
+From v0.16 a deploy or upgrade without ``KIT_DEST`` or ``FL_CLIENT_KIT_HOST_PATH`` keeps the path the release
+already mounts and says so, and an FL client that was ready before the upgrade must be ready again before the
+command exits 0. Passing either variable is how you move the kit.
 
 **Check.** Compare the path in the previous revision with the current one:
 
@@ -207,7 +211,7 @@ upgrade's rollout wait does not cover the FL client, so the command can still ex
    helm get values trust-release -n flip-trust --revision <previous> | grep kitHostPath
    helm get values trust-release -n flip-trust | grep kitHostPath
 
-**Fix.** Run the same upgrade again with the path the kit is staged at:
+**Fix.** On a checkout older than v0.16, run the same upgrade again with the path the kit is staged at:
 
 .. code-block:: shell
 

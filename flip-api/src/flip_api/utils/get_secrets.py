@@ -63,8 +63,8 @@ def get_secrets(secret_name: str = "", region_name: str = "") -> dict:
     try:
         secrets = json.loads(secret_string)
     except json.JSONDecodeError as e:
-        preview = secret_string[:200]
-        raise ValueError(f"Secret '{secret_name}' has invalid JSON in SecretString: {e}. Preview: {preview!r}") from e
+        # No preview of the string: this message reaches logs, and the string is the secret.
+        raise ValueError(f"Secret '{secret_name}' has invalid JSON in SecretString: {e}.") from e
 
     if not isinstance(secrets, dict):
         raise ValueError(f"Secret '{secret_name}' must be a JSON object, got {type(secrets).__name__}.")

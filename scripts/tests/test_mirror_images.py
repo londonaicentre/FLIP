@@ -14,7 +14,8 @@
 
 A site's proxy allowlists registries by host name, so each registry a node pulls from is a whole
 public registry opened, and the control over what runs is the image reference. The compose files,
-the XNAT stack, the Helm chart and the Ansible seed role must therefore name only
+the XNAT stack, the Helm chart, the Ansible seed role and the trust Makefiles' throwaway containers
+(``HOST_TOOLS_IMAGE``) must therefore name only
 ``ghcr.io/londonaicentre/*``, with the mirrored images as ``mirror/<name>:<tag>@<digest>`` at the
 digest ``trust/deploy/mirror-images.manifest`` records (what ``scripts/mirror_images.sh`` copies).
 
@@ -41,6 +42,10 @@ PINNED_FILES = (
 )
 MANIFEST_LINE = re.compile(r"^([a-z0-9.-]+\.[a-z]+/[a-z0-9./_-]+):([A-Za-z0-9._-]+)\s+(sha256:[0-9a-f]{64})$")
 PIN = re.compile(r"^ghcr\.io/londonaicentre/mirror/([a-z0-9./_-]+):([A-Za-z0-9._-]+)@(sha256:[0-9a-f]{64})$")
+# The trust Makefiles' throwaway containers (a chown without root, the XNAT dump): one image, defined in
+# the fragment both include. A literal there was docker.io's alpine, which a GHCR-only host cannot pull (FLIP#1784).
+HOST_TOOLS_DEFINITION = "deploy/portable.mk"
+HOST_TOOLS_USERS = ("trust/Makefile", "trust/xnat/Makefile")
 HELM_IMAGE = re.compile(r'repository: (\S+)\n\s+tag: "([^"]+)"\n(?:\s+digest: "([^"]+)"\n)?')
 
 
@@ -66,6 +71,9 @@ def image_refs() -> list[tuple[str, str]]:
     for rel in PINNED_FILES:
         for match in re.finditer(r"^\s*(?:image|uv_image):\s*\"?([^\"\s#]+)", (REPO / rel).read_text(), re.M):
             refs.append((rel, match.group(1)))
+    host_tools = re.search(r"^HOST_TOOLS_IMAGE := (\S+)$", (REPO / HOST_TOOLS_DEFINITION).read_text(), re.M)
+    assert host_tools, f"{HOST_TOOLS_DEFINITION} defines no HOST_TOOLS_IMAGE"
+    refs.append((HOST_TOOLS_DEFINITION, host_tools.group(1)))
     return refs
 
 
@@ -86,6 +94,15 @@ class MirrorPins(unittest.TestCase):
                 ref = match.group(1)
                 # A literal reference bypasses values.yaml, and so the manifest.
                 assert ref.startswith("{{"), f"{template.name}: {ref} is not taken from values.yaml"
+
+    def test_the_makefiles_run_only_the_host_tools_image(self):
+        for rel in HOST_TOOLS_USERS:
+            text = (REPO / rel).read_text().replace("\\\n", " ")
+            # An invocation passes options; prose such as "(docker run failed)" in a message does not.
+            runs = re.findall(r"docker run\s+-[^|;]*", text)
+            assert runs, f"{rel}: no docker run found (did the guard go stale?)"
+            for run in runs:
+                assert "$(HOST_TOOLS_IMAGE)" in run, f"{rel}: {run[:120]} runs an image other than HOST_TOOLS_IMAGE"
 
     def test_mirrored_images_are_pinned_to_the_manifest(self):
         pins = manifest()

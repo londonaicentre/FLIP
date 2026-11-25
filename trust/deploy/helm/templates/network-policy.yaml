@@ -176,7 +176,7 @@ spec:
             cidr: {{ . | quote }}
 {{- end }}
 {{- end }}
-    # Allow egress to specific CIDRs on specific ports (e.g. FL server gRPC)
+    # Allow egress to specific CIDRs on specific ports (e.g. the FL server)
 {{- if .Values.networkPolicies.allowedEgressCIDRsWithPorts }}
 {{- range .Values.networkPolicies.allowedEgressCIDRsWithPorts }}
     - to:

@@ -554,6 +554,8 @@ upgrade-xnat: xnat-check-ports create-xnat-network
 # labels, like xnat-web (FLIP#1210). The container runs as xnat-web's uid, the owner of the rest of
 # the tree, so the backups stay deletable by the operator under FLIP_UID and a later xnat-reset
 # still finds a tree it owns (FLIP#1731); xnat-backup-writable checks it can, before anything is dumped.
+# The dump holds every XNAT password hash and token secret, so backups/ and the dump are the owner's
+# alone (umask 077, and chmod for a backups/ an earlier upgrade left open).
 xnat-backup: SHELL := /bin/bash
 xnat-backup: xnat-backup-writable
 	$(require_kit)
@@ -567,13 +569,13 @@ xnat-backup: xnat-backup-writable
 	dump="backups/xnat-db-$$(date +%Y%m%d-%H%M%S).sql.gz"; \
 	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/$$dump ..."; \
 	if docker exec "$$db" sh -c 'set -o pipefail; pg_dumpall -U postgres | gzip -c' \
-	     | docker run --rm -i --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 sh -c "set -o pipefail; \
-	         mkdir -p /x/backups && cat > /x/$$dump \
+	     | docker run --rm -i --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" $(HOST_TOOLS_IMAGE) sh -c "set -o pipefail; umask 077; \
+	         mkdir -p /x/backups && chmod 700 /x/backups && cat > /x/$$dump \
 	         && gzip -dc /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
 	         && ls -l /x/$$dump"; then \
 	  exit 0; \
 	fi; \
-	docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 rm -f "/x/$$dump"; \
+	docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" $(HOST_TOOLS_IMAGE) rm -f "/x/$$dump"; \
 	echo "❌ The XNAT database dump failed or is incomplete — no backup was kept, and nothing was upgraded."; \
 	exit 1
 
@@ -625,7 +627,7 @@ xnat-db-remove-old-cluster:
 # runs this before it pulls anything, so a refused upgrade leaves the whole site on its release.
 xnat-backup-writable:
 	$(require_kit)
-	@rc=0; docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
+	@rc=0; docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" $(HOST_TOOLS_IMAGE) \
 	  sh -c 'if [ -e /x/backups ]; then [ -w /x/backups ] || exit 3; else [ -w /x/. ] || exit 4; fi' || rc=$$?; \
 	case $$rc in \
 	  0) ;; \
@@ -646,7 +648,7 @@ xnat-backup-writable:
 # here would pass upgrade-xnat's ownership check and XNAT would be redeployed onto an empty tree.
 xnat-web-dirs:
 	$(require_kit)
-	@rc=0; docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
+	@rc=0; docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" $(HOST_TOOLS_IMAGE) \
 	  sh -c '[ -d /x/xnat-data/archive ] || exit 3; \
 	         mkdir -p $(patsubst $(XNAT_DATA_DIR)/%,/x/%,$(XNAT_WEB_DATA_DIRS)) || exit 4' || rc=$$?; \
 	case $$rc in \

@@ -59,13 +59,14 @@ def ensure_user_and_role(
 
     The identity provider is the source of truth for user identity, so this
     function does not create an auth user locally. It stores FLIP-owned
-    profile fields in ``user_profile`` and ensures the ``user_role`` grant
-    exists for the provider sub corresponding to the given email.
+    profile fields in ``user_profile`` and, the first time it seeds a user,
+    grants the ``user_role`` for the provider sub corresponding to the given
+    email. A user it has already seeded keeps whatever roles they hold now.
 
     Args:
         idp (IdentityProvider): The configured identity provider.
         email (str): The user's email, used to look up the corresponding provider user.
-        role_ref (RoleRef): The role to assign to the user if they don't already have it.
+        role_ref (RoleRef): The role to assign when the user is first seeded and holds no role.
         session (Session): The SQLModel session used for DB reads and writes.
         name (str): The user's seeded display name.
         organisation (str): The user's seeded organisation.
@@ -84,34 +85,33 @@ def ensure_user_and_role(
     logger.debug(f"Found identity-provider user {email} with sub {user_id}")
 
     profile = session.get(UserProfile, user_id)
-    if profile is None:
-        logger.info(f"Creating profile for {email}")
-        session.add(UserProfile(user_id=user_id, name=name, organisation=organisation))
-        session.commit()
-    elif profile.name != name or profile.organisation != organisation:
-        logger.info(f"Updating profile for {email}")
-        profile.name = name
-        profile.organisation = organisation
-        session.add(profile)
-        session.commit()
+    if profile is not None:
+        # 2️⃣ Already seeded: keep the profile in step, and leave the role grants alone. This runs
+        # on every flip-api boot, so granting the seed role whenever the user has none would undo
+        # an administrator's removal of it on the next deploy.
+        if profile.name != name or profile.organisation != organisation:
+            logger.info(f"Updating profile for {email}")
+            profile.name = name
+            profile.organisation = organisation
+            session.add(profile)
+            session.commit()
+        logger.debug(f"{email} is already seeded; leaving role grants unchanged")
+        return
 
-    # 2️⃣ Bootstrap the user's role only on a fresh DB.
-    # We assign the seeded role only when the user has NO role at all, not
-    # just when this specific role is missing. Otherwise every flip-api boot
-    # would re-grant the hardcoded seed role and silently undo any admin-UI
-    # role change for these well-known emails (the dev flip-db has no volume,
-    # so a `make down && make up` wipes the DB and re-runs this seed).
+    # 3️⃣ First seeding of this user: the profile and the role grant go in one commit, so a
+    # failure between them cannot leave a seeded profile that never receives its role.
+    # The grant is skipped when the user already has a role, whatever it is.
     # Global rows only: a Trust Admin grant (FLIP#1258) is not a platform role.
+    # (The dev flip-db has no volume, so a `make down && make up` wipes the DB and seeds afresh.)
+    logger.info(f"Creating profile for {email}")
+    session.add(UserProfile(user_id=user_id, name=name, organisation=organisation))
     has_any_role = session.exec(
         select(UserRole).where(UserRole.user_id == user_id).where(col(UserRole.trust_id).is_(None))
     ).first()
-
     if not has_any_role:
         logger.info(f"Assigning role {role_ref.name} to {email}")
         session.add(UserRole(user_id=user_id, role_id=role_ref.value))
-        session.commit()
-    else:
-        logger.debug(f"{email} already has a role; leaving role grants unchanged")
+    session.commit()
 
 
 def _ensure_user_and_role_resilient(

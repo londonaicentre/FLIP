@@ -169,6 +169,18 @@ def test_delete_models_success():
     assert result == 2
 
 
+def test_delete_models_selects_the_projects_live_models():
+    """The filter must reach the database: ``not Model.deleted`` is a Python constant and matches no row."""
+    session = MagicMock()
+    session.exec.return_value.all.return_value = []
+
+    delete_models(uuid4(), "user", session, ensure_deletion=False)
+
+    where = str(session.exec.call_args.args[0].whereclause)
+    assert "model.project_id" in where
+    assert "model.deleted IS false" in where
+
+
 def test_delete_models_none_found():
     session = MagicMock()
     session.exec.return_value.all.return_value = []

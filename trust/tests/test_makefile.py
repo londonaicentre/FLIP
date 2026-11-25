@@ -20,6 +20,7 @@ fails here rather than on a live site.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -79,17 +80,17 @@ class UpgradeTrust(unittest.TestCase):
         assert 'COHORT_SNAPSHOT_STORAGE_DIR="/srv/flip/members"' in out, out
 
     def test_the_prepared_store_image_is_pinned(self):
-        """An unpinned alpine is a moving target and a surprise pull on a host behind a firewall."""
+        """A tag is a moving target, and a docker.io pull fails on a host that reaches only GHCR (FLIP#1784)."""
         out = dry_run("_upgrade-trust-apply")
-        assert "alpine:3.20" in out, out
-        assert " alpine " not in out.replace("alpine:3.20", ""), out
+        assert "ghcr.io/londonaicentre/mirror/library/busybox:1.36@sha256:" in out, out
+        assert "alpine" not in out, out
 
     def test_a_local_deployed_store_is_checked_not_escalated(self):
         """Only a remote DOCKER_CONTEXT prepares the store through a container; locally a non-root operator
         gets the check and the prepare-host-dirs remedy (FLIP#1723)."""
         out = dry_run("_upgrade-trust-apply")
         assert '[ -n "$DOCKER_CONTEXT" ]' in out, out
-        assert "alpine:3.20 chown" not in out, out
+        assert not re.search(r"busybox:1\.36@sha256:[0-9a-f]{64} chown", out), out
         assert "prepare-host-dirs KIT=SCR HUB=prod" in out, out
 
     def test_the_store_owner_follows_the_kits_flip_uid(self):

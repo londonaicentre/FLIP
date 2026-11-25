@@ -13,7 +13,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
@@ -31,7 +31,7 @@ from flip_api.domain.schemas.status import AccessRequestStatus
 from flip_api.utils.constants import ACCESS_REQUEST_TEMPLATE_NAME
 from flip_api.utils.email_sender import send_templated_email
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import IPagedData, get_paging_details, get_total_pages
+from flip_api.utils.paging_utils import IPagedData, PagingInfo, get_total_pages, paging_params
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 
@@ -128,7 +128,7 @@ def request_access(request: IAccessRequest, db: Session = Depends(get_session)) 
     status_code=status.HTTP_200_OK,
 )
 def list_access_requests(
-    request: Request,
+    paging_info: PagingInfo = Depends(paging_params),
     status_filter: AccessRequestStatus | None = Query(default=None, alias="status"),
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
@@ -136,7 +136,7 @@ def list_access_requests(
     """List access requests for administrator triage, newest first.
 
     Args:
-        request (Request): FastAPI request object (source of the paging query params).
+        paging_info (PagingInfo): The page requested.
         status_filter (AccessRequestStatus | None): Optional ``status`` query param to
             return only requests in that lifecycle state (e.g. only ``PENDING``).
         db (Session): The database session.
@@ -153,8 +153,6 @@ def list_access_requests(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorised to manage access requests")
 
     try:
-        paging_info = get_paging_details(dict(request.query_params))
-
         count_stmt = select(func.count()).select_from(AccessRequest)
         data_stmt = select(AccessRequest).order_by(col(AccessRequest.created_at).desc())
         if status_filter is not None:
@@ -171,8 +169,6 @@ def list_access_requests(
             total_records=total_records,
             data=[IAccessRequestRecord.model_validate(row) for row in rows],
         )  # type: ignore[call-arg]
-    except HTTPException:
-        raise
     except Exception as e:
         logger.exception("Error listing access requests")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

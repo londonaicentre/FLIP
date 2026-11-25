@@ -437,6 +437,23 @@ After changes, evaluate if docs need updating:
 
 - All files include Apache 2.0 copyright header.
 - Commits must be signed off (DCO): `git commit -s`
+- Every issue carries its metadata from creation. The issue forms set some of it, but `gh issue create` uses none of
+  them, so pass it yourself:
+  - **Type** (`--type`, always): one of the org's types, `Bug`, `Feature`, `Task` or `Spike`. The type is what kind of
+    work it is, so no `bug`/`enhancement` label on an issue. Those two labels are for PRs, which
+    `.github/release.yml` sorts the release notes by.
+  - **Area labels** (`--label`, at least one): `hub-api`, `ui`, `trust`, `imaging-xnat`, `omop-data`, `flip-utils`,
+    `fl-nvflare`, `fl-flower`, `tutorials`, `map-apps`, `infra-aws`, `infra-k8s`, `infra-azure`, `infra-snowflake`,
+    `onprem-compose`, `ci`, `testing`, `documentation`, `security`, plus `HDRS` for that award's work
+    (`gh label list` has the descriptions).
+  - **Project** (`--project FLIP`, always): board `londonaicentre/10`.
+  - **Priority** (when known): the board's `Priority` field (`High` / `Medium` / `Low`), never a label. Set it on the
+    project item after creating the issue, with `gh project item-edit`, looking up the field and option ids with
+    `gh project field-list 10 --owner londonaicentre`.
+  - **Milestone** (`--milestone`, only when scheduled): a milestone is a goal with a due date (`gh api
+    repos/londonaicentre/FLIP/milestones`). Unscheduled work has none.
+  - **Assignee** (`--assignee`) when someone is picking it up; **parent** (`--parent <epic>`) and `--blocked-by` /
+    `--blocking` when it belongs to an epic or a dependency is known.
 - PRs target `develop`. Branch naming: `[ticket_id]-[task_name]`.
 - A PR's assignee is whoever acts next: a review that leaves comments is a **Request changes** review, and each hand-over assigns the other person and unassigns yourself. Changes for someone else's PR go in a suggestion PR into their branch (`Suggestions for #<N>: …`). See `CONTRIBUTING.md` ("Reviewing pull requests").
 
@@ -521,7 +538,7 @@ contract stay in sync), `fl_round_metrics_tests.yml` (tests over
 `check-version-bump.yml` (blocks a PR to `main` from `develop` that doesn't bump the
 flip-utils version), `check-package-metadata.yml` (validates flip-utils package metadata on
 PRs to develop/main), `validate_branch_origin.yml` (PRs targeting `main` must originate from
-`develop`, or from a `hotfix/*` branch for a hotfix release), `release.yml` (creates a GitHub Release on push to `main`), `release-pypi.yml`
+`develop`, or from a `hotfix/*` branch for a hotfix release), `release.yml` (creates a GitHub Release on push to `main`, and publishes the versioned trust Helm chart to `oci://ghcr.io/londonaicentre/charts/flip-trust` once the image builds are green, via `trust/deploy/helm/scripts/package_chart.py` — FLIP#1646), `release-pypi.yml`
 (publishes flip-utils to PyPI on push to `main`), `pr-release-notes-preview.yml` (previews
 release notes on a PR to `main`), `regenerate_docs_gifs.yml` (re-records the docs GIFs from
 Cypress on push to `develop` touching `flip-ui/src/**` or the Cypress docs harness —

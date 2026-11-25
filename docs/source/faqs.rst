@@ -83,7 +83,7 @@ Does the hub need inbound access to the Trust?
    Trust's network. See :ref:`deploy-trust-node-network`.
 
 Why is the federated-learning connection not on port 443 like everything else?
-   The FL client connects out to the hub's FL endpoint over mutual TLS on its own port (8002 on the production hub).
+   The FL client connects out to the hub's FL endpoint over TLS on its own port (8002 on the production hub).
    NVIDIA, whose framework carries that traffic, advises against 443 because the protocol is gRPC rather than plain
    HTTPS and some inspection appliances reject it there. What the Trust needs depends on how its firewall decides:
 

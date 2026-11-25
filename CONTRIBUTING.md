@@ -35,7 +35,7 @@ When creating issues, please use the appropriate issue template:
 
 - [**Bug Report**](https://github.com/londonaicentre/FLIP/issues/new?template=BUG-REPORT-FORM.yml) -- for reporting bugs and unexpected behaviour
 - [**Feature Request**](https://github.com/londonaicentre/FLIP/issues/new?template=FEATURE-ISSUE-FORM.yml) -- for proposing new features or enhancements
-- [**Task**](https://github.com/londonaicentre/FLIP/issues/new?template=TASK-ISSUE-FORM.yml) -- for general tasks that would not require any coding.
+- [**Task**](https://github.com/londonaicentre/FLIP/issues/new?template=TASK-ISSUE-FORM.yml) -- for work that is neither a bug nor a feature (chores, refactors, CI).
 - [**Documentation**](https://github.com/londonaicentre/FLIP/issues/new?template=DOCUMENTATION-ISSUE-FORM.yml) -- for reporting documentation issues or proposing improvements to documentation.
 
 ### Project overview
@@ -578,9 +578,10 @@ A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name
 flagged block, never by disabling the rule in `.tflint.hcl` (the rationale needs that second `#`: any other
 separator, such as `-- why`, makes tflint ignore the annotation). Removing an unused root variable means
 removing its whole input chain too: the `TF_VAR_` export in `deploy/aws/Makefile`, the key in
-`scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and `scripts/reconcile_ci_env.py` — and
+`deploy/aws/scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and
+`deploy/aws/scripts/reconcile_ci_env.py` — and
 deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
-against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
+against a canary fixture, and its guards are regression-tested by `deploy/aws/scripts/tests/test_tflint_lint.sh`.
 
 ### Azure trust node checks (Terraform)
 

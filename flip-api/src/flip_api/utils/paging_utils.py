@@ -11,13 +11,13 @@
 #
 
 import math
-from typing import Generic, TypeVar
+from typing import Annotated, Generic, TypeVar
 from uuid import UUID
 
+from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from flip_api.domain.schemas.status import ProjectType
-from flip_api.utils.logger import logger
 
 # Define TypeVars for Generic Models
 T = TypeVar("T")
@@ -36,7 +36,7 @@ class PagingInfo(BaseModel):
 
 
 class FilterInfo(BaseModel):
-    owner: UUID | None = Field(default=None)  # Assuming owner is a UUID
+    owner: UUID | None = Field(default=None)
     # FLIP#1071: restrict the list to imaging projects or tabular-only ones.
     # None = every type; the UI's "All types" segment sends no parameter.
     project_type: ProjectType | None = Field(default=None)
@@ -64,99 +64,20 @@ class IPagedData(BaseModel, Generic[T]):
     )
 
 
-def _positive_int(raw: str, name: str, default: int) -> int:
-    """Parse a positive int query parameter, logging and falling back to `default` otherwise."""
-    try:
-        value = int(raw)
-    except ValueError:
-        logger.error(f"Could not parse {name} '{raw}', setting default value {default}.")
-        return default
-    if value <= 0:
-        logger.warning(f"Invalid {name} '{raw}', defaulting to {default}.")
-        return default
-    return value
-
-
-def get_paging_details(query_string_parameters: dict[str, str | int | float] | None = None) -> PagingInfo:
-    """
-    Parses query string parameters for pagination details.
-
-    Args:
-        query_string_parameters: A dictionary of query parameters.
-
-    Returns:
-        PagingInfo: An object containing offset, page number, page size, and search string.
-    """
-    if query_string_parameters is None:
-        query_string_parameters = {}
-
-    page_number_int = _positive_int(str(query_string_parameters.get("pageNumber", "1")), "pageNumber", 1)
-    page_size_int = _positive_int(str(query_string_parameters.get("pageSize", "20")), "pageSize", 20)
-    search_val = query_string_parameters.get("search", "")
-    search_str = str(search_val) if search_val is not None else ""
-
-    offset = (page_number_int - 1) * page_size_int
-
+def paging_params(
+    page_number: Annotated[int, Query(alias="pageNumber", ge=1)] = 1,
+    page_size: Annotated[int, Query(alias="pageSize", ge=1)] = 20,
+    search: str = "",
+) -> PagingInfo:
+    """The ``pageNumber`` / ``pageSize`` / ``search`` query params of a paged list route, as a dependency."""
     return PagingInfo(
-        offset=offset,
-        pageNumberInt=page_number_int,
-        pageSizeInt=page_size_int,
-        searchStr=search_str,
+        offset=(page_number - 1) * page_size,
+        pageNumberInt=page_number,
+        pageSizeInt=page_size,
+        searchStr=search,
     )
 
 
-def get_filter_details(query_string_parameters: dict[str, str | UUID] | None = None) -> FilterInfo:
-    """
-    Parses query string parameters for filter details.
-
-    Args:
-        query_string_parameters: A dictionary of query parameters.
-
-    Returns:
-        FilterInfo: The filter criteria: owner, and the FLIP#1071 project type (``projectType``).
-    """
-    if query_string_parameters is None:
-        query_string_parameters = {}
-
-    owner_param = query_string_parameters.get("owner")
-    if owner_param is None:
-        logger.debug("No owner parameter provided, defaulting to None.")
-    else:
-        try:
-            # Attempt to convert the owner parameter to a UUID
-            owner_param = UUID(str(owner_param))
-        except ValueError:
-            logger.warning(f"Invalid UUID format for owner parameter: {owner_param}. Treating as None.")
-            owner_param = None
-
-    project_type: ProjectType | None = None
-    raw_project_type = query_string_parameters.get("projectType")
-    if raw_project_type is not None:
-        try:
-            project_type = ProjectType(str(raw_project_type))
-        except ValueError:
-            # A UI convenience filter: an unknown value means "every type" rather than a 400 — but
-            # say so, as the owner branch above does, so a client sending the wrong spelling shows up.
-            logger.warning(f"Unknown projectType filter value: {raw_project_type!r}. Treating as every type.")
-
-    return FilterInfo(owner=owner_param, project_type=project_type)
-
-
-def get_total_pages(total_records: int, page_size_int: int) -> int:
-    """
-    Calculates the total number of pages.
-
-    Args:
-        total_records: The total number of records.
-        page_size_int: The number of records per page.
-
-    Returns:
-        int: The total number of pages.
-    """
-    if page_size_int <= 0:
-        logger.warning("page_size_int is non-positive, returning 0 total pages.")
-        return 0  # Or raise an error, or return 1 if total_records > 0
-    if total_records <= 0:
-        return 0  # No records, no pages (or 1 if you prefer to show an empty page)
-
-    return math.ceil(total_records / page_size_int)
+def get_total_pages(total_records: int, page_size: int) -> int:
+    """The number of pages ``total_records`` fill; ``paging_params`` keeps ``page_size`` at 1 or more."""
+    return math.ceil(total_records / page_size)

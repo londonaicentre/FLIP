@@ -147,8 +147,8 @@ back. The FL server never initiates inbound connections to client sites:
   that calls the Fleet API outbound, through the Central Hub's fleet proxy. SuperNodes
   initiate all requests and do not accept incoming connections.
 
-The TRE need only allow outbound TLS to the FL server endpoint: gRPC for NVIDIA FLARE,
-HTTPS (HTTP/1.1) for Flower.
+The TRE need only allow outbound TLS to the FL server endpoint: a WebSocket under mutual TLS for
+NVIDIA FLARE, HTTPS (HTTP/1.1) for Flower.
 
 **Central Hub FLIP API <-> Trust API**
 
@@ -260,16 +260,12 @@ in :ref:`deploy-trust-node-network`. No inbound connections are needed.
 The two FL frameworks look different on the wire:
 
 - **Flower**: the SuperNode speaks plain HTTPS (HTTP/1.1).
-- **NVIDIA FLARE**: the client speaks gRPC (HTTP/2) under mutual TLS.
+- **NVIDIA FLARE**: the client opens a WebSocket under mutual TLS (FLARE's ``http`` driver,
+  which FLIP's kits are provisioned with). It starts as an ordinary HTTP/1.1 request, then upgrades.
 
 An appliance that classifies traffic by port and protocol sees both as TLS on a non-default
 port. An appliance that understands only HTTP/1.1 can tell them apart only by decrypting the
-traffic, and decryption breaks mutual TLS on any port.
-
-NVIDIA FLARE also ships a websocket transport (its ``http`` driver, chosen at provisioning
-time), which starts as an ordinary HTTP/1.1 request before upgrading. FLIP provisions gRPC only
-and has not tested that transport on the platform. Raise it with the FLIP team as an option to
-evaluate for a site, not a setting to rely on.
+traffic, and decryption breaks the FL connection on any port.
 
 Data
 ----
@@ -546,8 +542,8 @@ Differences from on-premise deployment
      - Live / near-real-time
      - Snapshot at time of TRE data load
    * - Networking
-     - Outbound-only (HTTPS + gRPC/HTTP to Central Hub)
-     - Outbound-only (HTTPS + gRPC/HTTP to Central Hub)
+     - Outbound-only (HTTPS + FL over TLS to Central Hub)
+     - Outbound-only (HTTPS + FL over TLS to Central Hub)
    * - Central Hub <-> Trust API
      - Poll (outbound)
      - Poll (outbound)

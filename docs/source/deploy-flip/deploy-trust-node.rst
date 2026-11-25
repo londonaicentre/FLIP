@@ -221,7 +221,7 @@ different load balancers, so allow both. This is everything a node connects out 
    * - The hub's FL endpoint, for example ``fl.app.flip.aicentre.co.uk``
      - Your kit's FL port: 8002 on production, 8003 on staging
      - Always
-     - Federated training, over mutual TLS. **Exempt it from TLS inspection**: a proxy that re-signs the traffic
+     - Federated training, over TLS. **Exempt it from TLS inspection**: a proxy that re-signs the traffic
        breaks the client's certificate check. It has a fixed IP, so a firewall that filters by name only in HTTP
        rules (Azure Firewall Basic, for example) can allow it by address. The hub may admit connections here only
        from registered sites: **give the hub team the public address your node leaves from before going live**
@@ -265,7 +265,7 @@ node runs is fixed by the image references instead: FLIP's images by release tag
 from ``ghcr.io/londonaicentre/mirror/`` (:gh:`trust/deploy/mirror-images.manifest`, byte-identical copies of
 upstream's images).
 
-The hub identifies a trust by its kit's mTLS certificates and API key, not by its address, so the node needs no fixed
+The hub identifies a trust by its API key and the credentials in its FL kit, not by its address, so the node needs no fixed
 public address. The hub's FL edge does, however, admit only declared trust addresses: **before going live, give the
 FLIP team the public address the node's traffic leaves from**, and tell them whenever it changes.
 

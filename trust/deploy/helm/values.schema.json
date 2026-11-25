@@ -525,7 +525,7 @@
         },
         "allowedEgressCIDRsWithPorts": {
           "type": "array",
-          "description": "Egress rules combining CIDRs with a specific port (e.g. fl-server gRPC on 8002)",
+          "description": "Egress rules combining CIDRs with a specific port (e.g. the fl-server on 8002)",
           "items": {
             "type": "object",
             "required": ["cidrs", "port"],

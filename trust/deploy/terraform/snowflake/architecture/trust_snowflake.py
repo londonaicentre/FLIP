@@ -393,7 +393,7 @@ def _draw_workload(drawn: _Drawn) -> None:
     secrets - Edge(style="dotted", label="mapped per service") - trust_api
     trust_api >> Edge(label="logs") >> events
     trust_api >> Edge(style="dashed", label="HTTPS :443 poll tasks, heartbeat") >> egress
-    fl_client >> Edge(style="dashed", label="FL gRPC") >> egress
+    fl_client >> Edge(style="dashed", label="FL over TLS") >> egress
     egress >> Edge(style="dashed") >> hub
 
 

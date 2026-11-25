@@ -78,16 +78,16 @@ class DeleteImagingInput(BaseModel):
 
 
 class GetImagingStatusInput(BaseModel):
-    """Input for retrieving imaging project status."""
+    """Input for retrieving imaging project status. The id is a UUID for the reason given on ``DeleteImagingInput``."""
 
-    imaging_project_id: str = Field(..., description="The XNAT project ID")
+    imaging_project_id: UUID = Field(..., description="The XNAT project ID")
     encoded_query: str = Field(..., description="Base64 URL-encoded query")
 
 
 class ReimportStudiesInput(BaseModel):
-    """Input for reimporting imaging studies."""
+    """Input for reimporting imaging studies. The id is a UUID for the reason given on ``DeleteImagingInput``."""
 
-    imaging_project_id: str = Field(..., description="The XNAT project ID")
+    imaging_project_id: UUID = Field(..., description="The XNAT project ID")
     encoded_query: str = Field(..., description="Base64 URL-encoded query")
 
 

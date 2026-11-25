@@ -13,7 +13,6 @@
 name: Feature
 description: Raise a feature request
 title: "[Feature]: "
-labels: ["enhancement"]
 type: Feature
 projects: ["londonaicentre/10"]
 body:

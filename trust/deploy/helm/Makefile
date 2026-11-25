@@ -16,8 +16,9 @@ NAMESPACE ?= flip-trust
 # mounts. `make sync-kit` renders kitHostPath from the kit file's FL_KIT_DIR, which
 # is /opt/flip/fl-kit in every shipped kit (trust/.env.example) and the path the
 # Ansible EC2/on-prem plays stage to — so that is the default here too. Overriding
-# it means also passing --set flClient.kitHostPath=<same path> at deploy, or the pod
-# stays Pending on a `hostPath type check failed` event naming the mounted path.
+# it means also passing KIT_DEST=<same path> to the FIRST deploy, or the pod stays
+# Pending on a `hostPath type check failed` event naming the mounted path. Later
+# deploys and upgrades keep the path the release mounts (KEEP_KIT_PATH below).
 KIT_DEST ?= /opt/flip/fl-kit
 # KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
 # the FLARE image as 1000. Which backend is read from the kit ITSELF — a FLARE
@@ -191,6 +192,13 @@ FL_CLIENT_KIT_HOST_PATH ?= $(KIT_DEST)
 ifneq ($(strip $(FL_CLIENT_KIT_HOST_PATH)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set flClient.kitHostPath=$(FL_CLIENT_KIT_HOST_PATH)
 endif
+# Unless the operator passed one of the two, `helm upgrade` keeps the kit path the release already
+# mounts (FLIP#1984): a kit staged with KIT_DEST=<path> was otherwise moved back to the default by
+# the next deploy or upgrade that did not repeat it, with the old fl-client pod already gone.
+ifeq ($(filter command environment override,$(origin KIT_DEST) $(origin FL_CLIENT_KIT_HOST_PATH)),)
+KEEP_KIT_PATH = $$($(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
+	| python3 $(CHART_DIR)/scripts/keep_kit_path.py --default "$(FL_CLIENT_KIT_HOST_PATH)")
+endif
 
 # The release pin (FLIP#1204): TAG=vX.Y.Z sets global.image.tag, which every FLIP-built
 # image follows (templates/_helpers.tpl flip-trust.imageTag). Last so it wins over the
@@ -279,7 +287,7 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	@echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $(KIT_DEST)"
 	NAMESPACE=$(NAMESPACE) $(CHART_DIR)/scripts/stage-to-node.sh --context "$(KUBE_CONTEXT)" \
 	  --src "$(KIT_SRC)" --dest "$(KIT_DEST)" --subdirs "$(KIT_SUBDIRS)" --owner $(KIT_UID) $(if $(NODE),--node "$(NODE)")
-	@echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
+	@echo "✅ Kit staged. On the first deploy pass KIT_DEST=$(KIT_DEST); later deploys and upgrades keep it."
 
 download-vocab: ## Download the OMOP core vocabulary from the AI Centre bucket to this host (your AWS CLI profile)
 	## For operators with access to the bucket (FLIP#923); everyone else exports the same
@@ -325,15 +333,17 @@ deploy-release: preflight ## Apply the chart and wait for the core workloads to 
 	$(if $(AUTO_UPGRADE_ON),@$(SUBMAKE) --no-print-directory apply-trust-secret)
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) | \
 		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
+	ready=$$(python3 $(CHART_DIR)/scripts/rollout_wait.py --report-ready \
+		--namespace $(NAMESPACE) --release $(RELEASE_NAME) --kubectl "$(KUBECTL)"); \
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout $(HELM_TIMEOUT) \
 		--set xnat.initJob.enabled=false \
-		$(VALUES_OPTS) \
-		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
-	@python3 $(CHART_DIR)/scripts/rollout_wait.py \
+		$(VALUES_OPTS) $(KEEP_KIT_PATH) \
+		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }; \
+	python3 $(CHART_DIR)/scripts/rollout_wait.py \
 		--namespace $(NAMESPACE) --release $(RELEASE_NAME) \
-		--timeout $(HELM_TIMEOUT) --kubectl "$(KUBECTL)" \
+		--timeout $(HELM_TIMEOUT) --kubectl "$(KUBECTL)" --ready-before "$$ready" \
 		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
 
 # The two steps are separate targets so that WHICH one failed is the signal. GNU make exits 2 for

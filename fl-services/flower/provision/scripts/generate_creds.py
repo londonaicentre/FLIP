@@ -92,6 +92,23 @@ def generate_ca() -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
         .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=VALIDITY_DAYS))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        # Python 3.13's default TLS context verifies strictly (VERIFY_X509_STRICT): a CA needs its
+        # key usage and key identifier, and the certificate it signs an authority key identifier.
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False)
         .sign(private_key, hashes.SHA256())
     )
 
@@ -133,6 +150,8 @@ def generate_server_cert(
             x509.SubjectAlternativeName(alt_names),
             critical=False,
         )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
 
@@ -161,14 +180,9 @@ def write_supernode_key(number: int) -> None:
     priv_path = KEY_DIR / f"supernode_credentials_{number}"
     pub_path = KEY_DIR / f"supernode_credentials_{number}.pub"
 
-    # Write private key
-    with open(priv_path, "wb") as f:
+    # Created owner-only, so the private key is never readable by anyone else.
+    with open(os.open(priv_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
         f.write(private_bytes)
-    # Set permissions for private key (600) - mainly for Unix, but good practice
-    try:
-        os.chmod(priv_path, 0o600)
-    except Exception:
-        pass
 
     # Write public key
     with open(pub_path, "wb") as f:
