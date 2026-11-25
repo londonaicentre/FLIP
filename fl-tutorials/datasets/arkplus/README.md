@@ -92,5 +92,7 @@ make -C trust seed KIT=<CODE> PROJECTS=arkplus_project
 ```
 
 It matches the project's accession numbers, so it finds exactly those rows (on AICP: 2,340 persons,
-one image and seven label observations each). The PACS needs nothing: the published DICOMs are the
-same instances, which Orthanc reports as already stored.
+one image and seven label observations each). `unseed-omop` would not: it deletes by the published
+person ids, which those rows do not carry. The PACS keeps its studies, which are the same instances
+the seed uploads. A trust whose slot gets the other site than the one it was loaded with also removes
+the old site's studies: `make -C trust unseed-orthanc KIT=<CODE> SOURCE_TRUST=<old site> PROJECTS=arkplus_project`.
