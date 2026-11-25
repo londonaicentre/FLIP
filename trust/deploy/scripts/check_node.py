@@ -151,6 +151,49 @@ def check_ready(node: DockerNode) -> Check:
     return passed("services ready", f"{node.project} and {node.xnat_stack} are running")
 
 
+def check_drift(node: DockerNode, declared: dict[str, str]) -> Check:
+    """The Compose project still is what its compose files and kit describe (FLIP#2078).
+
+    ``declared`` is `docker compose config --hash '*'`: each service and the hash of its rendered configuration.
+    Compose stamps that hash on every container it creates, so a service whose compose file, kit value or image
+    name changed since it was started shows here. The hash covers the image's name and not its content, so each
+    container's image is also compared with the image its name now resolves to on this host.
+
+    Not covered: XNAT's swarm stack, which carries no such hash; and a container made by hand with the label copied.
+    """
+    if not declared:
+        raise RuntimeError("no declared configuration: `docker compose config --hash '*'` printed nothing")
+    differences = []
+    seen: set[str] = set()
+    for name in node._names(f"label=com.docker.compose.project={node.project}", everything=True):
+        container = node._inspect(name)
+        labels = container.get("Config", {}).get("Labels") or {}
+        if labels.get("com.docker.compose.oneoff") == "True":
+            continue
+        service = labels.get("com.docker.compose.service", "")
+        seen.add(service)
+        if service not in declared:
+            differences.append(f"{name} runs a service the compose files do not declare")
+            continue
+        if labels.get("com.docker.compose.config-hash") != declared[service]:
+            differences.append(f"{service}: its configuration differs from the compose files and kit")
+        image = container.get("Config", {}).get("Image", "")
+        ok, current = node._run(["docker", "image", "inspect", "--format", "{{.Id}}", image])
+        if ok and current.strip() != container.get("Image"):
+            differences.append(f"{service}: runs an older {image} than this host now holds")
+    differences += [f"{service}: declared, and has no container" for service in sorted(set(declared) - seen)]
+    return node_checks.drift(
+        differences, f"{len(declared)} services match their compose configuration and image (XNAT's stack not compared)"
+    )
+
+
+def read_declared(path: Path | None) -> dict[str, str] | None:
+    """`docker compose config --hash '*'` as {service: hash}; None when no file was given."""
+    if path is None:
+        return None
+    return dict(line.split()[:2] for line in path.read_text().splitlines() if len(line.split()) >= 2)
+
+
 def cstore(
     node: DockerNode, settle_seconds: int = 30, sleep: Callable[[float], None] = time.sleep
 ) -> tuple[int, str, str]:
@@ -242,6 +285,11 @@ def main(argv: list[str] | None = None) -> int:
         help="this is the site's own stack: it should reach its hub, and no study is sent unless the kit "
         "loads the sample data",
     )
+    parser.add_argument(
+        "--declared-hashes",
+        type=Path,
+        help="output of `docker compose config --hash '*'` for this kit: what the drift row compares the node with",
+    )
     parser.add_argument("--earlier-rows", type=Path, help="rows recorded before these checks, to head the report")
     parser.add_argument("--fl-settle-seconds", type=int, default=45)
     parser.add_argument("--conversion-timeout", type=int, default=600)
@@ -252,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     seeded = trust_kit_lib.trust_data_seed(kit)
     no_data = "" if seeded else "TRUST_DATA_SEED=false, so the node holds no sample data"
     node = DockerNode(args.project, args.xnat_stack)
+    declared = read_declared(args.declared_hashes)
     started = datetime.now(timezone.utc)
     print(f"== Trust node check ({backend}) of {args.project}, started {started:%Y-%m-%dT%H:%M:%SZ}")
     checks = earlier_rows(args.earlier_rows) + node_checks.run_checks(
@@ -266,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.site and not seeded
         else "",
         no_hub="" if args.site else "a self-test stack is joined to no hub",
+        find_drift=(lambda: check_drift(node, declared)) if declared is not None else None,
         conversion_timeout=args.conversion_timeout,
         fl_settle_seconds=args.fl_settle_seconds,
     )

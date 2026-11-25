@@ -31,6 +31,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -62,6 +63,7 @@ class Cluster(node_checks.Node, Protocol):
     """A node that is a Helm release: the shared checks' Node, plus the workloads its readiness is read from."""
 
     def workloads(self) -> list[dict]: ...
+    def manifest_diff(self) -> tuple[int, str]: ...
 
 
 def _is_ready(pod: dict) -> bool:
@@ -171,6 +173,23 @@ class KubectlCluster:
                     return next((f"{user}:{password}" for user, password in users.items()), None)
         return None
 
+    def manifest_diff(self) -> tuple[int, str]:
+        """`kubectl diff` of the release's own manifest against the cluster: (exit code, output).
+
+        0 nothing differs, 1 something does, anything else the comparison did not run. A server-side dry run: it
+        asks the API server what applying the manifest would change, and changes nothing.
+        """
+        ok, manifest = self._run([*self.helm, "get", "manifest", self.release])
+        if not ok or not manifest.strip():
+            return 2, f"helm get manifest: {manifest[:200] or 'empty'}"
+        try:
+            result = subprocess.run(
+                [*self.kubectl, "diff", "-f", "-"], input=manifest, capture_output=True, text=True, timeout=300
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return 2, str(e)
+        return result.returncode, result.stdout if result.returncode == 1 else result.stderr
+
     def exec(self, pod: str, script: str, stdin: str | None = None) -> tuple[bool, str]:
         return self._run(
             [*self.kubectl, "exec", *(["-i"] if stdin is not None else []), pod, "--", "sh", "-c", script], stdin=stdin
@@ -215,6 +234,27 @@ def check_release_ready(cluster: Cluster) -> Check:
     if short:
         return failed("services ready", "not ready: " + ", ".join(short))
     return passed("services ready", f"{len(items)} workloads ready")
+
+
+DIFFED = re.compile(r"^diff -u.* \S*/LIVE-[^/]+/(\S+)", re.M)
+
+
+def check_drift(cluster: Cluster) -> Check:
+    """Every object of the release still matches the manifest Helm deployed (FLIP#2078).
+
+    Names the objects that differ and never prints the difference: it can hold a Secret's content.
+    """
+    code, out = cluster.manifest_diff()
+    if code not in (0, 1):
+        raise RuntimeError(f"kubectl diff did not run: {out.strip()[:200]}")
+    differing = []
+    for path in DIFFED.findall(out) if code == 1 else []:
+        parts = path.split(".")  # <group>.<version>.<Kind>.<namespace>.<name>, the group absent for core kinds
+        kind = next((i for i, part in enumerate(parts) if part[:1].isupper()), 0)
+        differing.append(f"{parts[kind]} {'.'.join(parts[kind + 2 :])} differs from the release's manifest")
+    if code == 1 and not differing:
+        raise RuntimeError(f"kubectl diff reported a difference this check could not read: {out[:200]}")
+    return node_checks.drift(differing, "every object of the release matches its Helm manifest (kubectl diff)")
 
 
 def run_smoke(namespace: str, release: str, context: str | None) -> tuple[int, str, str]:
@@ -286,6 +326,7 @@ def run_checks(
         no_omop=no_omop,
         no_orthanc=no_orthanc,
         no_hub="" if hub else "not asked for: --hub checks the heartbeat of a release joined to a hub",
+        find_drift=lambda: check_drift(cluster),
         conversion_timeout=conversion_timeout,
         fl_settle_seconds=fl_settle_seconds,
     )

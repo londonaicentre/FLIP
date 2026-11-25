@@ -70,6 +70,7 @@ class FakeCluster:
         self.hub_url = "https://hub.example/api"
         self.fl_target = "fl.hub.example:8002"
         self.unreachable = {"https://example.com/", "https://www.wikipedia.org/"}  # what the node's network blocks
+        self.diff = (0, "")  # kubectl diff of the release's manifest: exit code and output
         self.person_count = "4166"
         self.orthanc_creds = "flip:s3cret"
         self.orthanc_statistics = '{"CountInstances": 250, "CountStudies": 25}'
@@ -100,6 +101,9 @@ class FakeCluster:
 
     def mounts(self, pod, container):
         return self.fl_mounts if container == "fl-client" else []
+
+    def manifest_diff(self):
+        return self.diff
 
     def exec(self, pod, script, stdin=None):
         self.exec_log.append((pod, script, stdin))
@@ -923,6 +927,62 @@ def test_a_hubless_run_skips_the_declared_endpoints_and_still_samples_the_networ
     checks = _checks(_values(), smoke=lambda: (0, "ok", ""))
     assert checks["declared endpoints reachable"].status.value == "skipped"
     assert checks["undeclared destinations blocked"].status.value == "pass"
+
+
+# ── drift (FLIP#2078) ───────────────────────────────────────────────────────────────
+
+_LIVE, _MERGED = "/tmp/LIVE-1/", "/tmp/MERGED-2/"
+_API = "apps.v1.Deployment.flip-trust.trust-release-flip-trust-trust-api"
+_SECRET = "v1.Secret.flip-trust.trust-release-flip-trust-secrets"
+_POLICY = "networking.k8s.io.v1.NetworkPolicy.flip-trust.trust-release-flip-trust-egress"
+KUBECTL_DIFF = f"""diff -u -N {_LIVE}{_API} {_MERGED}{_API}
+--- {_LIVE}{_API}
++++ {_MERGED}{_API}
+-        image: ghcr.io/londonaicentre/trust-api:patched
++        image: ghcr.io/londonaicentre/trust-api:v0.16.0
+diff -u -N {_LIVE}{_SECRET} {_MERGED}{_SECRET}
+-  aes-key: hunter2
++  aes-key: ***
+diff -u -N {_LIVE}{_POLICY} {_MERGED}{_POLICY}
+"""
+
+
+def test_a_release_that_matches_its_manifest_has_no_drift():
+    check = selftest.check_drift(FakeCluster())
+    assert check.status.value == "pass", check
+    assert check.refs == ("SATRE 5.5.01", "SATRE 2.4.03", "SATRE 2.4.04")
+
+
+def test_each_object_that_differs_is_named_and_its_content_never_printed():
+    check = selftest.check_drift(FakeCluster(diff=(1, KUBECTL_DIFF)))
+    assert check.status.value == "fail"
+    assert check.detail == (
+        "Deployment trust-release-flip-trust-trust-api differs from the release's manifest; "
+        "Secret trust-release-flip-trust-secrets differs from the release's manifest; "
+        "NetworkPolicy trust-release-flip-trust-egress differs from the release's manifest"
+    )
+    assert "hunter2" not in check.detail
+
+
+@pytest.mark.parametrize(
+    "diff", [(2, "error: the server doesn't have a resource type"), (1, "something this check cannot read")]
+)
+def test_a_comparison_that_did_not_run_could_not_run(diff):
+    check = selftest.trust_checks.run("no configuration drift", lambda: selftest.check_drift(FakeCluster(diff=diff)))
+    assert check.status.value == "error", check
+
+
+def test_the_comparison_only_reads(monkeypatch):
+    """helm get manifest, then kubectl diff: a server-side dry run that changes nothing."""
+    ran = []
+
+    def fake_run(args, **kwargs):
+        ran.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="kind: ConfigMap\n", stderr="")
+
+    monkeypatch.setattr(selftest.subprocess, "run", fake_run)
+    assert selftest.KubectlCluster("ns", "rel", "ctx").manifest_diff() == (0, "")
+    assert [a[a.index("ns") + 1 :] for a in ran] == [["get", "manifest", "rel"], ["diff", "-f", "-"]]
 
 
 def test_the_release_reports_the_rows_every_platform_reports():
