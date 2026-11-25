@@ -70,7 +70,7 @@ echo "SuperLink Control API is ready."
 # supernode_credentials_<N>.pub is Trust_<N>, the slot flip-api derives from the same file name
 # (FLIP#1942), so the keys are the only list and one added later never renames another.
 # FL_API_ADDRESS is optional and, when set, needs FL_API_KEY (every FL API route but /health
-# requires it; FL_API_KEY_HEADER renames the header).
+# requires it).
 # TRUST_NAMES accepts both JSON list (["Trust_1", "Trust_2"]) and comma-separated (Trust_1,Trust_2).
 raw_trust_names="${TRUST_NAMES:-}"
 # Strip JSON brackets and quotes, then split on commas

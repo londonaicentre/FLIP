@@ -412,25 +412,14 @@ restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-stor
 	$(MAKE) -C trust up-fl-clients
 	@echo "✅ FL services restarted successfully!"
 
-# Recreate flip-api alone, as restart-fl's step 2 does. Not `make -C flip-api restart`: it names
-# this project with the common compose file only, so its --remove-orphans removes every FL
-# overlay service, and it takes flip-db down too.
-# --no-deps for restart-fl's reason: without it compose also recreates any dependency whose
-# config or (under --pull always) image has moved, flip-db included. So nothing else is started
-# either, and a stopped dependency would leave flip-api restarting in the background behind an
-# exit 0: check them first, before flip-api is removed. The list is flip-api's depends_on in the
-# dev compose (the prod-image harness has none).
-FLIP_API_DEPENDS_ON := flip-db keycloak object-store
-restart-no-trust: _check-compose-project-owner
-	@running=$$(${DOCKER_COMMAND} ps --status running --services) || exit 1; \
-	for dep in $(if $(IS_DEPLOYED),,$(FLIP_API_DEPENDS_ON)); do \
-		echo "$$running" | grep -qx "$$dep" || { \
-			echo "❌ $$dep is not running, and restart-no-trust starts flip-api alone. Bring the hub up with 'make up-no-trust'."; \
-			exit 1; }; \
-	done
+# Recreate flip-api alone. Not `make -C flip-api restart`: it names this project with the
+# common compose file only, so its --remove-orphans removes every FL overlay service, and it
+# takes flip-db down too. --no-recreate leaves running dependencies as they are and starts a
+# stopped one, waiting on its depends_on condition; a pulled dependency image is not applied.
+restart-no-trust: _check-compose-project-owner _ensure-object-store-dir
 	@echo "🔄 Recreating flip-api (DEBUG='$(DEBUG)')..."
 	${DOCKER_COMMAND} rm -fsv flip-api
-	DEBUG=$(DEBUG) ${DOCKER_COMMAND} up -d --no-deps $(UP_PULL_FLAGS) flip-api
+	DEBUG=$(DEBUG) ${DOCKER_COMMAND} up -d --no-recreate $(UP_PULL_FLAGS) flip-api
 ci:
 	act --env-file .env.development
 # Runs the script directly; `make -C deploy/aws lint` runs it too, with

@@ -17,7 +17,7 @@
 # these must match FL_BACKEND. To test a one-off image or a custom workspace,
 # override on the command line (CLI args outrank Makefile assignments). The composes
 # build each reference as ${DOCKER_FL_REGISTRY}<name>:${DOCKER_FL_TAG}, and the registry
-# and tag apply to all three FL images:
+# and tag apply to every FL image:
 #   make up DOCKER_FL_REGISTRY=ghcr.io/foo/ DOCKER_FL_SERVER_NAME=custom DOCKER_FL_TAG=test
 #   make up FL_PROVISIONED_DIR=/tmp/my-workspace
 #

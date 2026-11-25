@@ -205,9 +205,8 @@ Upload limits:
        ``.safetensors``. Anything else, including archives such as ``.zip``, is refused with a message listing the
        accepted types.
    * - File size
-     - **5 GB** (5,000,000,000 bytes) per file on a deployed hub; a local development hub allows 5 GiB (the
-       deployment's ``MAX_MODEL_FILE_BYTES``). The page checks the size before the upload starts, and storage
-       rejects an oversized file.
+     - **5 GB** (5,000,000,000 bytes) per file (the deployment's ``MAX_MODEL_FILE_BYTES``). The page checks the
+       size before the upload starts, and storage rejects an oversized file.
    * - Upload time
      - **30 minutes**. The upload authorisation expires after that, so a single large upload must finish within it.
 

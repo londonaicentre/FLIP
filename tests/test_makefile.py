@@ -238,9 +238,8 @@ class RestartNoTrustIsFlipApiAlone(unittest.TestCase):
                     subdir=".",
                 )
                 assert "-C flip-api" not in out, out
-                lines = [line for line in out.splitlines() if "docker compose -p deploy " in line]
-                compose = [line for line in lines if " ps --status running " not in line]
-                removed, started = compose  # exactly two compose commands that change anything
+                compose = [line for line in out.splitlines() if "docker compose -p deploy " in line]
+                removed, started = compose  # exactly two compose commands
                 for line in compose:
                     assert f"-f deploy/compose/compose.development.{backend}.yml" in line, line
                     assert line.split()[-1] == "flip-api", line
@@ -248,54 +247,9 @@ class RestartNoTrustIsFlipApiAlone(unittest.TestCase):
                     assert "flip-db" not in line, line
                 assert " rm -fsv " in removed, removed
                 assert started.startswith("DEBUG=true "), started
-                assert " up -d --no-deps " in started, started
-
-
-class RestartNoTrustNeedsItsDependencies(unittest.TestCase):
-    """restart-no-trust refuses, before removing flip-api, when a service it depends on is down (FLIP#2047).
-
-    The start is ``-d --no-deps``: it starts nothing else, so with flip-db or Keycloak stopped make
-    would exit 0 and leave flip-api restarting in the background.
-    """
-
-    DEPENDS_ON = ("flip-db", "keycloak", "object-store")
-
-    def restart(self, running: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
-        with tempfile.TemporaryDirectory() as tmp:
-            docker = Path(tmp).resolve() / "docker"
-            docker.write_text(
-                "#!/bin/sh\n"
-                'case "$*" in\n'
-                "  *' ps --status running --services') printf '%s\\n' $RUNNING;;\n"
-                '  compose*) echo "ran: $*";;\n'
-                "esac\n"
-            )
-            docker.chmod(0o755)
-            env = {"PATH": f"{docker.parent}:{os.environ['PATH']}", "RUNNING": " ".join(running)}
-            return run_target("restart-no-trust", subdir=".", hub="", env=env)
-
-    def test_the_list_is_what_flip_api_depends_on_in_the_dev_compose(self):
-        compose = (REPO / "deploy" / "compose" / "compose.development.yml").read_text()
-        block = re.search(r"^  flip-api:\n(?:(?:    .*)?\n)*?    depends_on:\n((?:      .*\n)+)", compose, re.M)
-        assert tuple(re.findall(r"^      ([\w-]+):", block[1], re.M)) == self.DEPENDS_ON, block[1]
-        makefile = (REPO / "Makefile").read_text()
-        assert f"FLIP_API_DEPENDS_ON := {' '.join(self.DEPENDS_ON)}\n" in makefile
-
-    def test_all_running_recreates_flip_api(self):
-        result = self.restart((*self.DEPENDS_ON, "flip-api", "fl-api-net-1"))
-        assert result.returncode == 0, result.stdout + result.stderr
-        removed, started = (line for line in result.stdout.splitlines() if line.startswith("ran: "))
-        assert removed.endswith(" rm -fsv flip-api"), removed
-        assert started.endswith(" up -d --no-deps flip-api"), started
-
-    def test_a_stopped_dependency_stops_it_before_anything_is_removed(self):
-        for down in self.DEPENDS_ON:
-            with self.subTest(down=down):
-                result = self.restart(tuple(svc for svc in self.DEPENDS_ON if svc != down) + ("flip-api",))
-                assert result.returncode != 0, result.stdout
-                assert f"{down} is not running" in result.stdout, result.stdout
-                assert "make up-no-trust" in result.stdout, result.stdout
-                assert "ran: " not in result.stdout, result.stdout
+                # Without --no-deps, so compose starts a stopped dependency and waits on it.
+                assert " up -d --no-recreate " in started, started
+                assert "--no-deps" not in started, started
 
 
 class DebugOffTakesWhatDebugTakes(unittest.TestCase):
