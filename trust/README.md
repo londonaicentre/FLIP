@@ -83,6 +83,12 @@ EXPECTED_TRUST_ID=<from kit>
 
 plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> HUB=<env>` handles the rest.
 
+The hub-shared block names the FL endpoint (`NLB_SUBDOMAIN`) and the port the trust dials (`FL_EDGE_PORT`: 443 on
+production, 8003 on staging). A trust that must dial another port, such as `8002` over a site-to-site VPN, sets
+`FL_EDGE_PORT_OVERRIDE` in its kit file; hub tooling never overwrites it. The effective port is
+`FL_EDGE_PORT_OVERRIDE`, else `FL_EDGE_PORT`, else `FL_SERVER_PORT`. On NVFLARE, `fl-client-init` writes it into the
+kit's `startup/fed_client.json` before the client starts.
+
 The kit also carries **XNAT's own AE title** and the **upstream PACS** block (see the commented
 `── Upstream PACS ──` section of `trust/.env.example`, and
 [`xnat/README.md`](xnat/README.md#pacs-configuration) for what each one does):

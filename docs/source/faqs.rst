@@ -82,20 +82,21 @@ Does the hub need inbound access to the Trust?
    opened to the internet. The one exception is retrieval from the Trust's own PACS, which needs a rule inside the
    Trust's network. See :ref:`deploy-trust-node-network`.
 
-Why is the federated-learning connection not on port 443 like everything else?
-   The FL client connects out to the hub's FL endpoint over TLS on its own port (8002 on the production hub).
-   NVIDIA, whose framework carries that traffic, advises against 443 because the protocol is gRPC rather than plain
-   HTTPS and some inspection appliances reject it there. What the Trust needs depends on how its firewall decides:
+Which port does the federated-learning connection use?
+   443 on the production hub, like everything else. The FL client connects out to the hub's separate FL endpoint
+   over TLS. Some NHS perimeter firewalls reset TLS on any other port, so 443 needs only the usual outbound rule.
+   The endpoint also listens on 8002 for trusts set up before. The traffic is not gRPC: NVIDIA FLARE carries a
+   WebSocket inside mutual TLS, and Flower carries HTTPS. Two things still differ from ordinary web traffic:
 
-   - a firewall that filters by port needs one rule;
-   - one that classifies by application must allow ``ssl`` on that port;
-   - one that decrypts outbound TLS must exempt the endpoint.
+   - a firewall that decrypts outbound TLS must exempt the endpoint, because the client accepts only the hub's own
+     certificate;
+   - the hub's FL edge admits only declared trust addresses, so give the FLIP team yours.
 
    :ref:`readiness-network` has the questions to ask.
 
 Does a Trust need a site-to-site VPN?
-   Only when it cannot allow the outbound federated-learning connection, on its own port, over the internet, by policy
-   or because its network team will not write a per-port rule. Everything else FLIP does is ordinary outbound HTTPS. See
+   Usually not. Everything FLIP does, the federated-learning connection included, is outbound TLS on 443. A VPN is
+   available where site policy forbids internet egress for the federated-learning traffic. See
    :ref:`site-to-site-vpn`.
 
 Can the node sit behind the Trust's web proxy?
