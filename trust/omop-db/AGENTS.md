@@ -107,7 +107,10 @@ tolerate the DICOM vocab the seed has already loaded):
   by `USE ROLE`); `DRY_RUN=1` prints the SQL and executes nothing. Object names follow the epic #1589
   contract. The loader lives here, not in `trust/deploy/snowflake/` (#1582), so the fetch and the split
   have one implementation; that Makefile forwards to these targets.
-- **Synthea EHR cohort** (`src/omop_db_tools/synthea_ehr.py`, `make load-synthea-ehr`): the populate
+- **Synthea EHR cohort** (`src/omop_db_tools/synthea_ehr.py`, `make load-synthea-ehr`; on a site's trust
+  `make -C trust load-synthea-ehr KIT=<CODE>`, which hands it the kit's OMOP login and port and the
+  trust's `SOURCE_TRUST` as `TRUST_INDEX`, FLIP#2107 — this directory's Makefile alone falls back to the
+  GSTT dev template's credentials): the populate
   side of the EHR risk-prediction tutorial. The shipped mock OMOP has NO `condition_occurrence`
   rows, so that tutorial's `query.sql` returns nothing until this loads the public 1k-person
   Synthea-in-OMOP set (AWS Open Data Registry, anonymous HTTPS, downloaded at run time, never

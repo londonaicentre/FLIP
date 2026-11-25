@@ -438,7 +438,11 @@ def fl_endpoint(kit_vars: dict[str, str]) -> tuple[str, int, str] | None:
     FLARE dials the ``target`` in its kit slice's ``startup/fed_client.json``, so that wins when the
     slice is on disk; otherwise, and always for Flower (whose compose passes exactly these), the
     kit's ``NLB_SUBDOMAIN`` and ``FL_EDGE_PORT`` (``FL_SERVER_PORT`` for a kit synced before FLIP#1365).
+    The port is the site's ``FL_EDGE_PORT_OVERRIDE``, else ``FL_EDGE_PORT``, when set: fl-client-init
+    writes that port into FLARE's ``fed_client.json`` before the client starts (FLIP#2051).
     """
+    ports = (kit_vars.get("FL_EDGE_PORT_OVERRIDE", ""), kit_vars.get("FL_EDGE_PORT", ""))
+    dial = next((p for p in ports if p.isdigit()), "")
     if kit_vars.get("FL_BACKEND") == "nvflare":
         fed_client = (
             Path(kit_vars.get("FL_KIT_DIR", "") or "/nonexistent")
@@ -452,11 +456,11 @@ def fl_endpoint(kit_vars: dict[str, str]) -> tuple[str, int, str] | None:
             target = json.loads(fed_client.read_text())["servers"][0]["service"]["target"]
             host, _, port = str(target).rpartition(":")
             if host and port.isdigit():
-                return host, int(port), "startup/fed_client.json"
+                return host, int(dial or port), "startup/fed_client.json"
         except (OSError, ValueError, KeyError, IndexError, TypeError):
             pass
     host = kit_vars.get("NLB_SUBDOMAIN", "")
-    port = kit_vars.get("FL_EDGE_PORT", "") or kit_vars.get("FL_SERVER_PORT", "")
+    port = dial or kit_vars.get("FL_SERVER_PORT", "")
     if is_filled(host) and port.isdigit():
         return host, int(port), "the kit's NLB_SUBDOMAIN"
     return None
