@@ -118,9 +118,12 @@ def test_markdown_shows_each_status_and_the_headline() -> None:
         [Check("a | b", Status.PASS, "line one\nline two"), Check("c", Status.ERROR, "could not run")]
     )
     _assert("COULD NOT RUN · 2026-11-25T10:00:00Z → 2026-11-25T10:05:00Z" in md, "headline says the run could not run")
-    _assert("| ✅ | a \\| b | line one line two |  |" in md, "a cell escapes pipes and folds line breaks", md)
-    _assert("| 💥 | c | could not run |  |" in md, "the could-not-run row has its own glyph")
+    _assert("| ✅ | a \\| b | line one line two |\n" in md, "a cell escapes pipes and folds line breaks", md)
+    _assert("| 💥 | c | could not run |\n" in md, "the could-not-run row has its own glyph")
     _assert(latest == md, "latest-<name>.md is the same report")
+    _, cited, _ = _report([Check("a", Status.PASS), Check("b", Status.WARN, "open", refs=("SATRE 2.2.11",))])
+    _assert("| | Check | Detail | Tests |" in cited, "a report with a cited row gains the Tests column")
+    _assert("| ✅ | a |  |  |" in cited and "| ⚠️ | b | open | SATRE 2.2.11 |" in cited, "every row fills it", cited)
     _, failed, _ = _report([Check("a", Status.FAIL)])
     _assert("FAILED ·" in failed, "a failure is headlined FAILED")
 

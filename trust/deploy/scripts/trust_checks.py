@@ -135,13 +135,15 @@ def write_report(
     }
     out.mkdir(parents=True, exist_ok=True)
     (out / f"{stem}.json").write_text(json.dumps(report, indent=2) + "\n")
+    # The last column names what a row tests, and is left out of a report where no row says.
+    cited = any(c.refs for c in checks)
     rows = "\n".join(
-        f"| {c.status.glyph} | {_cell(c.name)} | {_cell(c.detail)} | {_cell(', '.join(c.refs))} |" for c in checks
+        f"| {c.status.glyph} | {_cell(c.name)} | {_cell(c.detail)} |"
+        + (f" {_cell(', '.join(c.refs))} |" if cited else "")
+        for c in checks
     )
-    md = (
-        f"# {title}\n\n{_headline(checks)} · {started} → {finished}\n\n"
-        f"| | Check | Detail | Tests |\n|---|---|---|---|\n{rows}\n"
-    )
+    head = "| | Check | Detail | Tests |\n|---|---|---|---|" if cited else "| | Check | Detail |\n|---|---|---|"
+    md = f"# {title}\n\n{_headline(checks)} · {started} → {finished}\n\n{head}\n{rows}\n"
     path = out / f"{stem}.md"
     path.write_text(md)
     (out / f"{latest}.md").write_text(md)
