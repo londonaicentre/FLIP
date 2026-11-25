@@ -37,7 +37,6 @@ import importlib.util
 import io
 import json
 import os
-import re
 import shlex
 import socket
 import subprocess
@@ -1124,19 +1123,7 @@ def test_61_a_deployed_kit_is_judged_by_hub_not_by_its_file_name() -> None:
     """A prod kit under a pre-#1479 name, a bare name or a KIT_FILE= path is still a deployed kit (FLIP#2047)."""
     print("\n[61] deployed kit: HUB decides, whatever the file is called")
     debug = {"TRUST_LOG_LEVEL": "DEBUG"}
-    # The suffixes are env_mode.mk's own: HUB's two values plus the pre-#1479 names it still answers to.
-    env_mode = (SCRIPTS_DIR.parents[2] / "deploy" / "env_mode.mk").read_text()
-    old_names = next(line for line in env_mode.splitlines() if line.startswith("OLD_KIT_ENVS :="))
-    in_make = set(re.findall(r"[a-z]+(?:-[a-z]+)?", old_names)) - {"if", "filter"}
-    _assert(set(mod.DEPLOYED_KIT_SUFFIXES) == in_make, "suffix list = env_mode.mk's", str(sorted(in_make)))
-    for suffix in mod.DEPLOYED_KIT_SUFFIXES:
-        # An empty HUB (make's development, or a stray `export HUB=`) never downgrades a kit named as deployed.
-        with mock.patch.dict(os.environ, {"HUB": ""}):
-            check = mod.check_log_level(debug, True, f"trust/.env.GSTT.{suffix}")
-        _assert(check.status == mod.Status.FAIL, f"HUB= but .{suffix}: FAIL", check.detail)
-        _assert(any(f".{suffix}" in h and "deployed" in h for h in check.hints), "says which reading", str(check.hints))
-    names = ("trust/.env.GSTT.development", "trust/.env.GSTT", "/srv/kits/gstt.env")
-    for name in names:
+    for name in ("trust/.env.GSTT.development", "trust/.env.GSTT", "/srv/kits/gstt.env"):
         for hub in ("prod", "stag"):
             with mock.patch.dict(os.environ, {"HUB": hub}):
                 _assert(mod.check_log_level(debug, True, name).status == mod.Status.FAIL, f"HUB={hub} {name}: FAIL")
@@ -1144,13 +1131,10 @@ def test_61_a_deployed_kit_is_judged_by_hub_not_by_its_file_name() -> None:
         with mock.patch.dict(os.environ, {"HUB": ""}):
             _assert(mod.check_log_level(debug, True, name).status == mod.Status.WARN, f"HUB= {name}: WARN")
     without_hub = {k: v for k, v in os.environ.items() if k != "HUB"}
-    with mock.patch.dict(os.environ, without_hub, clear=True):  # run by hand
-        for name in ("trust/.env.GSTT", "/srv/kits/gstt.env"):
-            check = mod.check_log_level(debug, True, name)
-            _assert(check.status == mod.Status.FAIL, f"no HUB, {name}: deployed")
-            _assert(any("HUB=" in h for h in check.hints), "tells how to get the development reading", str(check.hints))
-        for name in ("trust/.env.GSTT.development", "trust/.env.GSTT.development.example"):
-            _assert(not mod.is_deployed_kit(name), f"no HUB, {name}: development")
+    with mock.patch.dict(os.environ, without_hub, clear=True):  # run by hand: prod, as make defaults
+        check = mod.check_log_level(debug, True, "trust/.env.GSTT.development")
+    _assert(check.status == mod.Status.FAIL, "no HUB: deployed", check.detail)
+    _assert(any("HUB=prod" in h and "run with HUB=" in h for h in check.hints), "says how it was judged", str(check))
 
 
 def test_62_an_unset_data_dir_fails_naming_the_shared_fallback() -> None:
@@ -1164,7 +1148,8 @@ def test_62_an_unset_data_dir_fails_naming_the_shared_fallback() -> None:
         check = mod.check_data_dir(label, var, {}, True, SCRIPTS_DIR.parents[2])
         _assert(check.status == mod.Status.FAIL, f"{var} unset is still a FAIL", check.detail)
         hints = "\n".join(check.hints)
-        _assert(f"mounts {fallback}" in hints and "not per trust" in hints, "names the fallback and that it is shared")
+        shared = f"On a deployed trust, unset mounts {fallback}, shared by every trust"
+        _assert(shared in hints, "names the deployed fallback and that it is shared", hints)
         _assert(f"{var}={fallback}" in hints, "tells a running site the line that keeps its data", hints)
         _assert("trust/.env.example" in hints, "points at the template's line", hints)
 

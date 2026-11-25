@@ -1023,7 +1023,7 @@ ORTHANC_SEED_MARKER = $(dir $(ORTHANC_STORAGE_ABS)).$(notdir $(ORTHANC_STORAGE_A
 # seeded trust and every later one seeds it again.
 define require_seed_marker_dirs
 	@for m in '$(OMOP_SEED_MARKER)' '$(ORTHANC_SEED_MARKER)'; do \
-	  d="$$(dirname "$$m")"; mkdir -p "$$d" 2>/dev/null; [ -w "$$d" ] || { \
+	  d="$$(dirname "$$m")"; [ -w "$$d" ] || { \
 	    echo "❌ $$d is not writable by $$(id -un), and the seed marker is written there ($$m)."; \
 	    echo "   Make it yours (sudo chown $$(id -u) $$d), or set TRUST_DATA_SEED=false in $(KIT_FILE_LABEL) for a trust with real data."; \
 	    exit 1; }; \

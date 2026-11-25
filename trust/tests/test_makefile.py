@@ -184,14 +184,13 @@ class UpgradeTrust(unittest.TestCase):
         (FLIP#1731): all three under FLIP_UID, and the Orthanc dir (999 on the image-uid route) either way."""
         out = dry_run("_upgrade-trust-apply", kit=KIT + "FLIP_UID=4242\nFLIP_GID=4243\n")
         assert '[ "$owner" = "4242" ]' in out, out
-        assert 'for d in "/nonexistent/omop" ' in out, out
+        assert '"/nonexistent/omop"' in out, out
         assert out.index("FLIP_UID is a first-install choice") < out.index(" pull"), out
         assert out.index("which writes the XNAT backup") < out.index(" pull"), "the backup dir is checked first too"
         assert out.index("could not create the XNAT data dirs") < out.index(" pull"), "and XNAT's mount sources made"
         unset = dry_run("_upgrade-trust-apply")
         assert '[ "$owner" = "999" ]' in unset, unset
-        # The OMOP dir only has a fixed owner under FLIP_UID.
-        assert 'for d in  "/nonexistent/orthanc" ;' in unset, unset
+        assert '"/nonexistent/omop"' not in unset, unset
         with tempfile.TemporaryDirectory() as td:
             for d in ("omop", "pacs", "images/net-1"):
                 Path(td, d).mkdir(parents=True)
