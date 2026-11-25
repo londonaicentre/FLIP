@@ -643,7 +643,8 @@ def _xnat_web(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Ren
         "XNAT_CONTAINER_SERVICE_ENABLED": "false",
         "CATALINA_OPTS": (
             f"-Xms{kit.get('XNAT_MIN_HEAP', '1g')} -Xmx{kit.get('XNAT_MAX_HEAP', '4g')} "
-            f"-Dxnat.home={xnat_home} -XX:+UseG1GC -Djava.awt.headless=true"
+            f"-Dxnat.home={xnat_home} -XX:+UseG1GC -Djava.awt.headless=true "
+            "-Djavamelody.update-check-disabled=true"
         ),
     }
     spec = {
