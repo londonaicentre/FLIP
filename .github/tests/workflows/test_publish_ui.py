@@ -228,8 +228,9 @@ class ApplyPublishesTheUi(unittest.TestCase):
         mismatch = next(line for line in check.splitlines() if "UI Cognito ids differ" in line)
         assert "AWS_COGNITO_USER_POOL_ID" in mismatch
         assert "AWS_COGNITO_APP_CLIENT_ID" in mismatch
-        # A fresh dispatch on main carries no release_tag and would pin sha images over a release.
-        assert "re-run all jobs of this run" in mismatch
+        # A re-run applies its own commit, so only the newest run cannot roll back; a fresh dispatch
+        # on main carries no release_tag and would pin sha images over a release.
+        assert "newest apply run" in mismatch
         assert "Do not dispatch a new apply" in mismatch
 
     def test_the_cognito_check_job_asks_for_no_environment(self) -> None:

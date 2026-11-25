@@ -49,14 +49,7 @@ on:
       - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
       # test_flower_kit_slots.py and the add_fl_kits.sh harness read or stand in for these (FLIP#1942).
       - "fl-services/flower/register-supernode-keys.sh"
-      - "fl-services/flower/provision/scripts/generate_creds.py"
       - "fl-services/flower/Makefile"
-      # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
-      # aws-ec2.yml imports and the shared roles they compose.
-      - "trust/deploy/ansible/aws-ec2-host.yml"
-      - "trust/deploy/ansible/roles/**"
-      # test_site_roles.py reads it: galaxy roles installed beside the shared roles stay untracked.
-      - ".gitignore"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
@@ -99,14 +92,7 @@ on:
       - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
       # test_flower_kit_slots.py and the add_fl_kits.sh harness read or stand in for these (FLIP#1942).
       - "fl-services/flower/register-supernode-keys.sh"
-      - "fl-services/flower/provision/scripts/generate_creds.py"
       - "fl-services/flower/Makefile"
-      # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
-      # aws-ec2.yml imports and the shared roles they compose.
-      - "trust/deploy/ansible/aws-ec2-host.yml"
-      - "trust/deploy/ansible/roles/**"
-      # test_site_roles.py reads it: galaxy roles installed beside the shared roles stay untracked.
-      - ".gitignore"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"

@@ -120,19 +120,15 @@ while :; do
 
     if [[ "${SECONDS}" -ge "${deadline}" ]]; then
         check="gh run list --repo ${REPO} --workflow terraform_apply.yml --branch main"
-        if [[ "${listed}" -eq 0 ]]; then
-            echo "::warning::the terraform_apply runs could not be listed when the ${APPLY_CONFIRM_SECONDS}s budget ran out, so the release apply at ${TAG} is unconfirmed. Check that a run titled '${RUN_TITLE}' started: ${check}"
-            exit 0
-        fi
-        if [[ -z "${run}" && "${redispatched}" -eq 1 ]]; then
-            echo "::warning::the re-dispatched release apply at ${TAG} was not listed within ${APPLY_CONFIRM_SECONDS}s. Check that a run titled '${RUN_TITLE}' started: ${check}"
+        if [[ "${listed}" -eq 0 || ( -z "${run}" && "${redispatched}" -eq 1 ) ]]; then
+            echo "::warning::the release apply at ${TAG} is unconfirmed after ${APPLY_CONFIRM_SECONDS}s: the runs could not be listed, or the re-dispatched run was not listed yet. Check that a run titled '${RUN_TITLE}' started: ${check}"
             exit 0
         fi
         if [[ -z "${run}" ]]; then
-            echo "::error::no terraform_apply run titled '${RUN_TITLE}' appeared within ${APPLY_CONFIRM_SECONDS}s of the dispatch, so nothing confirms production was re-pinned to ${TAG}. Look for it (gh run list --repo ${REPO} --workflow terraform_apply.yml --branch main); if no run carries the tag, ${manual_hint}"
+            echo "::error::no terraform_apply run titled '${RUN_TITLE}' appeared within ${APPLY_CONFIRM_SECONDS}s of the dispatch, so nothing confirms production was re-pinned to ${TAG}. Look for it (${check}); if no run carries the tag, ${manual_hint}"
             exit 1
         fi
-        echo "::warning::the release apply at ${TAG} was still queued after ${APPLY_CONFIRM_SECONDS}s. That is legitimate if an apply is in flight on main, but check it started and was not displaced: gh run list --repo ${REPO} --workflow terraform_apply.yml --branch main"
+        echo "::warning::the release apply at ${TAG} was still queued after ${APPLY_CONFIRM_SECONDS}s. That is legitimate if an apply is in flight on main, but check it started and was not displaced: ${check}"
         exit 0
     fi
     sleep "${APPLY_CONFIRM_POLL_SECONDS}"
