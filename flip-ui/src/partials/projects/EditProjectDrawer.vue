@@ -159,6 +159,8 @@
                                         <div class="mt-6">
                                             <ProjectUsers
                                                 :users="users"
+                                                :owner-id="ownerId"
+                                                :owner-email="ownerEmail"
                                                 :readonly="!projectUnstaged"
                                                 @updated-users="handleUpdatedUsers"
                                             />
@@ -263,6 +265,7 @@ interface IEditProjectDrawerProps {
     updating: boolean;
     users: IProjectUserLookup[];
     ownerId: string;
+    ownerEmail: string;
     // Current DICOM-to-NIfTI setting, shown read-only. It's fixed at project
     // creation and cannot be edited, so the toggle is always disabled.
     dicomToNifti: boolean;

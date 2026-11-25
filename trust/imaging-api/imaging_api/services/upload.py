@@ -187,14 +187,17 @@ async def stage_uploads(net_id: str, uploads: list[UploadFile]) -> tuple[str, li
     request_id = uuid.uuid4().hex
     staging_dir = os.path.join(upload_directory_abs, request_id)
     relative_paths = [upload.filename or "" for upload in uploads]
-    # Check every path before writing any, so a refused request leaves nothing behind.
+    # Check every path before writing any, so a refused request leaves nothing behind. The checked path is the one
+    # written, so nothing but the check decides where a file lands.
+    staged_paths: list[str] = []
     for relative_path in relative_paths:
         if not os.path.basename(relative_path):
             raise ValueError("every uploaded file needs a name")
-        if not os.path.normpath(os.path.join(staging_dir, relative_path)).startswith(staging_dir + os.sep):
+        staged_path = os.path.realpath(os.path.join(staging_dir, relative_path))
+        if not staged_path.startswith(staging_dir + os.sep):
             raise ValueError(f"Path traversal detected in file path: {relative_path}")
-    for upload, relative_path in zip(uploads, relative_paths, strict=True):
-        staged_path = os.path.join(staging_dir, relative_path)
+        staged_paths.append(staged_path)
+    for upload, staged_path in zip(uploads, staged_paths, strict=True):
         os.makedirs(os.path.dirname(staged_path), exist_ok=True)
         with open(staged_path, "wb") as staged:
             shutil.copyfileobj(upload.file, staged)
