@@ -83,4 +83,14 @@ alone: `make -C fl-tutorials reproduce-arkplus-omop`.
 | `prepare_arkplus_dicom.py` | Fills `StudyDescription`, `ReferringPhysicianName` and `PatientSex` where empty: imaging-api drops a study without the first two and requires the third |
 
 Trusts loaded before FLIP#2084 hold the same cohorts from an unmerged loader script, with other ids
-and no seed marker. Seeding on top of them would load every study twice, so remove those rows first.
+and no seed marker. Seeding on top of them would load every study twice, so remove those rows first:
+
+```bash
+make -C trust remove-stray-studies KIT=<CODE> PROJECTS=arkplus_project DRY_RUN=1  # counts only
+make -C trust remove-stray-studies KIT=<CODE> PROJECTS=arkplus_project
+make -C trust seed KIT=<CODE> PROJECTS=arkplus_project
+```
+
+It matches the project's accession numbers, so it finds exactly those rows (on AICP: 2,340 persons,
+one image and seven label observations each). The PACS needs nothing: the published DICOMs are the
+same instances, which Orthanc reports as already stored.

@@ -274,7 +274,9 @@ both agree before packaging). `prostate_project` (PI-CAI fold 0, 300 bpMRI studi
 with `make -C trust seed-trusts PROJECTS=prostate_project`. `arkplus_project` (FLIP#2084, the Ark+
 tutorials' synthetic chest X-rays, `fl-tutorials/datasets/arkplus/`) is opt-in the same way, its
 `source_trust` the dataset's own site — `site1` → 1, `site2` → 2, two cohorts from different generators;
-`Chest X-ray` / `Chest X-ray (holdout)` in `procedure_source_value` separate training from evaluation rows. Prostate's masks reach a project via
+`Chest X-ray` / `Chest X-ray (holdout)` in `procedure_source_value` separate training from evaluation rows. A trust the
+pre-#2084 loader filled (AICP, BDMS) first runs `make -C trust remove-stray-studies KIT=<CODE> PROJECTS=arkplus_project`
+(`DRY_RUN=1` counts): those rows carry other person ids, so the seed's clean never finds them. Prostate's masks reach a project via
 `upload_prostate_labels_to_xnat.py` (`make -C fl-tutorials upload-prostate-labels`), and
 `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` drives cohort → pull → enrichment → training of the
 `flower/image_segmentation/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
