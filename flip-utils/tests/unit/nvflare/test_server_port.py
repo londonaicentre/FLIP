@@ -19,7 +19,7 @@ from flip.nvflare.server_port import main, set_server_port
 KIT = {
     "format_version": 2,
     "servers": [{"name": "net-1", "service": {"target": "fl.app.flip.aicentre.co.uk:8002", "scheme": "http"}}],
-    "client": {"ssl_private_key": "client.key"},
+    "client": {"retry_timeout": 30},
 }
 
 
