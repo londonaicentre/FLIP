@@ -525,7 +525,11 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
         env["SUPERNODE_NAME"] = kit.get("FL_KIT_SLOT", "")
         slot = kit.get("FL_KIT_SLOT_NUMBER", "1")
         superlink = kit.get("NLB_SUBDOMAIN", "")
-        port = kit.get("FL_EDGE_PORT", "").strip() or kit.get("FL_SERVER_PORT", "").strip()
+        port = (
+            kit.get("FL_EDGE_PORT_OVERRIDE", "").strip()
+            or kit.get("FL_EDGE_PORT", "").strip()
+            or kit.get("FL_SERVER_PORT", "").strip()
+        )
         if not superlink.strip() or not port:
             # `--superlink ":"` deploys cleanly and the SuperNode then exits with code 600.
             raise ValueError("FL_BACKEND=flower needs NLB_SUBDOMAIN and FL_EDGE_PORT (or FL_SERVER_PORT) in the kit")

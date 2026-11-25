@@ -494,6 +494,10 @@ flClient:
     pin: ""
     pullPolicy: Always
   nvflare:
+    # The FL server port the client dials (FLIP#2051), written into the kit's startup/fed_client.json by
+    # the fl-client-init init container. sync-kit fills it from the kit's FL_EDGE_PORT_OVERRIDE, else
+    # FL_EDGE_PORT. Empty keeps the kit's own port.
+    serverPort: ""
     # Site-enforced privacy policy (FLIP#851): rendered into the kit's local/privacy.json
     # by the fl-client-init init container (`python -m flip.nvflare.site_policy`, whose
     # errors are in that container's log) and checked, without writing, by the client's
