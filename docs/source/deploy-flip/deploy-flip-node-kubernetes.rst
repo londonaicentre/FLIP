@@ -476,7 +476,7 @@ shares, the same one as the VM node self-test, against the deployed release:
 
    * - Check
      - Passes when
-   * - release ready
+   * - services ready
      - Every Deployment, StatefulSet and DaemonSet of the release has finished rolling out (all replicas updated and
        ready, no old pod left).
    * - fl kit delivered
@@ -497,6 +497,9 @@ shares, the same one as the VM node self-test, against the deployed release:
        (``--conversion-timeout``).
    * - fl client running
      - The FL client is running, with no restart, at two samples 45 s apart.
+   * - hub heartbeat
+     - Only with ``HUB_CHECK=1``, otherwise skipped: trust-api's last heartbeat reached the hub and the hub holds the
+       same key. A heartbeat the hub refused, for a wrong API key for example, fails this row.
 
 A check that needs sample data the release does not load passes as *skipped*, with the reason:
 
@@ -507,7 +510,8 @@ A check that needs sample data the release does not load passes as *skipped*, wi
 Those three skip only while Orthanc holds no instance. If it holds studies anyway, loaded another way or the trust's
 own, the self-test sends one to XNAT and converts one series, as a cohort pull would.
 
-- **No hub needed.** An unreachable hub or FL server is not a failure.
+- **No hub needed.** An unreachable hub or FL server is not a failure, unless you ask for the heartbeat row with
+  ``HUB_CHECK=1`` on a release that is joined to a hub.
 - **No extra permissions.** Every check runs in a pod the release already has, so it adds no RBAC or NetworkPolicy
   exception.
 - **Conversion check.** A C-STORE alone shows XNAT received a study, not that this cluster can convert it. So the

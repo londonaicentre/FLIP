@@ -29,6 +29,10 @@ import tempfile
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+import node_checks  # noqa: E402 — for ROWS, the list every platform reports
+
 SCRIPT = SCRIPTS_DIR / "selftest_node.sh"
 
 PASS = 0
@@ -142,7 +146,7 @@ def main() -> int:
     names = [c["name"] for c in (report or {}).get("checks", [])]
     for name in ("fl kit on the node", "fl kit staged", "kit file", "stack up"):
         _assert(_check(report, name).get("ok") is True, f"preparation row '{name}' passed", json.dumps(report))
-    _assert(names[4:5] == ["services ready"], "check_node.py's rows follow them", str(names))
+    _assert(names[4:] == list(node_checks.ROWS), "then every row check_node.py reports, in order", str(names))
     _assert(len(names) == len(set(names)), "no row is named twice", str(names))
     _assert(
         result.returncode == 1 and _check(report, "services ready").get("ok") is False,

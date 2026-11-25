@@ -11,18 +11,16 @@
 # limitations under the License.
 """Self-test of a deployed flip-trust release (FLIP#1390): `make -C trust/deploy/helm selftest`.
 
-The Kubernetes form of the VM node self-test (FLIP#1406), the acceptance checklist
-every trust shape runs: the release is ready, the FL client has its kit, the three APIs are
-healthy, OMOP and Orthanc are seeded, Orthanc refuses anonymous requests, XNAT accepts a real
-C-STORE (smoke-cstore.sh), dcm2niix converts a stored series to NIfTI, and the FL client stays
-up. A check that needs sample data the release does not load passes as skipped, saying why. It needs
-no hub: an unreachable hub or FL server is not a failure. It runs from the
-operator's machine through kubectl, as `status` and `smoke-cstore` do, and writes the same JSON
-and markdown report as the node self-test.
+The Kubernetes form of the node checks every trust shape runs (trust/deploy/scripts/node_checks.py, whose
+`ROWS` lists them): services ready, the FL kit, the three APIs, OMOP and Orthanc, a real C-STORE into XNAT
+(smoke-cstore.sh), a dcm2niix conversion, the FL client, and the hub heartbeat. A row that needs sample data the
+release does not load is skipped, saying why. Without `--hub` it needs no hub: the heartbeat row is skipped, and an
+unreachable hub or FL server is not a failure. It runs from the operator's machine through kubectl, as `status` and
+`smoke-cstore` do, and writes the report every trust check writes.
 
-Every check runs in a pod the release already has, so the self-test adds no RBAC and no
-NetworkPolicy exception to the trust. The conversion check starts one dcm2niix Job, the same way
-a cohort pull does, in a throwaway XNAT project it deletes afterwards.
+The checks run in pods the release already has, so the self-test adds no RBAC and no NetworkPolicy exception to
+the trust. Unless Orthanc is empty it sends one study to XNAT, which stays in the prearchive, and the conversion
+check starts one dcm2niix Job, the same way a cohort pull does, in a throwaway XNAT project it deletes afterwards.
 """
 
 from __future__ import annotations
@@ -82,7 +80,8 @@ class KubectlCluster:
         try:
             result = subprocess.run(args, input=stdin, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as e:
-            return False, str(e)
+            # kubectl or helm is missing, unreachable or hung: the check could not run, which is not a failed node.
+            raise RuntimeError(f"`{args[0]}` did not run: {e}") from e
         return result.returncode == 0, (result.stdout if result.returncode == 0 else result.stderr).strip()
 
     def _json(self, args: list[str]) -> dict | None:
@@ -304,7 +303,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cluster = KubectlCluster(args.namespace, args.release, args.context)
-    values = cluster.values()
+    try:
+        values = cluster.values()
+    except RuntimeError as error:
+        print(f"❌ {error}", file=sys.stderr)
+        return 2
     if values is None:
         print(f"❌ no release {args.release} in {args.namespace} (helm get values failed)", file=sys.stderr)
         return 2

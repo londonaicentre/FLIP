@@ -331,8 +331,10 @@ as a ❌ row, and you run the check again when it has settled:
 
    make check-onprem-trust KIT=<CODE>
 
-It starts and changes nothing. On a kit with ``TRUST_DATA_SEED=false`` the node holds your own data, so no study is
-sent and those two rows are skipped.
+It starts no service. With the sample data loaded it sends one sample study from Orthanc to XNAT, where it stays in
+the prearchive, and converts one in a throwaway XNAT project that it deletes. On a kit with
+``TRUST_DATA_SEED=false`` the node holds your own data: no study is sent, and the rows that need sample data are
+skipped, saying why.
 
 Then continue at step 6 of :doc:`onboarding-a-trust`.
 

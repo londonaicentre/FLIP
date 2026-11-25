@@ -30,6 +30,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
@@ -121,10 +122,13 @@ def test_a_container_answers_what_the_shared_checks_ask() -> None:
 
 
 def test_services_ready_names_what_is_not_running() -> None:
-    up = "trust1-trust-api-1\trunning\tUp 2 hours\ntrust1-fl-client-init-1\texited\tExited (0) 2 hours ago\n"
+    up = (
+        "trust1-trust-api-1\trunning\tUp 2 hours\ttrust-api\n"
+        "trust1-fl-client-init-1\texited\tExited (0) 2 hours ago\tfl-client-init\n"
+    )
     ready = check_node.check_ready(FakeDocker({"docker ps -a": (True, up), "docker ps": (True, "xnat1_xnat-web.1")}))
     _assert(ready.ok and "trust1 and xnat1" in ready.detail, "running services and finished one-shots are ready")
-    down = up + "trust1-orthanc-1\texited\tExited (1) 5 seconds ago\n"
+    down = up + "trust1-orthanc-1\texited\tExited (1) 5 seconds ago\torthanc\n"
     broken = check_node.check_ready(FakeDocker({"docker ps -a": (True, down), "docker ps": (True, "x")}))
     _assert(
         not broken.ok and "trust1-orthanc-1 Exited (1)" in broken.detail, "a stopped service is named", broken.detail
@@ -133,6 +137,57 @@ def test_services_ready_names_what_is_not_running() -> None:
     _assert(not no_xnat.ok and "xnat1_xnat-web" in no_xnat.detail, "a missing XNAT task is named", no_xnat.detail)
     empty = check_node.check_ready(FakeDocker({"docker ps": (True, "")}))
     _assert(not empty.ok and "has no containers" in empty.detail, "a project with no containers is not ready")
+    stopped = up + "trust1-omop-db-1\texited\tExited (0) 1 minute ago\tomop-db\n"
+    clean_stop = check_node.check_ready(FakeDocker({"docker ps -a": (True, stopped), "docker ps": (True, "x")}))
+    _assert(
+        not clean_stop.ok and "trust1-omop-db-1" in clean_stop.detail,
+        "a service that stopped cleanly is not a finished one-shot",
+        clean_stop.detail,
+    )
+    refused = trust_checks.run(
+        "services ready",
+        lambda: check_node.check_ready(
+            FakeDocker({"docker ps -a": (False, "permission denied"), "docker ps": (True, "x")})
+        ),
+    )
+    _assert(refused.status is trust_checks.Status.ERROR, "a docker that will not list could not run", refused.detail)
+
+
+def test_a_docker_that_cannot_run_could_not_run() -> None:
+    node = check_node.DockerNode("trust1", "xnat1")
+    with mock.patch.object(check_node.subprocess, "run", side_effect=FileNotFoundError("docker")):
+        check = trust_checks.run("services ready", lambda: check_node.check_ready(node))
+    _assert(check.status is trust_checks.Status.ERROR, "a missing docker is could not run, not a failed node")
+    _assert("`docker ps` did not run" in check.detail, "and says what did not run", check.detail)
+
+
+def test_a_missing_kit_file_checks_nothing() -> None:
+    """An empty kit would read as "sample data on" and send a study into a site's own XNAT."""
+    with tempfile.TemporaryDirectory() as tmp, mock.patch.object(check_node, "DockerNode") as node:
+        argv = ["--site", "--project", "trust1", "--xnat-stack", "xnat1", "--backend", "nvflare"]
+        code = check_node.main([*argv, "--kit-file", f"{tmp}/.env.MISSING.prod", "--out", f"{tmp}/out"])
+        _assert(code == 2 and not node.called, "exits 2 before touching docker")
+
+
+def test_a_sites_own_stack_without_sample_data_is_sent_no_study() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        kit = Path(tmp) / ".env.SITE.prod"
+        kit.write_text("TRUST_DATA_SEED=false\n")
+        fake = StoreNode(["10", "11"])
+        with (
+            mock.patch.object(check_node, "DockerNode", return_value=fake),
+            mock.patch.object(node_checks.time, "sleep"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            argv = ["--site", "--project", "trust1", "--xnat-stack", "xnat1", "--backend", "nvflare"]
+            check_node.main([*argv, "--kit-file", str(kit), "--out", f"{tmp}/out", "--fl-settle-seconds", "0"])
+        report = json.loads(next((Path(tmp) / "out").glob("node-trust1-*.json")).read_text())
+    rows = {row["name"]: row for row in report["checks"]}
+    for name in ("xnat c-store", "dcm2niix conversion"):
+        _assert(rows[name]["status"] == "skipped" and "site's own data" in rows[name]["detail"], f"{name} is skipped")
+    _assert(not any("/modalities/XNAT/store" in c[0][1] for c in fake.calls if c[0][0] == "exec"), "no store is sent")
+    _assert(rows["hub heartbeat"]["status"] != "skipped", "and the hub heartbeat is checked")
+    _assert(list(rows) == list(node_checks.ROWS), "main() reports every row, by name and in order", str(list(rows)))
 
 
 class StoreNode(FakeDocker):
@@ -163,6 +218,17 @@ def test_cstore_reads_the_receipt_from_received_log() -> None:
     _assert(code == 0, "a count that fell is a receipt: XNAT started the day's new received.log", said)
     code, said, _ = check_node.cstore(StoreNode(["10"]), settle_seconds=3, sleep=waits.append)
     _assert(code == 1 and "received.log stayed at 10" in said, "a store XNAT never recorded fails", said)
+
+    class Deaf(StoreNode):
+        def exec(self, pod, script, stdin=None):
+            return (False, "Error response from daemon") if "wc -l" in script else super().exec(pod, script, stdin)
+
+    code, said, _ = check_node.cstore(Deaf(["10"]), sleep=waits.append)
+    _assert(code == 1 and "could not read XNAT's logs" in said, "logs that cannot be read are not a receipt", said)
+    code, said, _ = check_node.cstore(StoreNode(["10", "11"], errors=""), sleep=waits.append)
+    _assert(
+        code == 1 and "could not read XNAT's logs" in said, "nor is an importer-error count that did not come", said
+    )
     code, said, _ = check_node.cstore(StoreNode(["10", "11"], errors="2"), sleep=waits.append)
     _assert(code == 1 and "2 failure(s) in dicom.log" in said, "an importer error fails it, receipt or not", said)
     node = StoreNode(["10", "11"], store='{"FailedInstancesCount": 1}')
@@ -222,6 +288,9 @@ def main() -> None:
     test_a_container_is_found_by_its_compose_or_swarm_label()
     test_a_container_answers_what_the_shared_checks_ask()
     test_services_ready_names_what_is_not_running()
+    test_a_docker_that_cannot_run_could_not_run()
+    test_a_missing_kit_file_checks_nothing()
+    test_a_sites_own_stack_without_sample_data_is_sent_no_study()
     test_cstore_reads_the_receipt_from_received_log()
     test_cstore_keeps_the_credential_out_of_argv_and_runs_nothing_a_container_prints()
     test_earlier_rows_keep_their_verdict()
