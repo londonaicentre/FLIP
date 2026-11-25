@@ -105,13 +105,44 @@ def predict(image_path: Path, options: dict) -> nib.Nifti1Image:
     return nib.Nifti1Image(np.asanyarray(predicted.dataobj).astype(np.uint8), image.affine, header)
 
 
-def save_mask(flip: FLIP, project_id: str, item: dict, mask: nib.Nifti1Image, resource: str) -> bool:
+def _code(concept: dict | None) -> list[str] | None:
+    return [concept["value"], concept["scheme"], concept["meaning"]] if concept else None
+
+
+def mask_labels(mask: nib.Nifti1Image, task: str) -> dict[int, dict]:
+    """What each label in the mask is: its name, SNOMED codes and colour, from TotalSegmentator's own maps.
+
+    flip.add_mask writes it beside the mask as labels.json, for the trust's XNAT to draw the mask in OHIF.
+    """
+    from totalsegmentator.dicom_utils import load_color_mapping, load_snomed_mapping
+    from totalsegmentator.map_to_binary import class_map
+
+    snomed, colors = load_snomed_mapping(), load_color_mapping()
+    labels = {}
+    for value in np.unique(np.asanyarray(mask.dataobj)):
+        name = class_map[task].get(int(value))
+        if not name:
+            continue
+        codes = snomed.get(name, {})
+        labels[int(value)] = {
+            "name": name,
+            "category": _code(codes.get("property_category")),
+            "type": _code(codes.get("property_type")),
+            "modifier": _code(codes.get("property_modifier")),
+            "color": list(colors[name]) if name in colors else None,
+            "algorithm": "TotalSegmentator",
+        }
+    return labels
+
+
+def save_mask(flip: FLIP, project_id: str, item: dict, mask: nib.Nifti1Image, task: str) -> bool:
     """Keep one mask where the images are. True when it was stored.
 
-    At a trust the mask goes on the image's scan in XNAT, as ``pred_*.nii.gz`` in ``resource``. FLIP's
-    imaging service takes files only from ``<images>/<net>/upload/``, by a path relative to it, and refuses
-    a file name the resource already holds, so a second run keeps the first run's mask. A failure to store
-    a mask is counted, not raised: the other studies still run.
+    At a trust, flip.add_mask stores it on the image's scan in XNAT, as ``pred_*.nii.gz`` with a labels.json
+    naming its labels, which the trust's XNAT can turn into a DICOM-SEG the OHIF viewer draws. FLIP's imaging
+    service takes files only from ``<images>/<net>/upload/``, by a path relative to it, and refuses a file name
+    the resource already holds, so a second run keeps the first run's mask. A failure to store a mask is
+    counted, not raised: the other studies still run.
     """
     relative = f"{item['accession_id']}/{item['image'].name.replace('input_', 'pred_', 1)}"
     try:
@@ -129,7 +160,7 @@ def save_mask(flip: FLIP, project_id: str, item: dict, mask: nib.Nifti1Image, re
         path = Path(os.environ.get("IMAGES_DIR", "/app/data/images")) / os.environ["NET_ID"] / "upload" / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         nib.save(mask, str(path))
-        flip.add_resource(project_id, item["accession_id"], scan_id, resource, [relative])
+        flip.add_mask(project_id, item["accession_id"], scan_id, relative, mask_labels(mask, task))
         return True
     except Exception as err:
         logger.warning("The mask for %s was not saved: %s", item["accession_id"], err)
@@ -149,7 +180,7 @@ def infer(flip: FLIP, project_id: str, images: list[dict], config: dict) -> dict
             logger.warning("Study %d of %d failed: %s", index, len(images), err)
             continue
         predicted += 1
-        saved += save_mask(flip, project_id, item, mask, config.get("mask_resource", "TOTALSEG"))
+        saved += save_mask(flip, project_id, item, mask, options.get("task", "total"))
         logger.info("Study %d of %d done in %.0f s", index, len(images), time.monotonic() - started)
     if not predicted:
         raise RuntimeError(f"none of the {len(images)} studies could be predicted")

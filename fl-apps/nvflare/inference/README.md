@@ -34,7 +34,8 @@ It is the [`evaluation`](../evaluation/README.md) pipeline with two differences:
 The script answers the `validate` task through the FLARE Client API, as an evaluator does, and must
 reply with metrics: counts, such as how many studies were predicted. The Central Hub shows them per
 site, and a reply without metrics counts as a failed task. Write outputs back to the site with
-`flip.add_resource`; nothing but the metrics leaves it.
+`flip.add_resource`, or `flip.add_mask` for a label mask the site's XNAT can show in its OHIF viewer;
+nothing but the metrics leaves it.
 
 The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
 `meta.json` are **recipe-generated** from `flip.nvflare.recipes.FlipInferenceRecipe`. Do not

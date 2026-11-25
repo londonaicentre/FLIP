@@ -344,6 +344,16 @@ round) return the local copy after a small check with XNAT, which downloads agai
    ``["run-1/seg.nii.gz"]``. That holds wherever the job runs, including a Kubernetes job pod, where the files
    travel in the request because the pod mounts no images volume.
 
+``flip.add_mask(project_id, accession_id, scan_id, mask, labels)``
+   Stores a label mask on a scan: a NIfTI label map (one integer per structure, 0 for background) in the scan's
+   patient space, written under the upload folder as for ``add_resource``. ``labels`` maps each value to its
+   name, or to a dict with ``name`` and optionally ``category``, ``type`` and ``modifier`` (each
+   ``[code, scheme, meaning]``, such as SNOMED CT), ``color`` (``[r, g, b]``) and ``algorithm``. It writes them
+   as ``labels.json`` beside the mask and uploads both to the scan's ``NIFTI_SEG`` resource
+   (``flip.constants.MASK_RESOURCE``), the labels last. On a trust whose XNAT runs ``nifti_to_seg``
+   (``NIFTI_TO_SEG=true`` in its kit file), that resource becomes a DICOM-SEG ROI collection the XNAT OHIF
+   viewer draws. One mask per scan; the worked example is the TotalSegmentator inference tutorial.
+
 **Communication with the Central Hub:**
 
 ``flip.update_status(model_id, new_model_status)``

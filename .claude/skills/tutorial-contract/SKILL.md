@@ -229,8 +229,8 @@ template, required files present, template files byte-identical), `test_flower_m
   the FL client image already holds the model, and then no checkpoint is uploaded. Weights are staged
   host-side (`download-weights`) for the simulator, never fetched at run time. Import a heavy
   third-party package inside the function that uses it: FLARE loads app files on the server too,
-  and the server image may not have the package. Results are stored with `flip.add_resource` and the
-  reply is counts; the simulator keeps the masks under `DEV_MASKS_DIR`
+  and the server image may not have the package. Masks are stored with `flip.add_mask` (a NIfTI label map
+  plus what each label is, so the trust's XNAT can draw it in OHIF) and the reply is counts; the simulator keeps the masks under `DEV_MASKS_DIR`
   (`image_inference/totalsegmentator_inference`).
 - **Fine-tune / two-stage.** Fine-tune: `SERVER_CHECKPOINT` seeds round 0, `AGGREGATE_ONLY_REGEX`
   keeps the frozen backbone out of aggregation (Ark+; `prepare-checkpoint` converts the upstream

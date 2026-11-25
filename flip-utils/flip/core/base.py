@@ -16,6 +16,7 @@ FLIP Base Classes.
 This module contains the abstract base class for all FLIP implementations.
 """
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -23,7 +24,8 @@ from typing import Any
 
 import pandas as pd
 
-from flip.constants.flip_constants import ModelStatus, ResourceType
+from flip.constants.flip_constants import MASK_RESOURCE, FlipConstants, ModelStatus, ResourceType
+from flip.core.masks import LABELS_FILE, labels_json
 from flip.schemas import FLLogEvent
 
 
@@ -103,6 +105,45 @@ class FLIPBase(ABC):
             files (list[str]): Paths of the files to upload, relative to this net's upload folder,
                 ``IMAGES_DIR/NET_ID/upload``
         """
+
+    def add_mask(
+        self,
+        project_id: str,
+        accession_id: str,
+        scan_id: str,
+        mask: str,
+        labels: dict[int, str | dict[str, Any]],
+        resource_id: str = MASK_RESOURCE,
+    ) -> None:
+        """
+        Stores a label mask on a scan, with the labels.json that names its labels, so the trust can show it.
+
+        The mask is a NIfTI label map (one integer value per structure, 0 for background) in the scan's
+        patient space, already written under this net's upload folder, as for ``add_resource``. labels.json
+        is written beside it and uploaded after it: a trust that enables XNAT's nifti_to_seg command turns
+        the resource into a DICOM-SEG the OHIF viewer draws once it holds both. One mask per scan and
+        resource: the resource refuses a file name it already holds.
+
+        Args:
+            project_id (str): The project identifier
+            accession_id (str): The accession ID
+            scan_id (str): The scan ID the mask was predicted from
+            mask (str): Path of the NIfTI mask, relative to this net's upload folder
+            labels (dict[int, str | dict[str, Any]]): Each label value to its name, or to a dict with
+                ``name`` and optionally ``category``, ``type``, ``modifier`` (each ``[code, scheme,
+                meaning]``, e.g. SNOMED CT), ``color`` (``[r, g, b]``) and ``algorithm``
+            resource_id (str): The scan resource to store them in (default ``MASK_RESOURCE``)
+
+        Raises:
+            ValueError: If ``mask`` is not a NIfTI file or ``labels`` is not a valid label map.
+        """
+        if not mask.endswith((".nii", ".nii.gz")):
+            raise ValueError(f"expect a NIfTI mask (.nii or .nii.gz), got {mask}")
+        labels_file = str(Path(mask).parent / LABELS_FILE)
+        target = Path(FlipConstants.IMAGES_DIR) / FlipConstants.NET_ID / "upload" / labels_file
+        target.write_text(json.dumps(labels_json(labels), indent=1))
+        # labels.json last: nifti_to_seg runs once the resource holds both files.
+        self.add_resource(project_id, accession_id, scan_id, resource_id, [mask, labels_file])
 
     @abstractmethod
     def update_status(self, model_id: str, new_model_status: ModelStatus) -> bool:

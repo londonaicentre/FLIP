@@ -13,7 +13,7 @@
 .PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-backup-writable xnat-shell xnat-stack-down clean \
 	xnat-db-migrate-dump xnat-db-drop-unused-dump xnat-db-remove-old-cluster \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
-	xnat-configure-export-mask xnat-prepare-dirs xnat-web-dirs xnat-check-ports \
+	xnat-configure-export-mask xnat-configure-nifti-to-seg xnat-prepare-dirs xnat-web-dirs xnat-check-ports \
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_TAG,
@@ -102,6 +102,9 @@ include ../../deploy/instance.mk
 # same default in trust/Makefile. (The OHIF viewer plugin MONAI Label registers through ships
 # by default in every mode since #1243, so this no longer gates the plugin download.)
 MONAI_LABEL ?= false
+# Registers XNAT's nifti_to_seg command (FL job masks -> DICOM-SEG for the OHIF viewer); see
+# xnat-configure-nifti-to-seg. Set in the kit file.
+NIFTI_TO_SEG ?= false
 # Slot NUMBER the hub assigned this trust, read from the kit file — NOT a
 # substring of the CODE. Drives the stack name (xnat<N>) and overlay network
 # ($(INSTANCE_PREFIX)deploy_trust-network-<N>); trust/Makefile derives TRUST_NUM from
@@ -834,6 +837,7 @@ xnat-configure:
 	bash -o pipefail -c "docker exec -e XNAT_PLUGIN_READINESS_ROSTER=1 $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-xnat.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log'" && \
 	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-dcm2niix.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log'"
 	$(MAKE) xnat-configure-export-mask XNAT_PROJECT=$(XNAT_PROJECT)
+	$(MAKE) xnat-configure-nifti-to-seg XNAT_PROJECT=$(XNAT_PROJECT)
 
 # export_mask (DICOM-SEG -> NIfTI) is registered ONLY when this trust runs MONAI Label.
 #
@@ -867,6 +871,26 @@ ifeq ($(strip $(MONAI_LABEL)),true)
 	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-export-mask.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-export-mask-$(XNAT_PROJECT).log'"
 else
 	@echo "⏭️  MONAI_LABEL is not true — skipping export_mask registration."
+endif
+
+# nifti_to_seg (an FL job's NIfTI masks -> a DICOM-SEG the OHIF viewer draws, FLIP#1945) is registered
+# only when the kit sets NIFTI_TO_SEG=true, as export_mask is gated on MONAI_LABEL: it adds a converter
+# image and a site-wide subscription (on resources labelled NIFTI_SEG, which flip.add_mask writes) that a
+# trust running no such job never needs, and every bring-up and upgrade re-runs xnat-configure.
+# Against an xnat-web image that predates it the script is absent; that skips, rather than failing.
+xnat-configure-nifti-to-seg:
+ifeq ($(strip $(NIFTI_TO_SEG)),true)
+	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
+	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_PROJECT))); \
+	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found"; exit 1; }; \
+	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
+	if ! docker exec $$CONTAINER bash -c 'test -f /data/xnat/config/configure-nifti-to-seg.sh'; then \
+		echo "⏭️  configure-nifti-to-seg.sh is not in this xnat-web image — skipping nifti_to_seg registration."; \
+		exit 0; fi; \
+	rm -f "$(XNAT_CONFIGURE_LOG_DIR)/configure-nifti-to-seg-$(XNAT_PROJECT).log"; \
+	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-nifti-to-seg.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-nifti-to-seg-$(XNAT_PROJECT).log'"
+else
+	@echo "⏭️  NIFTI_TO_SEG is not true — skipping nifti_to_seg registration."
 endif
 
 # Guard: XNAT and the trust core services must share one network. up-trust brings the trust

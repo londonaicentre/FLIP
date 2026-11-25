@@ -92,10 +92,10 @@ notes). Run that command only when asked. With the PR open, it fails unless the 
 preview comment is present. Read that comment. When asked to merge, merge it **with a merge commit**.
 
 The merge triggers two prod Terraform applies: the push apply at `sha-`, then the `release.yml` apply at
-`v<X.Y.Z>` once the fourteen image builds are green. Both can hold on the FL gate. Only the user may attest
+`v<X.Y.Z>` once the fifteen image builds are green. Both can hold on the FL gate. Only the user may attest
 `fl_quiesced`. Nothing may merge to `main` until the release apply has run.
 
-Then check that the Release page, GHCR `:v<X.Y.Z>` (every image the fourteen builds publish) and PyPI (if bumped)
+Then check that the Release page, GHCR `:v<X.Y.Z>` (every image the fifteen builds publish) and PyPI (if bumped)
 are correct, and that prod `/api/health` reports `v<X.Y.Z>`. The release apply publishes flip-ui itself (#1186):
 check that its *Publish flip-ui (prod)* jobs passed. The same run publishes the public demo to its own host (#2012),
 and staging has served the same demo since its `develop` merge: open the live demo host (`DEMO_SITE_URL`) and see

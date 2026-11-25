@@ -1,0 +1,286 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Build and Push Docker Image for XNAT nifti-to-seg
+
+on:
+  workflow_dispatch:
+  # Release builds (FLIP#1204): every image, at the tag — see AGENTS.md "Docker image builds".
+  push:
+    tags: ['v*.*.*']
+  # Publish only after "Trust - XNAT CI" passes on main/develop (FLIP#880); the job-level `if`
+  # below gates on its success. workflow_run has no path filter, so that workflow's push paths
+  # cover every input of the XNAT images.
+  workflow_run:
+    workflows: ["Trust - XNAT CI"]
+    types: [completed]
+    branches: [main, develop]
+  # PR runs the converter's tests and the image build (with its import smoke), so a
+  # broken conversion or lockfile fails in the PR rather than after merge. The
+  # login/push/visibility steps are gated below, so nothing is published from a pull
+  # request (same pattern as docker_build_xnat_dcm2niix).
+  pull_request:
+    paths:
+      - "trust/xnat/nifti-to-seg/**"
+      - ".github/workflows/docker_build_xnat_nifti_to_seg.yml"
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    # Only publish when the upstream test run passed. Dispatch, PR and release-tag runs have no
+    # workflow_run context, so they pass. The head_repository clause is the trust boundary
+    # (FLIP#882, scripts/tests/test_workflow_trust_guards.py).
+    # The event clause builds a commit once (FLIP#2020): the suite also runs for the
+    # develop→main PR, whose head branch passes the `branches` filter above, and a second
+    # build would replace the immutable sha-<short7> tag with a different image.
+    # A suite run started by hand is not a push either, so it no longer republishes: dispatch
+    # this workflow instead.
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)) &&
+      github.repository == 'londonaicentre/FLIP'
+    runs-on: ubuntu-latest
+    permissions: # override top-level read-only default to allow GHCR push
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: ./trust/xnat/nifti-to-seg
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: londonaicentre/xnat-nifti-to-seg
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          # workflow_run.* is empty on the other events, so fall back to the run's own ref.
+          repository: ${{ github.event.workflow_run.head_repository.full_name || github.repository }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # A stable v<X.Y.Z> tag must point at a commit on main — releases are cut there by
+      # release.yml; pre-release (-rc.N) tags are the release-candidate path and pass.
+      - name: Release tag guard
+        uses: ./.github/actions/release-tag-guard
+
+      # The tests convert a NIfTI mask, written in another orientation, onto synthetic CT slices in
+      # three orientations and check every frame lands on its slice; a red run never reaches the build.
+      - name: Converter tests
+        run: |
+          pip install uv==0.11.16
+          uv run --locked pytest tests -q
+
+      - name: Determine tags
+        id: tags
+        env:
+          GH_REF_NAME: ${{ github.ref_name }}
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_REF: ${{ github.ref }}
+          GH_SHA: ${{ github.sha }}
+          GH_WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          GH_WR_EVENT: ${{ github.event.workflow_run.event }}
+          GH_WR_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # Under workflow_run, github.sha / github.ref_name name the default branch, not the
+          # tested commit, so tag from the triggering run's head_sha / head_branch.
+          if [[ "$GH_EVENT_NAME" == "workflow_run" ]]; then
+            SHA="$GH_WR_SHA"
+            REF_NAME="$GH_WR_BRANCH"
+          else
+            SHA="$GH_SHA"
+            REF_NAME="$GH_REF_NAME"
+          fi
+
+          TAGS="${REGISTRY}/${IMAGE_NAME}:${SHA}"
+
+          # An empty sha would silently publish a mutable literal `sha-` tag — refuse.
+          [[ -n "$SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+
+          # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish.
+          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
+
+          # The version tag is the one nifti_to_seg_command.json references (pinned by
+          # trust/xnat/tests/test_nifti_to_seg_image_pin.py). Read it from the Dockerfile so
+          # the pin has a single source of truth; refuse to publish if it can't be parsed.
+          NIFTI_TO_SEG_VERSION=$(sed -n 's/^ARG NIFTI_TO_SEG_VERSION=//p' Dockerfile)
+          [[ -n "$NIFTI_TO_SEG_VERSION" ]] || { echo "::error::could not read ARG NIFTI_TO_SEG_VERSION from Dockerfile"; exit 1; }
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${NIFTI_TO_SEG_VERSION}"
+
+          # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".
+          if [[ "$GH_REF" == refs/tags/v* ]]; then
+            TAGS="${REGISTRY}/${IMAGE_NAME}:${GH_REF_NAME}"
+          else
+            # Branch name sanitization
+            SAFE_REF_NAME=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+            TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          fi
+
+          # Branch number (if starts with number)
+          if [[ "$REF_NAME" =~ ^[0-9]+ ]]; then
+              BRANCH_NUM=$(echo "$REF_NAME" | grep -oE '^[0-9]+')
+              TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${BRANCH_NUM}"
+          fi
+
+          # PR Number (if PR)
+          if [[ "$GH_EVENT_NAME" == "pull_request" ]]; then
+             PR_NUMBER=$(echo "$GH_REF" | awk -F / '{print $3}')
+             TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
+          fi
+
+          # Determine if this is a merge/push to main or develop
+          BRANCH_NAME=""
+          if [[ "$GH_EVENT_NAME" == "workflow_run" && "$GH_WR_EVENT" == "push" ]]; then
+            BRANCH_NAME="$GH_WR_BRANCH"
+          elif [[ "$GH_EVENT_NAME" == "push" ]]; then
+            BRANCH_NAME="$GH_REF_NAME"
+          fi
+
+          if [[ "$BRANCH_NAME" == "main" ]]; then
+            TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:prod"
+          elif [[ "$BRANCH_NAME" == "develop" ]]; then
+            TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:stag"
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "version=${NIFTI_TO_SEG_VERSION}" >> $GITHUB_OUTPUT
+          echo "Generated tags: ${TAGS}"
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
+
+      - name: Build Docker image
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
+          TAG_FLAGS=()
+          for tag in "${TAG_ARRAY[@]}"; do
+            TAG_FLAGS+=("-t" "$tag")
+          done
+          docker build "${TAG_FLAGS[@]}" .
+
+      # Sites pin the version tag, and every green "Trust - XNAT CI" run lands here whatever it
+      # changed (FLIP#880), so the tag moves only with this image's own source: each publish of it
+      # also tags the build context's git tree, and while that tag still names the same image as
+      # the version tag, the version tag is left alone. A manual dispatch always republishes it (a
+      # base-image rebuild changes no source), and a failed registry lookup fails the step rather
+      # than reading as an absent tag.
+      - name: Push Docker image
+        if: github.event_name != 'pull_request'
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+          VERSION: ${{ steps.tags.outputs.version }}
+          GH_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # Prints the digest, nothing when the tag does not exist; any other failure is an error.
+          digest() {
+            local out
+            if ! out=$(docker buildx imagetools inspect "$1" 2>&1); then
+              grep -qiE 'not found|manifest unknown|name unknown' <<<"$out" && return 0
+              echo "::error::could not read $1 from the registry: $out" >&2
+              return 1
+            fi
+            awk '/^Digest:/ {print $2; exit}' <<<"$out"
+          }
+          VERSION_TAG="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          CONTEXT_TAG="${REGISTRY}/${IMAGE_NAME}:context-$(git rev-parse HEAD:./)"
+
+          IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
+          for tag in "${TAG_ARRAY[@]}"; do
+            if [[ "$tag" == "$VERSION_TAG" ]]; then
+              if [[ "$GH_EVENT_NAME" != "workflow_dispatch" ]]; then
+                PUBLISHED="$(digest "$CONTEXT_TAG")"
+                CURRENT="$(digest "$VERSION_TAG")"
+                if [[ -n "$PUBLISHED" && "$PUBLISHED" == "$CURRENT" ]]; then
+                  echo "Build context unchanged since ${VERSION_TAG} was published: tag left as it is"
+                  continue
+                fi
+              fi
+              docker tag "$tag" "$CONTEXT_TAG"
+              docker push "$CONTEXT_TAG"
+            fi
+            docker push "$tag"
+          done
+
+      # The XNAT Container Service pulls this image with no credentials, so a
+      # private package is registrable but unpullable — conversion then fails
+      # only at runtime, at a trust. New org packages default to private and
+      # GITHUB_TOKEN cannot flip that, so the flip is an operator action
+      # (trust/xnat/README.md). This probe is what makes forgetting it loud:
+      # it repeats the anonymous pull the Container Service performs, and the
+      # run goes red until the package is public. Deliberately token-less —
+      # the docker login above is not reused, and the ghcr.io token endpoint
+      # is called with no credentials, so the check sees exactly what an
+      # unauthenticated trust sees.
+      - name: Verify the published image is anonymously pullable
+        if: github.event_name != 'pull_request'
+        env:
+          NIFTI_TO_SEG_VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          MANIFEST_URL="https://${REGISTRY}/v2/${IMAGE_NAME}/manifests/${NIFTI_TO_SEG_VERSION}"
+          TOKEN_URL="https://${REGISTRY}/token?scope=repository:${IMAGE_NAME}:pull&service=${REGISTRY}"
+          TOKEN_BODY=$(mktemp)
+          FAILURE=""
+
+          # GHCR wants a bearer token even for anonymous pulls, and it refuses to mint one at all
+          # (403) for a package that is not public — so both requests are failure points and
+          # neither may use `curl -f`, which would abort the step with a bare exit 22 instead of
+          # the operator instructions below. `-w %{http_code}` keeps a refusal a value, not a
+          # crash; a genuine network error still fails the step through curl's own exit status.
+          TOKEN_CODE=$(curl -sS -o "$TOKEN_BODY" -w '%{http_code}' "$TOKEN_URL")
+          if [[ "$TOKEN_CODE" != "200" ]]; then
+            FAILURE="anonymous pull token refused (HTTP ${TOKEN_CODE})"
+          else
+            ANON_TOKEN=$(jq -r '.token // empty' "$TOKEN_BODY")
+            if [[ -z "$ANON_TOKEN" ]]; then
+              FAILURE="the ${REGISTRY} token endpoint returned no token"
+            else
+              HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+                -H "Authorization: Bearer ${ANON_TOKEN}" \
+                -H "Accept: application/vnd.oci.image.index.v1+json" \
+                -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+                -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+                -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+                "$MANIFEST_URL")
+              if [[ "$HTTP_CODE" != "200" ]]; then
+                FAILURE="anonymous GET of the manifest returned HTTP ${HTTP_CODE}, expected 200"
+              fi
+            fi
+          fi
+          rm -f "$TOKEN_BODY"
+
+          if [[ -n "$FAILURE" ]]; then
+            # The push above just succeeded, so the package exists: a refusal here means private.
+            echo "Probing ${MANIFEST_URL} without credentials: ${FAILURE}."
+            echo "The XNAT Container Service pulls this image with no credentials, so while the"
+            echo "package is private every FL job's masks stay NIfTI, which the OHIF viewer cannot draw."
+            echo "Fix: github.com/orgs/londonaicentre/packages/container/xnat-nifti-to-seg/settings"
+            echo "     -> Danger Zone -> Change visibility -> Public (see trust/xnat/README.md)."
+            echo "::error::${IMAGE_NAME}:${NIFTI_TO_SEG_VERSION} is not public: flip the package visibility"
+            exit 1
+          fi
+          echo "${IMAGE_NAME}:${NIFTI_TO_SEG_VERSION} is anonymously pullable."

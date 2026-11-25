@@ -121,6 +121,10 @@ repos:
         args: ['--check', '--project', 'trust/xnat/export-mask']
         files: '^trust/xnat/export-mask/(pyproject\.toml|uv\.lock|uv\.toml)$'
       - id: uv-lock
+        name: uv-lock (xnat-nifti-to-seg)
+        args: ['--check', '--project', 'trust/xnat/nifti-to-seg']
+        files: '^trust/xnat/nifti-to-seg/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
         name: uv-lock (aws-deploy)
         args: ['--check', '--project', 'deploy/providers/AWS']
         files: '^deploy/providers/AWS/(pyproject\.toml|uv\.lock|uv\.toml)$'

@@ -582,7 +582,7 @@ release-main-check: _release-tag
 	@python3 scripts/release/main_check.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(OWED),--owed "$(OWED)")
 
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
-UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
+UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask trust/xnat/nifti-to-seg deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
 
 # Regenerate every uv.lock so it matches its pyproject.toml. Run after changing
 # dependencies in any service, or to refresh all lockfiles in one pass.

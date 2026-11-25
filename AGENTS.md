@@ -496,8 +496,8 @@ orthanc/omop-db data-publishing scripts and `test_trust_kit_scripts.yml` for `sc
 the compose files' container-identity contract, plus the repo-level `tests/` (root Makefile) and
 `.github/tests/` (workflows and actions) trees), `fl-tutorials-tests.yml`, `test_map_apps.yml`,
 `docker_build_*.yml` (per-service GHCR publish; the application images and
-`docker_build_omop_db.yml` are gated on that service's test workflow, the five
-`docker_build_xnat_{db,dcm2niix,export_mask,nginx,web}.yml` on `test_trust_xnat.yml`, while
+`docker_build_omop_db.yml` are gated on that service's test workflow, the six
+`docker_build_xnat_{db,dcm2niix,export_mask,nifti_to_seg,nginx,web}.yml` on `test_trust_xnat.yml`, while
 `docker_build_orthanc.yml` and `docker_build_monailabel.yml` publish straight from a push — see "Docker image builds" below), `validate_terraform.yml` for the hub tree and, each on its own paths so a change runs only its own tree's checks, `validate_terraform_azure.yml`, `validate_terraform_aws_node.yml` and `validate_terraform_snowflake.yml` for the trust roots (FLIP#2021) (fmt/validate for every root, including the Snowflake trust roots `trust/deploy/terraform/snowflake-identity`, `trust/deploy/terraform/snowflake-platform` and `trust/deploy/terraform/snowflake` with their own tflint/checkov/pytest job, FLIP#1581; a trust root is deliberately absent from the plan/apply/drift workflows, which drive the hub's state; plus a tflint lint (`make tflint-lint`) + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` from the repo root, or all three static checks with `make -C deploy/providers/AWS lint` (the AWS Makefile's parse-time env guards stand aside when every goal is a static one, FLIP#1440), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `publish_ui.yml` (reusable; the flip-ui publish after an apply, FLIP#1186), `terraform_drift.yml`, `lint_python.yml` (`ruff check` + `ruff format --check` over every tracked Python file — the only lint that reaches the trees outside a service directory (`scripts/`, `deploy/providers/AWS/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/`) and the only format check covering the whole repo (flip-utils, `trust/orthanc` and the trust data tools also check their own); unfiltered, ruff pinned, files from `git ls-files` so a gitignored path cannot hide a tracked file, no auto-fix; flip-api's generated Alembic revisions are excluded from both, in `flip-api/pyproject.toml`; shape pinned by `.github/tests/workflows/test_lint_python.py` — FLIP#1326), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 Further workflows, grouped: **unit tests** — `unit-tests.yml` (flip-utils + the FLARE
@@ -571,12 +571,12 @@ accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS
 ### Docker image builds: gated on tests, manual trigger for branches
 
 **The application `docker_build_*.yml` workflows (`flip_api`, `trust_trust_api`, `trust_imaging_api`,
-`trust_data_access_api`, `omop_db`, and the five `xnat_*` images on `Trust - XNAT CI`) auto-publish to GHCR
+`trust_data_access_api`, `omop_db`, and the six `xnat_*` images on `Trust - XNAT CI`) auto-publish to GHCR
 only after their service's test workflow passes on `develop` or `main`** — they trigger via `workflow_run` and a job-level `if` gates on
 success, so a red test suite never publishes, and on the suite's **push** run alone, so the run for the develop→main PR
 does not build the commit a second time and replace its `sha-<short7>` tag (FLIP#2020). Path filtering is inherited from the test workflow, so a
 build still only fires when that service changed; `test_trust_xnat.yml`'s push paths therefore cover every XNAT
-image input, and any green push run of it rebuilds all five (FLIP#880). (`orthanc` and `monailabel` keep their direct push
+image input, and any green push run of it rebuilds all six (FLIP#880). (`orthanc` and `monailabel` keep their direct push
 trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead, and
 `monailabel` an in-job import smoke after reclaiming runner disk — its image is ~10.4 GB against
 ubuntu-latest's ~14 GB free. `flip-ui`
@@ -590,7 +590,7 @@ A run of an image workflow on a `v*.*.*` tag ref builds **every** image at that 
 `:v<X.Y.Z>` (FLIP#1204) — release identity for the sites — and **only** that tag: the `sha-` tags belong to
 the branch build of the same commit and stay immutable (a second push would swap the image under a
 sha-pinned hub, with a different `FLIP_RELEASE` baked in). For a real release `release.yml`
-**dispatches** the fourteen builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
+**dispatches** the fifteen builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
 pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way, so the
 workflows' own `push.tags` trigger only ever fires for a hand-pushed tag (a release candidate).
 `.github/tests/workflows/test_release.py` pins the dispatch roster to the publishing workflows. Every

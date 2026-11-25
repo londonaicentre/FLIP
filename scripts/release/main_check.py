@@ -49,10 +49,10 @@ def after_merge(tag: str) -> list[str]:
     return [
         "Merge with a **merge commit** — never squash or rebase.",
         "Two prod Terraform applies follow: the push apply at `sha-<short7>`, then `release.yml`'s apply at "
-        f"`{tag}` once the fourteen image builds are green. Either can hold on the FL gate; only the user attests "
+        f"`{tag}` once the fifteen image builds are green. Either can hold on the FL gate; only the user attests "
         "`fl_quiesced`.",
         "Nothing merges to `main` until the release apply has run.",
-        f"Check the Release page, GHCR `:{tag}` on every image the fourteen builds publish, PyPI if flip-utils was "
+        f"Check the Release page, GHCR `:{tag}` on every image the fifteen builds publish, PyPI if flip-utils was "
         f"bumped, and that prod `/api/health` reports `{tag}`.",
         "Check that the release apply's *Publish flip-ui (prod)* jobs passed (#1186). The same run publishes the "
         "public demo to its own host (#2012): open the live demo host (`DEMO_SITE_URL`) and see that it loads.",

@@ -25,9 +25,11 @@ Exports:
     - FlipMetricsLabel: Metrics label constants
     - PTConstants: PyTorch-related constants
     - JobType: Enum for FLIP job types
+    - MASK_RESOURCE: The scan resource flip.add_mask stores label masks in
 """
 
 from flip.constants.flip_constants import (
+    MASK_RESOURCE,
     DevSettings,
     FlipConstants,
     FlipEvents,
@@ -55,4 +57,5 @@ __all__ = [
     "FlipMetricsLabel",
     "PTConstants",
     "JobType",
+    "MASK_RESOURCE",
 ]
