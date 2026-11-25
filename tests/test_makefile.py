@@ -123,6 +123,55 @@ class UpgradeOnpremTrust(unittest.TestCase):
                 assert "KIT_FILE='/" in line, line
 
 
+class CheckOnpremTrust(unittest.TestCase):
+    """The running-stack check (FLIP#1449): what the new targets run, and that a failed check never fails a verb."""
+
+    def test_check_node_checks_this_kits_own_stack_as_a_site(self):
+        out = dry_run("check-node")
+        line = next(line for line in out.splitlines() if "check_node.py" in line)
+        for expected in (
+            "--site",
+            "--backend",
+            "--project",
+            "--xnat-stack",
+            "--kit-file '/",
+            ".env.SCR.prod",
+            "--out '/",
+        ):
+            assert expected in out[out.index(line) :], f"{expected} missing from:\n{out}"
+
+    def test_the_drift_row_is_given_what_up_trust_would_render(self):
+        """The declared hashes come from the compose files and variables up-trust uses, DEBUG included (FLIP#2078)."""
+        out = dry_run("check-node")
+        up = dry_run("up-trust")
+        started = next(line for line in up.splitlines() if " up -d" in line and "docker compose" in line)
+        for flag in re.findall(r"-f \S+|-p \S+", started):
+            assert flag in out, f"check-node renders without {flag}:\n{out}"
+        assert "DEBUG=" in out[: out.index("config --hash")], out
+        assert "--declared-hashes /dev/stdin" in out, out
+        assert "2>/dev/null" not in out, "compose's own complaints explain a hash that cannot be computed"
+
+    def test_check_node_refuses_a_kit_that_is_not_there(self):
+        """An empty kit would read as "sample data on" and send a study into a site's own XNAT."""
+        result = run_target("check-node", "KIT=NOPE", dry=False)
+        assert result.returncode != 0, result.stdout
+        assert "not found" in result.stdout + result.stderr
+        assert "check_node.py" not in result.stdout
+
+    def test_both_verbs_end_with_the_check_and_survive_its_failure(self):
+        for target, extra in (("up-onprem-trust", ()), ("upgrade-onprem-trust", ("TAG=v0.6.0", "YES=1"))):
+            out = dry_run(target, *extra, subdir=".")
+            lines = [line for line in out.splitlines() if "check-onprem-trust" in line]
+            assert lines, f"{target} does not run the check:\n{out}"
+            assert "|| echo" in lines[-1], lines[-1]
+            assert "make check-onprem-trust KIT=SCR" in lines[-1], "the hint names the command to re-run"
+
+    def test_the_standalone_check_fails_when_the_check_does(self):
+        out = dry_run("check-onprem-trust", subdir=".")
+        line = next(line for line in out.splitlines() if "check-node" in line)
+        assert "|| echo" not in line, line
+
+
 class HostDirsArePreparedNotEscalated(unittest.TestCase):
     """A deployed bring-up checks bind-mount ownership and never escalates to set it: that is
     prepare-host-dirs, run once as root by whoever prepares the host (FLIP#1723)."""
