@@ -193,12 +193,9 @@ exclude_patterns = []
 #
 html_theme = "sphinx_rtd_theme"
 html_theme_options = {
-    "analytics_id": "",  # Provided by Google in your dashboard
-    "analytics_anonymize_ip": False,
     "logo_only": True,
     "prev_next_buttons_location": "bottom",
     "style_external_links": False,
-    "vcs_pageview_mode": "",
     "style_nav_header_background": "#61366E",
     # Toc options
     "collapse_navigation": True,
@@ -222,13 +219,13 @@ html_static_path = ["_static"]
 
 # -- Generated figures -------------------------------------------------------
 # The architecture diagrams are diagram-as-code kept beside the Terraform they depict, each drift-guarded by that
-# tree's tests: the Central Hub (deploy/providers/AWS/architecture/central_hub.py) and the trust nodes on AWS EC2,
+# tree's tests: the Central Hub (deploy/aws/architecture/central_hub.py) and the trust nodes on AWS EC2,
 # Amazon EKS and Azure (trust/deploy/terraform/{aws/ec2,aws/eks,azure}/architecture/). They are rendered here at
 # build time into assets/generated/ (gitignored), so the published deployment pages always show the pictures for the
 # commit they document and no PNG has to be kept in sync by hand. Needs graphviz `dot`: ReadTheDocs installs it via
 # build.apt_packages, the docs CI job via apt-get.
 
-AWS_PROVIDER_DIR = REPO_ROOT / "deploy" / "providers" / "AWS"
+AWS_PROVIDER_DIR = REPO_ROOT / "deploy" / "aws"
 DIAGRAM_SCRIPTS = (
     AWS_PROVIDER_DIR / "architecture" / "central_hub.py",
     REPO_ROOT / "trust" / "deploy" / "terraform" / "aws" / "ec2" / "architecture" / "trust_ec2.py",

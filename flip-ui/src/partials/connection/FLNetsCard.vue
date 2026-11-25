@@ -18,19 +18,19 @@
             <AiCard v-else class="w-full space-y-2">
                 <div class="relative p-4 overflow-hidden transition">
                     <div class="relative">
-                        <h3 class="flex items-center gap-4 mt-2 text-3xl font-semibold font-heading">
+                        <h3 class="flex items-center gap-4 mt-2 text-3xl font-semibold">
                             <icon-ph-plugs-connected-duotone
                                 v-if="healthyPlatform"
-                                class="w-10 h-10 transition text-green-600/70 shrink-0"
+                                class="w-10 h-10 transition text-green-600 shrink-0"
                             />
                             <icon-ph-plugs-duotone
                                 v-else
-                                class="w-10 h-10 transition text-red-900/70 dark:text-red-400 shrink-0"
+                                class="w-10 h-10 transition text-red-900 dark:text-red-400 shrink-0"
                             />
                             <span>
                                 The FL nets are <span
-                                    class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
-                                    :class="[healthyPlatform ? 'decoration-green-600/70' : 'decoration-red-900/70 dark:decoration-red-400']"
+                                    class="font-black underline transition decoration-4 decoration-solid underline-offset-8"
+                                    :class="[healthyPlatform ? 'decoration-green-600' : 'decoration-red-900 dark:decoration-red-400']"
                                 >
                                     {{ healthyPlatform ? 'Healthy' : 'Unhealthy' }}
                                 </span>
@@ -55,8 +55,8 @@
                             <div class="px-4 py-2 bg-white border-b border-gray-200 dark:border-dark-border dark:bg-dark-canvas">
                                 <div class="flex flex-wrap items-center justify-between -mt-2 -ml-4 sm:flex-nowrap">
                                     <div class="mt-2 ml-4">
-                                        <h3 class="text-lg font-medium leading-6 text-gray-900 uppercase dark:text-gray-300">
-                                            {{ net.name }}<span v-if="net.fl_backend" class="normal-case"> ({{ formatBackend(net.fl_backend) }})</span>
+                                        <h3 class="text-lg font-medium leading-6 text-gray-900 dark:text-gray-300">
+                                            {{ net.name }}<span v-if="net.fl_backend"> ({{ formatBackend(net.fl_backend) }})</span>
                                         </h3>
                                     </div>
                                     <div class="flex-shrink-0 mt-2 ml-4">
@@ -82,11 +82,11 @@
                                         <span class="flex flex-row items-center gap-4 ">
                                             <icon-ph-check-circle-duotone
                                                 v-if="client.online"
-                                                class="w-6 h-6 transition transform rounded-full shrink-0 text-green-600/70 dark:text-green-400 group-hover:scale-110"
+                                                class="w-6 h-6 transition transform rounded-full shrink-0 text-green-600 dark:text-green-400 group-hover:scale-110"
                                             />
                                             <icon-ph-x-circle-duotone
                                                 v-else
-                                                class="w-6 h-6 transition transform rounded-full shrink-0 text-red-600/70 dark:text-red-400 group-hover:scale-110"
+                                                class="w-6 h-6 transition transform rounded-full shrink-0 text-red-600 dark:text-red-400 group-hover:scale-110"
                                             />
                                             <span class="w-full">
                                                 <span class="flex items-center gap-2">
@@ -101,11 +101,14 @@
                                                                 {{ client.name }}<span
                                                                     v-if="client.code"
                                                                     class="font-normal text-gray-500 dark:text-gray-300"
-                                                                > ({{ client.code }})</span>
+                                                                > ({{ client.code }})</span><span
+                                                                    v-if="jobModes.get(client.name)"
+                                                                    class="font-normal text-gray-500 dark:text-gray-300"
+                                                                > · {{ jobModes.get(client.name) }}</span>
                                                             </p>
                                                             <p
                                                                 v-if="client.fl_kit_slot"
-                                                                class="text-xs font-normal text-gray-400 dark:text-gray-300 shrink line-clamp-1"
+                                                                class="text-xs font-normal text-gray-500 dark:text-gray-300 shrink line-clamp-1"
                                                                 data-test="client-fl-kit-slot"
                                                             >
                                                                 FL kit slot: {{ client.fl_kit_slot }}
@@ -122,7 +125,7 @@
                                         class="flex flex-col items-center justify-center h-full px-4 py-4 text-center"
                                     >
                                         <icon-ph-plugs-duotone
-                                            class="w-16 h-16 text-red-900/70 dark:text-red-400"
+                                            class="w-16 h-16 text-red-900 dark:text-red-400"
                                         />
                                         {{ net.name }} is offline: the hub got no status from its FL server, or no
                                         clients are connected.
@@ -178,7 +181,16 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiCommand from "@/components/AiCommand/AiCommand.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { getFLStatus, getNetDetailedStatus, IFLStatusClients } from "@/services/fl-service";
+import { ITrustResponse } from "@/services/trust-service";
+import { jobModeLabel } from "@/utils/connection-health";
 import { vHighlightjs } from "@/utils/highlightJson";
+
+// The trust list the page already fetches: its fl-client heartbeat entry says how each trust runs a job (FLIP#1739).
+const props = defineProps<{ trusts?: ITrustResponse[] }>();
+
+// Keyed by trust name, which is what the FL status reports each client under.
+const jobModes = computed(() =>
+    new Map((props.trusts ?? []).map(t => [t.name, jobModeLabel(t.services?.["fl-client"]?.job_mode)])));
 
 const showDetails = ref(false);
 const details = ref<string | undefined>(undefined);

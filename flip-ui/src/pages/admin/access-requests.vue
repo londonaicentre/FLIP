@@ -54,22 +54,22 @@ name: Access Requests
                         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                             <thead class="bg-gray-50 dark:bg-gray-900">
                                 <tr>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Name
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Email
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Reason
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Submitted
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Status
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-right text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-right text-gray-500 dark:text-gray-300">
                                         Actions
                                     </th>
                                 </tr>
@@ -86,7 +86,7 @@ name: Access Requests
                                         {{ row.reasonForAccess }}
                                     </td>
                                     <td class="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-300">
-                                        {{ formatDate(row.createdAt) }}
+                                        {{ shortDate(row.createdAt) }}
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         <span
@@ -106,7 +106,7 @@ name: Access Requests
                                                 Dismiss
                                             </AiButton>
                                         </div>
-                                        <span v-else class="text-xs text-gray-400 dark:text-gray-300">—</span>
+                                        <span v-else class="text-xs text-gray-500 dark:text-gray-300">—</span>
                                     </td>
                                 </tr>
                             </tbody>
@@ -170,6 +170,7 @@ import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { canAccessRoute } from "@/utils/route-validator";
 import { Snackbar } from "@/utils/snackbar";
+import { shortDate } from "@/utils/trust-decisions";
 
 const authStore = useAuthStore();
 const errorStore = useErrorStore();
@@ -225,18 +226,6 @@ watch(statusFilter, () => {
 
 const updatePage = (page: number) => {
     pageNumber.value = page;
-};
-
-// Backend timestamps are naive UTC (datetime.utcnow); tag as UTC so the browser
-// doesn't reinterpret them as local time.
-const formatDate = (iso: string): string => {
-    const asUtc = /[zZ]|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
-
-    return new Date(asUtc).toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric"
-    });
 };
 
 const STATUS_LABELS: Record<AccessRequestStatus, string> = {

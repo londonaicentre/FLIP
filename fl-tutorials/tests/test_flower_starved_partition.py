@@ -20,7 +20,7 @@
 # is what this pins: the datalist builder is never reached.
 #
 # In-process and CPU-only: the handler raises before it touches a device, a model or a file. The
-# client_app is imported for real — flwr, torch and MONAI are in flip-utils[full], this suite's
+# client_app is imported for real — flwr, torch and MONAI are in flip-utils[nvflare,flower,full], this suite's
 # environment — so the test drives the shipped handler rather than a re-implementation of it.
 
 from __future__ import annotations

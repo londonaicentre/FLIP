@@ -1,8 +1,12 @@
 Python API reference
 ====================
 
-Python package references for the hub, trust services and ``flip-utils``. These pages are generated from the
-packages' docstrings.
+Python package references, generated from the packages' docstrings:
+
+- ``flip`` — the ``flip-utils`` package that FLIP apps call from their training and evaluation code
+- ``flip_api`` — the Central Hub API
+- ``data_access_api``, ``imaging_api``, ``trust_api`` — the trust services (OMOP data access, imaging retrieval
+  and the trust gateway)
 
 .. toctree::
    :maxdepth: 1

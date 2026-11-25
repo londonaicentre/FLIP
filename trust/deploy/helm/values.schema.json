@@ -204,7 +204,7 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
-        "cohortQueryThreshold": { "type": "integer", "minimum": 1 },
+        "cohortQueryThreshold": { "type": "integer", "minimum": 10 },
         "replicas": { "type": "integer", "minimum": 1 },
         "resources": {
           "type": "object",
@@ -327,10 +327,8 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
-            "s3Bucket": { "type": "string" },
-            "bundleName": { "type": "string" },
-            "workDirSize": { "type": "string", "minLength": 1 },
-            "fetchResources": { "type": "object", "minProperties": 1 },
+            "hostPath": { "type": "string", "pattern": "^(/.*)?$" },
+            "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
             "loadResources": { "type": "object", "minProperties": 1 }
           }
         },
@@ -401,13 +399,19 @@
         "db": {
           "type": "object",
           "properties": {
+            "maxConnections": { "type": "integer", "minimum": 1, "description": "Postgres max_connections (FLIP#662)" },
+            "sharedBuffers": {
+              "type": "string",
+              "pattern": "^[0-9]+(kB|MB|GB|TB)?$",
+              "description": "Postgres shared_buffers, e.g. 512MB (FLIP#662)"
+            },
             "persistence": {
               "type": "object",
               "properties": {
                 "pgdataSubdir": {
                   "type": "string",
                   "pattern": "^([A-Za-z0-9_-][A-Za-z0-9._-]*)?$",
-                  "description": "Postgres data directory within the volume: one relative name (e.g. pgdata on a fresh cloud disk), or empty for the volume root"
+                  "description": "Directory of the volume mounted as xnat-db's data dir (the image keeps its cluster in pg<major>/ below it): one relative name (e.g. pgdata on a fresh cloud disk), or empty for the volume root"
                 }
               }
             }
@@ -488,9 +492,18 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
+        "apiServer": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Kubernetes API server's real endpoint, for xnat-web and the job-pod parent, where it does not listen on 443 (k3s and kind 6443, minikube 8443)",
+          "properties": {
+            "cidrs": { "type": "array", "items": { "type": "string" } },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        },
         "allowedEgressCIDRsWithPorts": {
           "type": "array",
-          "description": "Egress rules combining CIDRs with a specific port (e.g. fl-server gRPC on 8002)",
+          "description": "Egress rules combining CIDRs with a specific port (e.g. the fl-server on 8002)",
           "items": {
             "type": "object",
             "required": ["cidrs", "port"],

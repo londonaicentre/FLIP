@@ -11,7 +11,8 @@ Three FastAPI services make up FLIP's footprint inside a Trust's Secure Enclave:
 - ``data-access-api`` — runs cohort queries against the Trust's OMOP database.
 
 They run as containers alongside XNAT, the OMOP database, the FL clients and the logging stack, either under
-Docker Compose on a Trust host or from the Kubernetes Helm chart. This page is for engineers and Trust operators
+Docker Compose on a Trust host, from the Kubernetes Helm chart, or as a Snowflake Snowpark
+Container Services node. This page is for engineers and Trust operators
 who need to know what each service does, what it talks to and which privacy controls it enforces.
 
 .. contents:: On this page
@@ -32,7 +33,9 @@ other call stays on the Trust's private container network:
         |
    trust-api  ---- TRUST_INTERNAL_SERVICE_KEY ---->  imaging-api  ---- REST ---->  XNAT  <-- DICOM -- PACS
         |                                                 |                        (web + DB)
-        +------- TRUST_INTERNAL_SERVICE_KEY ---->  data-access-api  <---------------+
+        |                                                 | accession numbers
+        |                                                 v
+        +------- TRUST_INTERNAL_SERVICE_KEY ---->  data-access-api
                                                           |
                                                     omop-db (read-only role)
 
@@ -56,7 +59,7 @@ Trust's credentials can act as that Trust. Two keys protect two boundaries:
   ``data-access-api``. It never leaves the Trust. Only ``/health`` endpoints are exempt. The threat model is on
   :ref:`trust-internal-service-authentication`.
 
-The kit file carries these settings for it:
+The kit file carries the settings for both keys, and the other values the Trust needs to reach the hub:
 
 .. list-table::
    :header-rows: 1
@@ -81,7 +84,9 @@ The kit file carries these settings for it:
        as the wrong one (see `Task poller`_).
 
 A Trust must be **registered on the hub** before it can connect, by step 2 of :doc:`/deploy-flip/onboarding-a-trust`
-or through the Add-Trust admin flow. Registration writes the API key and internal service key into the kit file. No
+or through the Add-Trust admin flow. Command-line registration writes the API key and internal service key into the
+kit file. A Trust added in the UI has no keys until its kit is first downloaded from its card; ``make -C trust
+install-kit`` then writes them into the kit file on the trust host (:ref:`onboarding-kit-from-ui`). No
 hub redeploy is needed: the hub reads its Trust list live on every request.
 
 *********
@@ -103,10 +108,10 @@ Every ``POLL_INTERVAL_SECONDS`` (default 5) the poller:
 3. decrypts each task, runs it and posts the result back, one task at a time. Posting a result is retried with
    backoff if the hub does not accept it.
 
-The hub only ever answers this poll: a Trust never pushes progress on its own, and the hub never connects in.
+A Trust never pushes progress on its own; the hub only answers this poll.
 
-On its first exchange with the hub, the poller checks that the hub's view of its identity matches
-``EXPECTED_TRUST_ID`` in the kit file, and **exits if they differ**. A mis-copied kit file therefore cannot act
+If the kit file sets ``EXPECTED_TRUST_ID``, the poller checks it against the hub's view of its identity on its
+first exchange, and **exits if they differ**. A mis-copied kit file therefore cannot act
 as another Trust.
 
 .. list-table::
@@ -192,7 +197,8 @@ The ``create_imaging`` task runs these steps:
 1. Create the XNAT project and set its prearchive rules.
 2. Subscribe the project to the XNAT event that converts new DICOM scans to NIfTI. The subscription is active
    only when the project has DICOM-to-NIfTI conversion on, and it fires on new scans only; scans already archived
-   are converted with ``make -C trust reconvert-nifti`` (see :doc:`component-xnat`).
+   are converted with ``make -C trust reconvert-nifti KIT=<CODE> LAUNCH=1``; without ``LAUNCH=1`` it only reports
+   (see :doc:`component-xnat`).
 3. Create or add the hub project's members as XNAT users. The hub then emails each new user a link to set
    their XNAT password, and tells existing users they have been added.
 4. Start retrieval in the background. ``imaging-api`` asks ``data-access-api`` for the cohort's **accession
@@ -209,7 +215,15 @@ Download cache
 
 The first time an FL client asks for an accession's resources, ``imaging-api`` pulls the study out of XNAT onto
 the Trust host, under that net's own images directory. Later requests are served from disk: the next FL round
-and, on Flower, the next job.
+and, on Flower, the next job. On a Kubernetes Trust running NVFLARE job pods, a job pod holds only its own
+project's studies. Each project is an NVFLARE study whose job pods mount that project's folder of the images
+directory, read-only, and nothing else; where job pods cannot attach that volume, they mount none and stream each study
+from ``imaging-api`` into their own directory. A Trust can instead have job pods mount the project's own directory
+of XNAT's archive, read-only, and read each study in place, in which case nothing is copied out of XNAT.
+
+A study unused for seven days is deleted from disk; it is downloaded again from XNAT if a job asks for it later.
+Trust operators can change the period with ``IMAGE_CACHE_RETENTION_HOURS`` in the kit file (``imagingApi.env`` on
+Kubernetes); ``0`` keeps every study.
 
 What this means for training code:
 
@@ -217,6 +231,22 @@ What this means for training code:
   study's file counts and sizes in XNAT and downloads it again if they have changed.
 - Uploads through ``flip.add_resource`` refresh the cached copy automatically.
 - Each FL client sees only its own net's directory, so a job cannot read another net's cached studies.
+
+Imaging follows the approved cohort
+===================================
+
+A patient who leaves a project's approved cohort after approval, for example through the national data opt-out,
+stops being served by ``data-access-api`` at once. ``imaging-api`` keeps the project's imaging to the same list:
+
+- **Downloads** of that patient's studies are refused within a minute.
+- **The cached copy** on the Trust host is removed within 15 minutes.
+- **The study in XNAT** is deleted once it has been off the list for 24 hours, and the patient's XNAT subject
+  with it when none of their studies is left. The wait is there because a Trust that reloads its OMOP tables
+  serves a shorter list for a while, and only a new pull from the PACS brings a deleted study back. Each removal
+  is logged at the Trust with the project and the accession number.
+
+Nothing is removed while ``data-access-api`` cannot say what the list is. Both times are settings of the Trust
+(``COHORT_RECONCILE_MINUTES``, ``COHORT_REMOVAL_GRACE_HOURS``).
 
 ***************
 Data Access API
@@ -256,7 +286,7 @@ if it:
 
 There is **no keyword blocklist**. Instead, queries run as a **read-only database role** whose access is limited
 to the ``omop`` schema, under both Compose and Kubernetes, so a statement that got past the checks still cannot
-write. Rule 5 is enforced separately, on top of the role's limits.
+write. The schema rule (5) is still checked on the query itself, in addition to the role's limits.
 
 .. seealso::
 
@@ -272,6 +302,8 @@ Disclosure threshold
   smaller categories are folded into *Other*.
 - Both row-level endpoints refuse a cohort with fewer distinct patients than the threshold. They use one fixed
   message, so a below-threshold cohort looks the same as an empty one.
+- The FL client is given the same value, so an app that releases site-level statistics instead of model weights
+  (the biomarker causal-discovery tutorial) refuses below it as well.
 - The hub cannot change it. A Trust's optional **governance document** can raise it, never lower it, and can
   also deny these routes for chosen projects; a denial looks the same as a below-threshold cohort. See the
   :gh:`Trust README <trust/README.md#trust-governance-policy-optional>`.
@@ -280,12 +312,13 @@ The threshold is checked at approval and again on every request. A cohort that s
 served, and raising it affects projects that are already approved.
 
 Approved cohort membership
---------------------------
+==========================
 
-The row-level endpoints serve only the cohort **as it stood at project approval**. At approval, each Trust runs
-the approved query once (the ``persist_cohort`` task) and records which patients and studies it returned; it
-stores identifiers only, not their data. Recording a cohort needs proof of the hub's AES key as well as the
-Trust-internal key, so FL training code, which has no AES key, cannot change it. After that:
+The row-level endpoints serve only the cohort **as it stood at project approval**. At approval, each Trust runs the
+approved query once (the ``persist_cohort`` task) and records which patients and studies it returned; it stores
+identifiers only, not their data. Recording or deleting a cohort needs proof that the caller holds ``AES_KEY_BASE64``
+(the key shared with the hub) as well as the Trust-internal key. FL training code does not hold the AES key, so it
+cannot change the recorded cohort. After that:
 
 - ``/cohort/dataframe`` re-runs the approved query and keeps only the approved patients and studies.
 - ``/cohort/accession-ids`` serves the approved studies that are still in OMOP.

@@ -19,7 +19,7 @@ import { Ref, watch } from "vue";
 // useThemeColorMeta.spec.ts asserts they match, so a palette change fails tests instead of
 // silently desynchronising the browser-chrome tint from the page background.
 export const THEME_COLOR_LIGHT = "#FAF7F5";
-export const THEME_COLOR_DARK = "#0B1018";
+export const THEME_COLOR_DARK = "#08080A";
 
 // Keeps <meta name="theme-color"> in sync with the app theme so the browser chrome (status/URL
 // bar) matches the page background instead of defaulting to black in dark mode. The app theme is

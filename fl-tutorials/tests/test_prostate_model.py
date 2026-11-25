@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -32,7 +31,7 @@ import pandas as pd
 import pytest
 import torch
 from monai.data import DataLoader, list_data_collate
-from tutorial_apps import TUTORIALS_ROOT
+from tutorial_apps import TUTORIALS_ROOT, app_package
 
 PROSTATE_DIR = TUTORIALS_ROOT / "flower" / "image_segmentation" / "3d_prostate_segmentation"
 SHIPPED_PLAN = PROSTATE_DIR / "app" / "nnUNetPlans_segmentation.json"
@@ -74,27 +73,14 @@ MINI_PLAN = {
 }
 
 
-def _app_modules() -> dict[str, ModuleType]:
-    return {name: module for name, module in sys.modules.items() if name == "app" or name.startswith("app.")}
-
-
 @pytest.fixture(scope="module")
 def prostate_app() -> dict[str, ModuleType]:
     """``app.models``, ``app.task``, ``app.train_helpers`` under the ``app`` name the tutorial ships as."""
-    displaced = _app_modules()
-    for name in displaced:
-        del sys.modules[name]
-    sys.path.insert(0, str(PROSTATE_DIR))
-    try:
+    with app_package(PROSTATE_DIR):
         yield {
             name: importlib.import_module(f"app.{name}")
             for name in ("models", "task", "train_helpers", "preprocess", "data_loading", "client_app")
         }
-    finally:
-        sys.path.remove(str(PROSTATE_DIR))
-        for name in _app_modules():
-            del sys.modules[name]
-        sys.modules.update(displaced)
 
 
 def test_every_app_module_imports(prostate_app: dict[str, ModuleType]) -> None:
@@ -381,27 +367,33 @@ def test_deep_supervision_loss_renormalises_over_the_outputs_present(prostate_ap
         loss([a], [b, b])
 
 
+def _toy_patches(seed: int, accession_id: str) -> list[dict]:
+    """Two seeded patches of one study."""
+    g = torch.Generator().manual_seed(seed)
+    # (C, x, y, z) tensors, as the loader produces them before train_seg's rearrange
+    return [
+        {
+            "image": torch.rand(1, 16, 16, 4, generator=g),
+            "mask": (torch.rand(3, 16, 16, 4, generator=g) > 0.5).half(),
+            "accession_id": accession_id,
+            "coord": (0, 0, 0),
+        }
+        for _ in range(2)
+    ]
+
+
+def _train_conf(bf16: bool = False) -> dict:
+    return {"bf16": bf16, "deep_supervision": True, "max_norm": 12, "norm_type": 2, "scheduler": "Polynomial"}
+
+
 def test_train_seg_runs_two_steps_on_cpu_with_the_toy_plan(prostate_app: dict[str, ModuleType]) -> None:
     """The ported loop end to end: patch batches, DS loss, gradient clipping, per-channel Dice, no GPU."""
     models, task, helpers = prostate_app["models"], prostate_app["task"], prostate_app["train_helpers"]
     torch.manual_seed(0)
     net = models.build_dynunet_from_plan(MINI_PLAN)
-    conf = {"bf16": True, "deep_supervision": True, "max_norm": 12, "norm_type": 2, "scheduler": "Polynomial"}
+    conf = _train_conf(bf16=True)
 
-    def patches(seed: int) -> list[dict]:
-        g = torch.Generator().manual_seed(seed)
-        # (C, x, y, z) tensors, as the loader produces them before train_seg's rearrange
-        return [
-            {
-                "image": torch.rand(1, 16, 16, 4, generator=g),
-                "mask": (torch.rand(3, 16, 16, 4, generator=g) > 0.5).half(),
-                "accession_id": f"a{seed}",
-                "coord": (0, 0, 0),
-            }
-            for _ in range(2)
-        ]
-
-    loader = DataLoader([patches(1), patches(2)], batch_size=1, collate_fn=list_data_collate)
+    loader = DataLoader([_toy_patches(1, "a1"), _toy_patches(2, "a2")], batch_size=1, collate_fn=list_data_collate)
     criterion = task.build_criterion(conf, num_outputs=1 + net.deep_supr_num)
     optimizer = task.build_optimizer(net, 0.01, {"momentum": 0.99, "weight_decay": 3e-5})
     scheduler = task.build_scheduler(optimizer, total_epochs=4, start_epoch=1)
@@ -417,17 +409,7 @@ def test_train_seg_runs_two_steps_on_cpu_with_the_toy_plan(prostate_app: dict[st
 
 
 def _toy_batches() -> DataLoader:
-    g = torch.Generator().manual_seed(0)
-    patches = [
-        {
-            "image": torch.rand(1, 16, 16, 4, generator=g),
-            "mask": (torch.rand(3, 16, 16, 4, generator=g) > 0.5).half(),
-            "accession_id": "a",
-            "coord": (0, 0, 0),
-        }
-        for _ in range(2)
-    ]
-    return DataLoader([patches], batch_size=1, collate_fn=list_data_collate)
+    return DataLoader([_toy_patches(0, "a")], batch_size=1, collate_fn=list_data_collate)
 
 
 def test_average_of_nothing_finite_is_nan_not_zero(prostate_app: dict[str, ModuleType]) -> None:
@@ -467,7 +449,7 @@ def test_train_seg_refuses_to_step_on_a_non_finite_loss(prostate_app: dict[str, 
     models, task, helpers = prostate_app["models"], prostate_app["task"], prostate_app["train_helpers"]
     net = models.build_dynunet_from_plan(MINI_PLAN)
     before = {k: v.clone() for k, v in net.state_dict().items()}
-    conf = {"bf16": False, "deep_supervision": True, "max_norm": 12, "norm_type": 2, "scheduler": "Polynomial"}
+    conf = _train_conf()
     nan_loss = task.DeepSupervisionLoss(lambda p, t: (p * float("nan")).mean(), [1.0, 0.5])
     optimizer = task.build_optimizer(net, 0.01, {})
     loader = _toy_batches()
@@ -479,7 +461,7 @@ def test_train_seg_refuses_to_step_on_a_non_finite_loss(prostate_app: dict[str, 
 def test_train_seg_reports_nan_counts(prostate_app: dict[str, ModuleType]) -> None:
     models, task, helpers = prostate_app["models"], prostate_app["task"], prostate_app["train_helpers"]
     net = models.build_dynunet_from_plan(MINI_PLAN)
-    conf = {"bf16": False, "deep_supervision": True, "max_norm": 12, "norm_type": 2, "scheduler": "Polynomial"}
+    conf = _train_conf()
     criterion = task.build_criterion(conf, num_outputs=1 + net.deep_supr_num)
     loader = _toy_batches()
     _, _, metrics = helpers.train_seg(
@@ -671,5 +653,6 @@ def test_client_evaluate_scores_the_test_split(client_run) -> None:
     assert metrics["num-examples"] == 1
     for key in ("test_loss", "test_dice_mean", "test_dice_wg", "test_dice_pz", "test_dice_tz"):
         assert np.isfinite(metrics[key]), key
-        assert metrics[f"{key}.x_0"] == metrics[key]
+    # Bare keys only: a ".x_0" twin stacks every round's point at x=0 (FLIP#928).
+    assert not any(".x_" in key for key in metrics.keys())
     assert 0.0 <= metrics["test_dice_mean"] <= 1.0

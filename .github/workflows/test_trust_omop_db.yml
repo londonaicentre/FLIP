@@ -22,11 +22,20 @@ on:
       # line make cannot read stops the suite before a test runs, and its values land in the
       # environment Settings reads. The KCH twin exists but no Makefile reads it.
       - "trust/.env.GSTT.development.example"
+      # tests/unit/test_adni_cohort.py runs the biomarker tutorial's cohort query over the ADNI
+      # loader's rows (the Flower copy is byte-identical, scripts/check_tutorial_sync.sh).
+      - "fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/query.sql"
   pull_request:
     branches: [main, develop]
 
 permissions:
   contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   # Gate for pull requests into develop: run the suite only when the PR touches this
@@ -43,6 +52,7 @@ jobs:
         trust/omop-db/**
         .github/workflows/test_trust_omop_db.yml
         trust/.env.GSTT.development.example
+        fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/query.sql
 
   omop-db:
     needs: changes
@@ -66,7 +76,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv

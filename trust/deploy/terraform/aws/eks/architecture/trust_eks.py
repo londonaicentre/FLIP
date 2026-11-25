@@ -28,7 +28,7 @@ subnet, the NAT gateway and the internet gateway.
 
 Graphviz is not installed on the dev hosts; without ``dot`` this module refuses to render. Run it in docker::
 
-    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/aws/eks python:3.12-slim sh -c \\
+    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/aws/eks python:3.13-slim sh -c \\
       "apt-get update -qq && apt-get install -y -qq graphviz >/dev/null && \\
        pip -q install diagrams && python -m architecture.trust_eks --out docs"
 """
@@ -305,7 +305,7 @@ def _draw_network(drawn: _Drawn) -> None:
     control_plane >> Edge(label="control-plane logs") >> logs
 
     # Outbound only: the nodes dial everything; nothing dials them.
-    nodes >> Edge(label="trust-api HTTPS :443\nFL mTLS gRPC :8002 / :8003\nimages, seed data :443") >> nat
+    nodes >> Edge(label="trust-api HTTPS :443\nFL TLS :8002 / :8003\nimages, seed data :443") >> nat
     nat >> Edge(style="dashed") >> igw
     igw >> Edge(label="hub API :443\nFL :8002 / :8003") >> hub
     igw >> Edge(label=":443") >> ghcr
@@ -370,7 +370,7 @@ def _draw_workload(drawn: _Drawn) -> None:
     seed >> Edge(label="load") >> orthanc
 
     trust_api >> Edge(label="HTTPS :443 poll tasks, heartbeat\nTRUST_API_KEY") >> hub
-    fl_client >> Edge(label="mTLS gRPC\n:8002 prod / :8003 stag") >> hub
+    fl_client >> Edge(label="FL TLS\n:8002 prod / :8003 stag") >> hub
     nodes >> Edge(label="image pulls :443") >> ghcr
     seed >> Edge(label="seed data :443") >> hf
 

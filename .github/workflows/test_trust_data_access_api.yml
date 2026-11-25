@@ -38,6 +38,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   # Gate for pull requests into develop: run the suite only when the PR touches this
   # service (pr_paths_changed.yml; PRs into main always run everything). The list is
@@ -74,7 +80,7 @@ jobs:
         uses: actions/checkout@v5
 
       # No inputs: the action generates throwaway credentials for the run. python-version is
-      # deliberately omitted too — the composite action defaults to the 3.12 that
+      # deliberately omitted too — the composite action defaults to the 3.13 that
       # .python-version and requires-python pin. Do not restate it per job: the previous
       # `github.event.inputs.python-version` form had no workflow_dispatch trigger to feed
       # it, so this job silently ran 3.11 while the integration job below ran 3.12.
@@ -140,7 +146,7 @@ jobs:
       - name: Pre-pull base images
         run: |
           docker pull --quiet postgres:16-alpine
-          docker pull --quiet python:3.12-slim-bookworm
+          docker pull --quiet python:3.13-slim-bookworm
 
       - name: Build compose stack (data-access-api image)
         working-directory: ./trust/deploy/compose

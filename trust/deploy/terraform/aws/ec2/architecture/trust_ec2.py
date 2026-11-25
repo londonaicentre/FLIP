@@ -14,7 +14,7 @@
 
 """Render the AWS EC2 trust node architecture diagram from the Terraform in this directory.
 
-Diagram-as-code in the style of ``deploy/providers/AWS/architecture/central_hub.py``: nodes, clusters and edges
+Diagram-as-code in the style of ``deploy/aws/architecture/central_hub.py``: nodes, clusters and edges
 are declared with the ``diagrams`` library and rendered through graphviz, and ``TERRAFORM_ADDRESSES`` maps every
 drawn label to the Terraform addresses it stands for (``module.network.<address>`` for the network module's own
 resources). ``tests/test_architecture_diagram.py`` checks that map against the ``.tf`` files in both directions, so a
@@ -28,7 +28,7 @@ edges are optional: the network module's own VPC (only without ``subnet_id``), t
 
 Graphviz is not installed on the dev hosts; without ``dot`` this module refuses to render. Run it in docker::
 
-    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/aws/ec2 python:3.12-slim sh -c \\
+    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/aws/ec2 python:3.13-slim sh -c \\
       "apt-get update -qq && apt-get install -y -qq graphviz >/dev/null && \\
        pip -q install diagrams && python -m architecture.trust_ec2 --out docs"
 """
@@ -265,7 +265,7 @@ def _draw_network(drawn: _Drawn) -> None:
 
     # Outbound only: the node dials everything; nothing dials the node.
     trust_api >> Edge(label="HTTPS :443\nTRUST_API_KEY") >> nat
-    fl_client >> Edge(label="mTLS gRPC\n:8002 prod / :8003 stag") >> nat
+    fl_client >> Edge(label="FL TLS\n:8002 prod / :8003 stag") >> nat
     host >> Edge(label="images, seed data :443") >> nat
     nat >> Edge(style="dashed") >> igw
     igw >> Edge(label="hub API :443\nFL :8002 / :8003") >> hub
@@ -313,7 +313,7 @@ def _draw_host(drawn: _Drawn) -> None:
     alloy >> Edge(label="container logs") >> loki >> grafana
 
     trust_api >> Edge(label="HTTPS :443 poll tasks, heartbeat\nTRUST_API_KEY") >> hub
-    fl_client >> Edge(label="mTLS gRPC\n:8002 prod / :8003 stag") >> hub
+    fl_client >> Edge(label="FL TLS\n:8002 prod / :8003 stag") >> hub
     host >> Edge(label="image pulls :443") >> ghcr
     host >> Edge(label="seed omop-db + orthanc :443") >> hf
 

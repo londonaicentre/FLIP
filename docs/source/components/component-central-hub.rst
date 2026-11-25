@@ -59,6 +59,10 @@ A FastAPI application serving everything under ``/api``. Its route groups map on
      - Users, access requests, MFA status and roles; site banner and deployment mode.
    * - ``/trust``, ``/admin/trusts``
      - Trust roster, connection health and registration; a Trust's project decisions, for its Trust Admin.
+       ``POST /admin/trusts`` (Add Trust) registers a Trust and assigns its FL slot but creates no keys. The kit
+       routes, for the Trust's Trust Admin and hub admins: ``GET /trust/{trust_id}/kit`` (download status),
+       ``POST /trust/{trust_id}/kit`` (download; the first one creates the Trust's keys) and
+       ``POST /trust/{trust_id}/kit/rotate`` (issue new keys and download).
    * - ``/step``
      - Multi-step workflows the UI drives: approve a project and start imaging at its Trusts, submit a cohort
        query to them, register a user, and retrieve a model.
@@ -191,8 +195,29 @@ During training the FL server reports to the hub through three endpoints:
 - ``POST /api/model/{id}/metrics``
 - ``PUT /api/model/{id}/status/{status}``
 
-These calls carry the hub's **internal service key**, not a Trust key. They must use the hub's internal URL
-(``FLIP_API_INTERNAL_URL``), never the public address, because the public edge strips that key's header.
+When a job finishes, it uploads its results through the hub the same way. The FL server holds no object-store
+credentials, so it asks the hub to:
+
+1. start the upload of the model's results file;
+2. issue a short-lived URL for each part;
+3. complete the upload, or abort it if a part cannot be sent.
+
+The hub signs a part URL only for an upload it started for that model, only for a part number within the
+declared file size, and only for that part's exact size. The file size is capped (``MAX_RESULTS_FILE_BYTES``,
+50 GiB by default). A model has one upload in progress at a time: starting another discards the unfinished one.
+
+- ``POST /api/model/{id}/results-upload``
+- ``POST /api/model/{id}/results-upload/part``
+- ``POST /api/model/{id}/results-upload/complete``
+- ``POST /api/model/{id}/results-upload/abort``
+
+These calls carry a **job credential**, not a Trust key. They use the hub's internal URL
+(``FLIP_API_INTERNAL_URL``), never the public address: the FL server's callbacks stay on the hub's own network.
+
+The hub mints one for every job it dispatches and keeps only its
+hash; the FL API leaves it where the FL server reads it and no Trust does. The hub accepts a callback about a
+model only with the credential of that model's own job, and only while that job is still reporting, so one job
+cannot change another model's status, logs, metrics or results.
 
 FL clients hold no hub credential. Anything a client needs the hub to know goes through the FL server.
 
@@ -214,7 +239,7 @@ through the same provider.
 Authorisation is **role-based**. A user's roles are tied to their identity-provider account, and per-resource
 checks decide who may see or change a project, model or cohort query. The role matrix is on :ref:`rbac-roles`.
 
-Three other keys each secure one connection:
+Four other keys each secure one connection:
 
 .. list-table::
    :header-rows: 1
@@ -225,10 +250,10 @@ Three other keys each secure one connection:
      - Where it lives
    * - Trust API key
      - Trust → hub
-     - The Trust's kit file; hashed on the hub
-   * - Internal service key
-     - FL server → hub
-     - The hub only
+     - The Trust's kit file; hashed on the hub. A kit downloaded from the UI is built on request and not stored
+   * - Job credential
+     - One job's FL server → hub, for that job's model
+     - The hub only, minted per job; hashed in the database
    * - Trust-internal service key
      - Between services inside a Trust
      - The Trust only; never reaches the hub
@@ -273,5 +298,5 @@ Further reading
 ***************
 
 - :gh:`flip-api/README.md` and :gh:`flip-ui/README.md`
-- :gh:`deploy/providers/AWS/README.md` — the Terraform, deploy and rollback runbook behind the deployment pages
+- :gh:`deploy/aws/README.md` — the Terraform, deploy and rollback runbook behind the deployment pages
 - :ref:`deploy-central-hub` and :ref:`security`

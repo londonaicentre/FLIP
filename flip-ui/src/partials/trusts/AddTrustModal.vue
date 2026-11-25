@@ -59,8 +59,8 @@
                             </div>
                             <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <p>
-                                    Registers a trust with the Central Hub. An API key and an internal service key
-                                    will be generated and shown <strong>once</strong> on the next screen.
+                                    Registers a trust with the Central Hub. Its keys are created when its kit is
+                                    first downloaded from the trust's card.
                                 </p>
                                 <AiInput
                                     class="mt-2"
@@ -68,9 +68,10 @@
                                     type="text"
                                     name="name"
                                     label="Trust name"
-                                    hint="Full display name shown across the platform. Any characters allowed."
+                                    hint="Full display name shown across the platform."
                                     placeholder="e.g. Guy's & St Thomas' NHS Foundation Trust"
                                     :required="true"
+                                    validate-on-input
                                 />
                                 <AiInput
                                     data-test="trust-code-field"
@@ -80,6 +81,7 @@
                                     hint="Short, stable identifier shown in tables and dashboards. Letters, digits, underscore, hyphen."
                                     placeholder="e.g. GSTT"
                                     :required="true"
+                                    validate-on-input
                                 />
                                 <AiInput
                                     data-test="trust-region-field"
@@ -88,6 +90,7 @@
                                     label="Region"
                                     hint="NHS region or geography."
                                     placeholder="e.g. London"
+                                    validate-on-input
                                 />
                             </div>
                             <div class="flex flex-row-reverse px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 shrink-0">
@@ -168,7 +171,7 @@ const submitAction = async () => {
         });
         Snackbar.success({
             title: "Trust created",
-            text: `${created.name} has been registered. Save the keys on the next screen.`
+            text: `${created.name} has been registered. Download its kit from the trust's card.`
         });
         emit("onSuccess", created);
         resetForm();

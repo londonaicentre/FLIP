@@ -29,6 +29,9 @@ on:
       - "fl-tutorials/flower/image_classification/xray_classification/**"
       - "fl-tutorials/nvflare/image_segmentation/**"
       - "fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/**"
+      # The biomarker causal-discovery pairs, same shape (nvflare reference, flower copy).
+      - "fl-tutorials/nvflare/tabular_causal_discovery/**"
+      - "fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
   pull_request:
@@ -45,11 +48,20 @@ on:
       - "fl-tutorials/flower/image_classification/xray_classification/**"
       - "fl-tutorials/nvflare/image_segmentation/**"
       - "fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/**"
+      # The biomarker causal-discovery pairs, same shape (nvflare reference, flower copy).
+      - "fl-tutorials/nvflare/tabular_causal_discovery/**"
+      - "fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
 
 permissions:
   contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   check-tutorial-sync:

@@ -233,8 +233,63 @@ def test_dev_commented_hub_shared() -> None:
         _assert(content2.count("# AES_KEY_BASE64=") == 1, "no duplicate commented key on re-run")
 
 
+def test_a_kit_that_would_not_be_one_line_per_known_key_is_refused() -> None:
+    print("▶ write_kit: refuses a hub-shared key it does not manage and a value make or compose would expand")
+    refused = {
+        "a hub-shared key outside the managed set": _full_kit(hub_shared={"TRUST_BIND_ADDRESS": "0.0.0.0"}),
+        "a newline in a value": _full_kit(fl_kit_slot="Trust_1\nDOCKER_TAG=other"),
+        "a make expansion in a value": _full_kit(hub_shared={"DOCKER_TAG": "$(shell id)"}),
+        "a backquote in a value": _full_kit(hub_shared={"DOCKER_TAG": "`id`"}),
+        "a value that is not text": _full_kit(hub_shared={"DOCKER_TAG": ["stag"]}),
+    }
+    for label, kit in refused.items():
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / ".env.GSTT.prod"
+            target.write_text("OMOP_DB_PORT=5436\n")
+            raised = False
+            try:
+                tkl.write_kit(target, kit)
+            except ValueError:
+                raised = True
+            _assert(raised, f"{label} is refused")
+            _assert(target.read_text() == "OMOP_DB_PORT=5436\n", f"{label}: the kit file is left as it was")
+
+
+def test_an_interrupted_write_leaves_the_old_kit_whole() -> None:
+    print("▶ write_secure: a failure before the rename leaves the old kit intact and no temp file")
+    with tempfile.TemporaryDirectory() as td:
+        target = Path(td) / ".env.GSTT.prod"
+        target.write_text("TRUST_API_KEY=old-key\n")
+        raised = False
+        with mock.patch.object(os, "fsync", side_effect=OSError("disk full")):
+            try:
+                tkl.write_secure(target, ["TRUST_API_KEY=new-key"])
+            except OSError:
+                raised = True
+        _assert(raised, "the write error reaches the caller")
+        _assert(target.read_text() == "TRUST_API_KEY=old-key\n", "old kit unchanged")
+        _assert(sorted(p.name for p in Path(td).iterdir()) == [".env.GSTT.prod"], "no temp file left behind")
+
+
+def test_a_symlinked_kit_is_written_through() -> None:
+    print("▶ write_secure: a kit moved behind a symlink is written through and the link is kept")
+    with tempfile.TemporaryDirectory() as td:
+        real = Path(td) / "etc" / ".env.GSTT.prod"
+        real.parent.mkdir()
+        real.write_text("TRUST_API_KEY=old-key\n")
+        link = Path(td) / ".env.GSTT.prod"
+        link.symlink_to(real)
+        tkl.write_secure(link, ["TRUST_API_KEY=new-key"])
+        _assert(link.is_symlink(), "the link is still a link")
+        _assert(real.read_text() == "TRUST_API_KEY=new-key\n", "the linked file holds the new kit")
+        _assert((real.stat().st_mode & 0o777) == 0o600, "the linked file is 0600")
+
+
 def main() -> None:
     test_new_kit_writes_creds_meta_and_hub_shared()
+    test_a_kit_that_would_not_be_one_line_per_known_key_is_refused()
+    test_an_interrupted_write_leaves_the_old_kit_whole()
+    test_a_symlinked_kit_is_written_through()
     test_existing_world_readable_kit_is_tightened_before_creds_land()
     test_dev_commented_hub_shared()
     test_skip_path_preserves_existing_creds()

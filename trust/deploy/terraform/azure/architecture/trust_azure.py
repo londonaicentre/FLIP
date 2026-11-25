@@ -14,7 +14,7 @@
 
 """Render the Azure trust node architecture diagrams from the Terraform in this directory.
 
-Diagram-as-code in the style of ``deploy/providers/AWS/architecture/central_hub.py``. This tree has three roots
+Diagram-as-code in the style of ``deploy/aws/architecture/central_hub.py``. This tree has three roots
 (``bootstrap/``, ``vm/``, ``aks/``) and two modules (``modules/network``, ``modules/kit_drop``), so
 ``TERRAFORM_ADDRESSES`` names each address as ``<directory>/<address>``. ``tests/test_architecture_diagram.py`` checks
 that map against the ``.tf`` files in both directions, so a resource cannot be removed, renamed or added without the
@@ -27,7 +27,7 @@ own VNet + NAT gateway (only without ``existing_subnet_id``), the budget (``crea
 
 Graphviz is not installed on the dev hosts; without ``dot`` this module refuses to render. Run it in docker::
 
-    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/azure python:3.12-slim sh -c \\
+    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/azure python:3.13-slim sh -c \\
       "apt-get update -qq && apt-get install -y -qq graphviz >/dev/null && \\
        pip -q install diagrams && python -m architecture.trust_azure --out docs"
 """
@@ -292,7 +292,7 @@ def _draw_vm(drawn: _Drawn) -> None:
 
     # Outbound only, through the NAT gateway (or the site's routes on a site subnet).
     trust_api >> Edge(label="HTTPS :443\nTRUST_API_KEY") >> nat
-    fl_client >> Edge(label="mTLS gRPC\n:8002 / :8003") >> nat
+    fl_client >> Edge(label="FL TLS\n:8002 / :8003") >> nat
     vm >> Edge(label="git, images,\nseed data :443") >> nat
     nat - Edge(style="dashed") - pip
     pip >> Edge(label="hub API :443\nFL :8002 / :8003") >> hub
@@ -341,7 +341,7 @@ def _draw_aks(drawn: _Drawn) -> None:
     identity - Edge(style="dotted") - api
 
     trust_api >> Edge(label="HTTPS :443\nTRUST_API_KEY") >> nat
-    fl_client >> Edge(label="mTLS gRPC\n:8002 / :8003") >> nat
+    fl_client >> Edge(label="FL TLS\n:8002 / :8003") >> nat
     nat - Edge(style="dashed", label="userAssignedNATGateway\n(or userDefinedRouting)") - pip
     pip >> Edge(label="hub API :443\nFL :8002 / :8003") >> hub
     pip >> Edge(label="image pulls :443") >> ghcr

@@ -46,7 +46,8 @@ from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
+from flip_api.utils.paging_utils import IPagedResponse, PagingInfo
+from flip_api.utils.user_roles import profile_display_name
 
 
 def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, session: Session) -> None:
@@ -276,31 +277,45 @@ def delete_models(project_id: UUID, user_id: str, session: Session, ensure_delet
     """
     logger.debug("Attempting to delete models...")
 
-    models = session.exec(select(Model).where(Model.project_id == project_id, not Model.deleted)).all()
+    models = session.exec(select(Model).where(Model.project_id == project_id, col(Model.deleted).is_(False))).all()
 
-    if ensure_deletion and not models:
-        raise ValueError(f"Failed to delete models for project: {project_id}")
+    if not models:
+        if ensure_deletion:
+            raise ValueError(f"Failed to delete models for project: {project_id}")
+        logger.warning("No models deleted")
+        return 0
 
-    model_ids = [m.id for m in models]
     for model in models:
         model.deleted = True
 
-    if model_ids:
-        audits = [
-            IModelAuditAction(model_id=model_id, action=ModelAuditAction.DELETE, userid=user_id)
-            for model_id in model_ids
-        ]
-        audit_response = audit_model_actions(audits, session)
-        logger.info(f"Output: {audit_response}")
-    else:
-        logger.warning("No models deleted")
-        return 0
+    audits = [IModelAuditAction(model_id=m.id, action=ModelAuditAction.DELETE, userid=user_id) for m in models]
+    audit_response = audit_model_actions(audits, session)
+    logger.info(f"Output: {audit_response}")
 
     session.commit()
 
     logger.info(f"Models for project {project_id} soft-deleted and audit logs recorded.")
 
-    return len(model_ids)
+    return len(models)
+
+
+def is_model_live(model_id: UUID, session: Session) -> bool:
+    """
+    Whether a model exists and neither it nor its project has been deleted.
+
+    Args:
+        model_id (UUID): The ID of the model.
+        session (Session): The database session.
+
+    Returns:
+        bool: True if the model and its project both exist and are not deleted.
+    """
+    statement = (
+        select(Model.id)
+        .join(Projects, col(Projects.id) == col(Model.project_id))
+        .where(Model.id == model_id, col(Model.deleted).is_(False), col(Projects.deleted).is_(False))
+    )
+    return session.exec(statement).first() is not None
 
 
 def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus | None:
@@ -516,10 +531,10 @@ def queued_positions_by_model(session: Session) -> dict[UUID, int]:
 def get_all_models_service(
     session: Session,
     user_id: UUID | None,
-    query_params: dict,
+    paging: PagingInfo,
     status_filter: list[ModelStatus] | None = None,
     project_id: UUID | None = None,
-) -> tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]:
+) -> tuple[IPagedResponse[IAllModelsResponse], dict[str, int]]:
     """Estate-wide, access-scoped model list joined with project name, owner and run trusts (#726).
 
     Mirrors the projects-list access rule: when ``user_id`` is provided the query is restricted to
@@ -536,17 +551,15 @@ def get_all_models_service(
     Args:
         session (Session): The database session.
         user_id (UUID | None): The requesting user, or ``None`` to see every model (manager bypass).
-        query_params (dict): Raw query params (``pageNumber`` / ``pageSize`` / ``search``).
+        paging (PagingInfo): The page and search string.
         status_filter (list[ModelStatus] | None): Optional set of statuses to filter the list to.
         project_id (UUID | None): Optional project to scope the list — and the counts — to. The
             caller is responsible for the access check; this only narrows.
 
     Returns:
-        tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]: the page of rows, the
-        ``status value -> count`` map for the tiles, and the paging details.
+        tuple[IPagedResponse[IAllModelsResponse], dict[str, int]]: the page of rows and the
+        ``status value -> count`` map for the tiles.
     """
-    paging = get_paging_details(query_string_parameters=query_params)
-
     # Base conditions exclude the status filter so the tile counts see every status.
     base_conditions: list[Any] = [col(Model.deleted).is_(False), col(Projects.deleted).is_(False)]
     if user_id is not None:
@@ -566,7 +579,7 @@ def get_all_models_service(
     access_join = and_(col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id)
 
     rows_query = (
-        select(Model, Projects.name, UserProfile.name)  # type: ignore[call-overload]
+        select(Model, Projects.name, profile_display_name())  # type: ignore[call-overload]
         .join(Projects, col(Model.project_id) == Projects.id)
         .outerjoin(ProjectUserAccess, access_join)
         .outerjoin(UserProfile, col(UserProfile.user_id) == Model.owner_id)
@@ -616,7 +629,7 @@ def get_all_models_service(
         for model, project_name, owner_name in rows
     ]
 
-    return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts, paging
+    return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts
 
 
 def get_models_project_options_service(session: Session, user_id: UUID | None) -> list[IModelsProjectOption]:

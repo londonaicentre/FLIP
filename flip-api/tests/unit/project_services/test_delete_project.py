@@ -50,7 +50,7 @@ def override_dependencies():
 def mock_services(monkeypatch):
     mocks = {
         "can_modify_project": MagicMock(return_value=True),
-        "get_project_models_service": MagicMock(return_value=(MagicMock(data=[]), None)),
+        "get_project_models_service": MagicMock(return_value=MagicMock(data=[])),
         "abort_model_training": MagicMock(),
         "delete_project": MagicMock(),
         "get_imaging_projects": MagicMock(),
@@ -65,15 +65,6 @@ def mock_services(monkeypatch):
     monkeypatch.setattr(delete_project_module, "delete_imaging_project", mocks["delete_imaging_project"], raising=False)
 
     return mocks
-
-
-def test_delete_project_success(override_dependencies, mock_services):
-    project_id = uuid4()
-
-    response = client.delete(f"/api/projects/{project_id}")
-
-    assert response.status_code == status.HTTP_204_NO_CONTENT
-    mock_services["delete_project"].assert_called_once()
 
 
 def test_delete_project_leaves_trust_imaging_intact(override_dependencies, mock_services):
@@ -104,7 +95,7 @@ def test_delete_project_forbidden(override_dependencies, mock_services):
 def test_delete_project_abort_training_called(override_dependencies, mock_services):
     model_mock = MagicMock()
     model_mock.id = uuid4()
-    mock_services["get_project_models_service"].return_value = (MagicMock(data=[model_mock]), None)
+    mock_services["get_project_models_service"].return_value = MagicMock(data=[model_mock])
 
     project_id = uuid4()
     response = client.delete(f"/api/projects/{project_id}")

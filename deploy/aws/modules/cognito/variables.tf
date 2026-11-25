@@ -1,0 +1,102 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+variable "user_pool_name" {
+  type        = string
+  description = "Name of the Cognito user pool (e.g. \"flip-user-pool\", \"flip-user-pool-dev\")."
+}
+
+variable "client_name" {
+  type        = string
+  description = "Name of the Cognito app client."
+}
+
+variable "sign_in_hostname" {
+  type        = string
+  description = "Hostname interpolated into the SMS invite template (\"Sign in at https://{host}\"). Typically the ALB subdomain in prod or \"localhost\" in dev."
+}
+
+variable "callback_urls" {
+  type        = list(string)
+  description = "OAuth callback URLs for the app client."
+  default     = ["https://localhost:443"]
+}
+
+variable "logout_urls" {
+  type        = list(string)
+  description = "OAuth logout URLs for the app client."
+  default     = ["https://localhost:443"]
+}
+
+variable "admin_email" {
+  type        = string
+  description = "Email of the seed admin user."
+}
+
+variable "researcher_email" {
+  type        = string
+  description = "Email of the seed researcher user; pass an empty string to skip creating one."
+  default     = ""
+}
+
+variable "seed_user_password" {
+  type        = string
+  description = "Initial password set for the seed users. Both admin and researcher share this value."
+  sensitive   = true
+}
+
+variable "templates_dir" {
+  type        = string
+  description = "Path to the directory containing invite.html, password_reset_code.html and password_reset_link.html. Callers typically pass $${path.module}/templates/cognito."
+}
+
+variable "ses_identity_arn" {
+  type        = string
+  description = "ARN of a verified SES identity the pool sends its emails through. Empty (default) keeps Cognito's built-in sender."
+  default     = ""
+}
+
+variable "ses_from_email" {
+  type        = string
+  description = "Address the pool's emails come from when ses_identity_arn is set; must belong to that identity."
+  default     = ""
+}
+
+variable "mfa_configuration" {
+  type        = string
+  description = "Pool-level MFA mode. \"OPTIONAL\" honours per-user TOTP enrolment (the stag/prod default — see main.tf for the reasoning). \"OFF\" disables MFA at the Cognito layer entirely; useful in dev where the app-layer gate (Settings.ENFORCE_MFA) is the only enforcement point. \"ON\" forces every user through TOTP."
+  default     = "OPTIONAL"
+  validation {
+    condition     = contains(["OFF", "OPTIONAL", "ON"], var.mfa_configuration)
+    error_message = "mfa_configuration must be one of: OFF, OPTIONAL, ON."
+  }
+}
+
+variable "managed_login_version" {
+  description = "Hosted-UI generation for the user pool domain: 2 = Managed Login (branding designer), 1 = classic hosted UI. Cognito refuses PrivateLink (interface-endpoint) API access to pools with Managed Login configured, so the LZA mode -- whose only route to cognito-idp is the central interface endpoint -- must run 1 (FLIP#749). FLIP's own UI performs SDK-based sign-in, so the hosted-UI generation is cosmetic."
+  type        = number
+  default     = 2
+}
+
+variable "user_pool_tier" {
+  description = "Cognito feature tier for the pool (LITE | ESSENTIALS | PLUS). See the resource comment for why FLIP requires LITE."
+  type        = string
+  default     = "LITE"
+}
+
+variable "create_hosted_ui_domain" {
+  description = "Whether to create the hosted-UI user pool domain. False on LZA -- see the resource comment: a domain that has ever had Managed Login blocks PrivateLink access to the pool, and FLIP's flows never use the hosted UI."
+  type        = bool
+  default     = true
+}

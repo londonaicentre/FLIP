@@ -6,7 +6,7 @@ Deploy the Central Hub
 
 The Central Hub is the cloud-hosted side of FLIP. It manages projects and users, runs the federated learning server
 and serves the web UI. It runs on AWS and is provisioned with Terraform (or OpenTofu) from one root module,
-``deploy/providers/AWS/``.
+``deploy/aws/``.
 
 This page covers what every hub deployment shares; :doc:`deploy-central-hub-aws-lza` has the architecture and the
 runbook. To deploy a trust, see :doc:`deploy-trust-node`.
@@ -25,12 +25,12 @@ network, the guardrails and a shared edge, and workload accounts are denied VPC-
 it is given instead of building one, and ingress arrives through the estate's own edge over a Transit Gateway, so you
 must coordinate with whoever runs the estate. See :doc:`deploy-central-hub-aws-lza`.
 
-The self-contained single-account mode, in which FLIP built its own VPC and in-account edge, is no longer supported
-and has been removed (`FLIP#1479 <https://github.com/londonaicentre/FLIP/issues/1479>`_). To move a hub off it,
-see :ref:`deploy-central-hub-migrating`.
+The self-contained single-account mode, in which FLIP built its own VPC and in-account edge, was removed in
+``v0.14.0``. To move a hub off it, see :ref:`deploy-central-hub-migrating`.
 
 .. toctree::
    :maxdepth: 1
+   :hidden:
 
    deploy-central-hub-aws-lza
 
@@ -77,7 +77,7 @@ Prerequisites
 1. **AWS CLI with SSO access.** Configure it once with ``aws configure sso``, then sign in with
    ``aws sso login --profile <profile>`` whenever the session expires.
 2. **Terraform >= 1.13.1** (or OpenTofu).
-3. **Python 3.12 or 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
+3. **Python 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
 4. **GitHub CLI** (``gh``), and a **GitHub Container Registry login** to pull the pre-built images. Create a GitHub
    personal access token with the ``read:packages`` scope, then:
 
@@ -111,9 +111,9 @@ Prerequisites
         ssh-keygen -t ed25519 -f ~/.ssh/host-aws -C "<your email>"
 
    - the **AWS Session Manager plugin**, needed for ``ssh flip``. See
-     "Remote Access via SSM Session Manager" in :gh:`deploy/providers/AWS/README.md`.
+     "Remote Access via SSM Session Manager" in :gh:`deploy/aws/README.md`.
 
-**Choose the hub with** ``HUB``, which every target in ``deploy/providers/AWS`` requires:
+**Choose the hub with** ``HUB``, which every target in ``deploy/aws`` requires:
 
 .. list-table::
    :header-rows: 1
@@ -132,7 +132,7 @@ Prerequisites
      - ``prod``
      - production
 
-Production gets the production-only database safeguard: a final snapshot when the instance is deleted.
+With ``HUB=prod``, deleting the database instance takes a final snapshot first; staging does not.
 
 ************************
 Required IAM permissions
@@ -206,7 +206,7 @@ policies. Creating network resources is denied there by design.
 Service authentication
 ***********************
 
-The hub uses three separate keys. See :doc:`/sys-admin` for full details.
+The hub uses two kinds of key and a per-job credential. See :doc:`/sys-admin` for full details.
 
 .. list-table::
    :header-rows: 1
@@ -219,20 +219,15 @@ The hub uses three separate keys. See :doc:`/sys-admin` for full details.
      - Each trust's calls to the hub. One key per trust.
      - Minted when you register the trust and written once into its kit file
        (``trust/.env.<CODE>.<hub>``). The hub keeps only a hash.
-   * - **Internal service key**
-     - Calls from the FL server to the hub API. One key per hub.
-     - ``make generate-internal-service-key``
+   * - **Job credential**
+     - Calls from the FL server to the hub API about one model. One per FL job.
+     - Minted by the hub when it dispatches the job. Nothing to configure.
    * - **Trust-internal service key**
-     - Calls between services inside one trust. One key per trust; the hub never sees it.
+     - Calls between services inside one trust. One key per trust; the hub mints it and never stores it.
      - Minted alongside the trust API key and written into the trust's kit file.
 
-Generate the internal service key into the active environment file. Existing keys are kept:
-
-.. code-block:: shell
-
-   make generate-internal-service-key
-
-The two per-trust keys are minted when you register the trust; see :ref:`deploy-central-hub-register-trusts`.
+The two per-trust keys are minted when you register the trust from the command line (see
+:ref:`deploy-central-hub-register-trusts`), or, for a trust added in the UI, when its kit is first downloaded.
 
 .. _deploy-central-hub-register-trusts:
 
@@ -246,6 +241,11 @@ one-off task inside it.
 A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its configuration: ``HUB=prod`` reads
 ``trust/.env.<CODE>.prod``, ``HUB=stag`` ``trust/.env.<CODE>.stag``.
 
+This section is the command-line route. A site on a Docker Compose host can instead be added with **Add Trust** on
+the Connection Status page and download its own kit from the FLIP UI, with no kit file on your workstation:
+:ref:`onboarding-kit-from-ui`. Use the command line for Kubernetes, AWS EC2 and Azure nodes, and for nodes the hub
+team runs.
+
 1. **Create the kit file.** From the repository root:
 
    .. code-block:: shell
@@ -258,25 +258,14 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>
+      make -C deploy/aws register-trusts KIT=<CODE> HUB=<hub>
 
    Leave out ``KIT`` to register every kit file present for the environment. This writes the trust's
    **credentials** (API key, trust-internal service key and FL kit slot) into the kit file, and mints the trust's
-   XNAT passwords, trust-side runtime secrets that are not part of the hub's kit. Of the hub-shared
-   settings, only the API key header name and the FL backend are filled in.
-
-3. **Fill in the hub-shared settings.** From the repository root, with your local ``.env.<hub>`` present:
-
-   .. code-block:: shell
-
-      make sync-trust-kit KIT=<CODE> HUB=<hub>
-
-   ``make sync-trust-kits`` does the same for every local kit file.
-
-   .. important::
-
-      Do not skip this step. Without it the kit's encryption key, hub URL, kit dates and image tags stay unfilled,
-      and the trust can neither reach the hub nor decrypt a task.
+   XNAT passwords, trust-side runtime secrets that are not part of the hub's kit. It then fills the
+   **hub-shared settings** (encryption key, hub URL, kit date, image tags, FL ports) from your local ``.env.<hub>``,
+   as ``make sync-trust-kit KIT=<CODE> HUB=<hub>`` does. If any of them is missing there, the target fails and
+   names it; set it in ``.env.<hub>`` and run it again.
 
 Registration works the same for both FL backends: the kit takes ``FL_BACKEND`` from the hub, and the slot it claims
 maps onto the matching FLARE participant kit or Flower SuperNode key.
@@ -290,12 +279,12 @@ file are kept.
 
 - For a node from ``trust/deploy/terraform/aws/ec2``, that root's ``make deploy KIT=<CODE> HUB=<hub>`` reads the kit
   locally and passes its values to the containers on the host (:doc:`deploy-flip-node-aws-ec2`).
-- For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. The packaging takes the trust's code, packs the FL
-  kit share of the kit's ``FL_KIT_SLOT``, and ships the kit as ``.env.<CODE>.<hub>``:
+- For an on-prem trust, package the kit file, ``.env.<CODE>.<hub>``, with the trust's share of the FL kit for its
+  ``FL_KIT_SLOT``, then hand the package to the operator as in step 4 of :doc:`onboarding-a-trust`:
 
   .. code-block:: shell
 
-     make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<hub>
+     make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<hub>
 
 If registration fails
 =====================
@@ -313,29 +302,54 @@ Running out of FL kit slots
 ===========================
 
 Registration fails with ``NoFreeKitSlotError`` ("No FL kit slots available…") when the hub has no claimable FL kit
-slot left. One command adds more (FLARE only):
+slot left. (If it says instead that the kit-slot source could not be read, the hub could not list its kits: there is
+nothing to add, so try again and check the hub's log.) One command adds more, on either FL backend:
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS add-fl-kits N=2 HUB=<stag|prod>
+   make -C deploy/aws add-fl-kits N=2 HUB=<stag|prod>
 
-``N`` is the number of **extra claimable slots** you want, not the number of kits to create. The command first
-activates spare kits that were provisioned earlier but never made claimable, which is quick and needs no
-certificates. It mints new kits only for the shortfall: that restores and verifies each net's CA workspace and needs
-the FLARE provisioning tools. Existing kits are never touched and no CA is rotated.
+``N`` is the number of new kits to make. Existing kits are never touched and no CA is rotated.
 
-It ends with a targeted Terraform plan and apply of the slot list, and pauses for you to confirm both the kit plan
-and the Terraform plan (``YES=1`` skips the prompts). Read the plan before you confirm. The hub picks up the new
-slots without a restart, so the next ``register-trusts`` can claim one.
+- On a **FLARE** hub the command restores and verifies each net's CA workspace, which needs the FLARE provisioning
+  tools, then makes and uploads the kits.
+- On a **Flower** hub it makes new SuperNode key pairs, uploads the public keys, registers them with the running
+  SuperLink by running two of the hub's one-off ECS tasks, and uploads the private keys last. The SuperLink is not
+  restarted and a running job is not disturbed.
+
+It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). The hub reads its slots straight from
+the kits in S3 at every registration, so the next ``register-trusts`` can claim one: no Terraform apply and no
+restart. Every complete kit in S3 can be claimed, so delete a kit there rather than keep one that should not be
+handed out; a trust that already holds that slot keeps it. On Flower, delete only the private key: the public key
+keeps the number from being used again, and the hub's log then lists that slot as not claimable.
 
 .. warning::
 
-   If the final apply fails, recover with ``make -C deploy/providers/AWS apply-fl-kit-slots HUB=<hub>``. Do not
-   re-run ``add-fl-kits``: the slot names are already in your env file, and a second run would add another ``N``.
+   If a run stops part-way, it prints what it uploaded. A kit that is not complete on every net is never
+   claimed, and the hub's log names it with the files it lacks. Re-run ``add-fl-kits`` with the number of kits still
+   needed: it numbers past every kit in S3 and every name it has already issued, so a name is never used twice and
+   the numbering can skip one. Delete the incomplete kit from S3 (on Flower, the public keys the run names), or the
+   hub keeps warning about it.
+
+.. warning::
+
+   On a hub that has been switched between NVFLARE and Flower, the first kits a run makes can carry names that
+   trusts registered under the other backend already hold, so they add no free slot. Ask for enough kits to pass
+   the highest slot the hub has assigned.
+
+.. note::
+
+   A Flower SuperLink holds its registered SuperNodes in memory. A Terraform apply that replaces the SuperLink
+   registers every key again. A SuperLink restarted any other way, including ``deploy-centralhub``, a rollback,
+   staging power-on or a crash, does not, and its trusts are refused until the registration runs again.
+   :gh:`fl-services/flower/README.md` has the command.
 
 .. seealso::
 
    :gh:`fl-services/nvflare/README.md` — minting kits by hand, and onboarding a new client onto an existing network.
+
+   :gh:`fl-services/flower/README.md` — how a Flower hub adds SuperNode keys, and what the order of its steps
+   protects.
 
 .. _deploy-central-hub-rotate-trust-keys:
 
@@ -343,33 +357,70 @@ slots without a restart, so the next ``register-trusts`` can claim one.
 Rotating keys
 *************
 
-*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and internal service key are reissued in
-place, without re-registering it:
+*Who: FLIP admin, with AWS access to the hub's account.* For a site on a Docker Compose host, the trust's Trust Admin
+or a FLIP admin can do this from the trust's card instead, with **Issue new keys** ("Later — issue new keys" on
+:doc:`onboarding-a-trust`). That route is always an immediate cutover, like ``REVOKE_OLD=1`` below, and also drops
+any key a command-line rotation had staged; the points under "Two more things to plan for" apply to both routes. From the command line, a trust's API key and
+trust-internal service key are reissued in place, without re-registering it:
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS rotate-trust-keys KIT=<CODE> HUB=<env>
+   make -C deploy/aws rotate-trust-keys KIT=<CODE> HUB=<env>
 
-``KIT`` is required, and exactly one trust rotates per run. The trust keeps its id, its code and its FL kit slot;
-only ``api_key_hash`` changes, in one transaction with a ``ROTATED`` entry in the trust audit log. The new
-credentials are written into ``trust/.env.<CODE>.<suffix>``.
+``KIT`` is required, and exactly one trust rotates per run. The trust keeps its id, its code and its FL kit slot,
+and the change is recorded as a ``ROTATED`` entry in the trust audit log. The new credentials are written into
+``trust/.env.<CODE>.<suffix>``.
 
-Three things to plan for:
+**By default the new key is staged, and the site stays online.** The hub accepts both the old and the new key until
+the trust first calls it with the new one, which happens as soon as its containers are recreated from the new kit.
+That call promotes the new key: the old one is refused from then on, and the audit log records ``KEY_PROMOTED``.
+If the new key is never used within ``TRUST_KEY_ROTATION_GRACE_DAYS`` (14 by default), the hub stops accepting it
+at the deadline, later clears it and records ``KEY_EXPIRED``. A site that never switched carries on with its old key.
+A site that installs the new kit *after* the deadline is refused, because the key in that kit was dropped: rotate
+again and deliver the newer kit. A kit lost in transit is recovered the same way: the new pending key replaces the
+lost one, and the site never stopped working.
 
-- **The trust goes offline the moment the rotation commits.** The hub re-checks the live hash on every request, so
-  the old key is refused straight away; the trust comes back only once its containers are recreated from the new
-  kit. Plan the rotation as a short outage for that site, not as an overlap window.
-- **The internal service key rotates with it**, so every trust-internal container has to restart together, not only
-  ``trust-api``. Deliver the kit and recreate them in one step:
+``TRUST_KEY_ROTATION_GRACE_DAYS`` is a flip-api setting with no Terraform passthrough, so a deployed hub always uses
+the 14-day default; only a local hub reads it from ``.env.<hub>``.
+
+**For a key known to be leaked, cut it off at once** with ``REVOKE_OLD=1``:
+
+.. code-block:: shell
+
+   make -C deploy/aws rotate-trust-keys KIT=<CODE> HUB=<env> REVOKE_OLD=1
+
+The hub then refuses the old key the moment the rotation commits, and the trust is offline until its containers are
+recreated from the new kit. Plan that as a short outage for the site.
+
+**Check that the old key is refused.** Once a staged rotation is promoted, or straight after ``REVOKE_OLD=1``, a call
+with the old key must get ``401``. Do not test with the *new* key while a rotation is staged: any authenticated call
+with it promotes it, and the site, still on the old key, is refused from then on.
+
+.. code-block:: shell
+
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: <old TRUST_API_KEY>" \
+     https://<hub>/api/trust/heartbeat
+
+Two more things to plan for:
+
+- **The trust-internal service key rotates with it**, so every trust-internal container has to restart together, not
+  only ``trust-api``. Deliver the kit and recreate them in one step:
 
   - AWS EC2 node: ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``.
   - On-prem: package the rotated kit and have the operator run their upgrade command:
 
     .. code-block:: shell
 
-       make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>
+       make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
   Do **not** use that root's ``deploy``: it is a first-install command that re-seeds the trust's data and resets XNAT.
+
+  The hub never checks the trust-internal service key, so a site on a Docker Compose host can also rotate it on its
+  own, without the hub and without touching its API key:
+  ``make -C trust rotate-internal-service-key KIT=<CODE> HUB=<env>``, then recreate every container the same way.
+  This is for Compose only. A Helm, AKS or Snowflake site runs from a copy synced from the kit, and the hub
+  operator's copy of the kit still holds the old key, so the next kit delivered from it puts the old key back.
+  There, rotate both keys from the hub with ``rotate-trust-keys`` and re-sync the kit.
 - **XNAT credentials do not rotate with it.** Their passwords live in the same kit, but changing them has its own
   caveat: Postgres applies ``XNAT_DATASOURCE_*`` only at the first initdb of the ``xnat-db`` volume, so a rotated value
   must also be applied to the live database. See ``make generate-xnat-credentials FORCE=1`` and the
@@ -388,19 +439,20 @@ Deploying and rolling back the hub
 and publishes the UI. Every deploy pins an immutable image tag.
 
 1. **Pause FL activity.** Replacing the FL server kills any training run in progress and leaves its model stuck at
-   ``TRAINING_STARTED``. Enable Deployment Mode (*Admin → Deployments*): queued jobs hold, and only a running job
+   ``RUNNING``. Enable Deployment Mode (*Admin → Deployments*): queued jobs hold, and only a running job
    needs to finish. Wait until ``GET /fl/quiesce`` reports ``deployment_mode: true`` and ``fl_quiesced: true``.
 
 2. **Deploy.** From a clean checkout of the branch you are deploying:
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS deploy-centralhub HUB=<hub>
+      make -C deploy/aws deploy-centralhub HUB=<hub>
 
    This deploys the build of the tip of ``origin/main`` (``HUB=prod``) or ``origin/develop`` (``HUB=stag``), tagged
    ``sha-<short7>``. It checks that every service has an image at that tag **before** changing anything, so a
-   missing image deploys nothing. With ``HUB=prod`` it asks you to confirm first. It finishes by building the UI from your working tree and publishing
-   it.
+   missing image deploys nothing (the check is skipped when the registry is the account's ECR pull-through cache).
+   With ``HUB=prod`` it asks you to confirm first. It finishes by building the UI from your working tree and
+   publishing it.
 
 3. **Resume.** Disable Deployment Mode.
 
@@ -412,19 +464,19 @@ then deploy its ``sha-`` tag.
 run for the services a merge touched, and the ``flip-api`` build waits for its tests, so right after a merge an image
 may be missing or still building. The message names the workflow: run it with ``gh workflow run`` as above, then
 deploy again. If the message reports a registry error rather than a missing image (an outage, or an authentication
-failure), do not trigger rebuilds. With the account's ECR pull-through cache as the registry, the check is skipped.
+failure), do not trigger rebuilds.
 
 Rolling back
 ============
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS rollback-centralhub HUB=<hub>
+   make -C deploy/aws rollback-centralhub HUB=<hub>
 
 This points each service back at its previous revision in seconds, with no rebuild, and retires the revision it
 rolled away from so a later Terraform apply cannot bring it back.
 
-- **The UI does not move.** Re-run ``make -C deploy/providers/AWS deploy-ui HUB=<hub>`` from the matching commit if
+- **The UI does not move.** Re-run ``make -C deploy/aws deploy-ui HUB=<hub>`` from the matching commit if
   it must.
 - **On a FLARE hub** it first resets the FL server's local state on EFS and re-syncs the kit, which takes a
   minute or two. If that step fails, nothing is rolled back. ``SKIP_FL_LOCAL_RESET=1`` skips it.
@@ -449,14 +501,14 @@ rolled away from so a later Terraform apply cannot bring it back.
 Upgrading across the payload-encryption change
 **********************************************
 
-Task payloads between the hub and its trusts are encrypted with AES-256-GCM. Releases before this change used
+Task payloads between the hub and its trusts are encrypted with AES-256-GCM. Releases before ``v0.7.0`` used
 AES-CBC, and the two formats are **not compatible**. A hub and every trust registered to it must upgrade together, in
 one maintenance window.
 
 *Who: FLIP admin (hub) and every trust operator*
 
-1. **Pause FL activity.** In the UI, enable Deployment Mode (*Admin → Deployments*). Wait until ``GET /fl/quiesce``
-   reports ``deployment_mode: true`` and ``fl_quiesced: true``.
+1. **Pause FL activity** as in step 1 of :ref:`deploy-central-hub-deploys`: enable Deployment Mode and wait until
+   ``GET /fl/quiesce`` reports ``deployment_mode: true`` and ``fl_quiesced: true``.
 2. **Redeploy the hub and every trust** in the same window: ``deploy-centralhub`` for the hub (see
    :ref:`deploy-central-hub-deploys`), and the upgrade command for each trust's platform (``upgrade-onprem-trust``,
    ``upgrade-trust-k8s``, or an EC2 node's ``make upgrade``; see :ref:`admin-upgrading-sites`). Do not use a
@@ -475,7 +527,7 @@ one maintenance window.
 
    ``AES_KEY_BASE64`` must be identical on the hub and on every trust, and decode to exactly 32 bytes. On staging and
    production, the hub's value is the one CI wrote into Secrets Manager, which may differ from your checked-out
-   ``.env.<hub>``. Recover the deployed value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` before you
+   ``.env.<hub>``. Recover the deployed value with ``deploy/aws/scripts/reconcile_ci_env.py`` before you
    create or refresh trust kits.
 
    A mismatched key fails closed: the trust reports every task as ``Invalid payload: failed authentication``, and
@@ -492,8 +544,8 @@ schema it does not expect.
 
 - **Development**: ``make restart`` recreates the ``flip-api`` container (``deploy-flip-api-1``), which migrates on
   boot.
-- **Staging and production**: a normal redeploy, ``make deploy-centralhub`` from
-  ``deploy/providers/AWS/``, migrates before the new task serves traffic.
+- **Staging and production**: a normal redeploy (:ref:`deploy-central-hub-deploys`) migrates before the new task
+  serves traffic.
 
 Migrations alter the existing tables in place, so your data is preserved. There is **no** drop-and-recreate step for
 the hub database in routine operation.
@@ -534,17 +586,82 @@ If SES is still in its sandbox, request production access from the SES console. 
 verified addresses.
 
 **If the verification link has expired**, delete the FLIP identity in the SES console (*Configuration → Identities*),
-then run ``make -C deploy/providers/AWS plan apply HUB=<hub>`` to create it again and send a new link.
+then run ``make -C deploy/aws plan apply HUB=<hub>`` to create it again and send a new link.
 
-**To check email works end to end**, register a new user in FLIP. The invitation email with the temporary password
-comes from Cognito, so this tests the invitation templates in a real mail client.
+Sending from your own domain
+============================
+
+Mail sent from an address on a domain you do not control (a webmail address, say) fails the receiving server's DMARC
+check and is often junked or dropped. So FLIP also creates an SES identity for the hub's own domain
+(``ALB_SUBDOMAIN``), and you move the sender onto it in steps. Until you do, nothing changes: FLIP sends from
+``SES_VERIFIED_EMAIL``, and access-request notifications go to that same address.
+
+1. **Publish the DNS records** in the zone that serves ``ALB_SUBDOMAIN``. The three DKIM tokens are the
+   ``SesDkimTokens`` Terraform output, available after the first apply:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 45 10 45
+
+      * - Name
+        - Type
+        - Value
+      * - ``<token>._domainkey.<ALB_SUBDOMAIN>`` (one per token)
+        - CNAME
+        - ``<token>.dkim.amazonses.com``
+      * - ``mail.<ALB_SUBDOMAIN>``
+        - MX
+        - ``10 feedback-smtp.<region>.amazonses.com``
+      * - ``mail.<ALB_SUBDOMAIN>``
+        - TXT
+        - ``v=spf1 include:amazonses.com ~all``
+      * - ``_dmarc.<ALB_SUBDOMAIN>``
+        - TXT
+        - ``v=DMARC1; p=quarantine``
+
+2. **Wait for the domain identity to show Verified** in the SES console. It usually does within minutes of the records
+   resolving. SES looks for the DKIM and MAIL FROM records for only 72 hours after the identity is created, then marks
+   both **Failed** and stops looking, so a DNS change that takes longer, through another team's zone say, needs one
+   more step: once the records resolve, open the domain identity in the SES console and choose **Retry DKIM
+   verification**, then **Retry configuring MAIL FROM domain**. Both keep the same tokens, so the published records
+   stay valid.
+3. **Set** ``SES_SENDER_EMAIL=no-reply@<ALB_SUBDOMAIN>`` in the hub env file and apply. FLIP's own emails now come from
+   that address. ``SES_VERIFIED_EMAIL`` stays the address access-request notifications are sent to, so keep it a
+   mailbox somebody reads.
+4. **Request SES production access** for the account, if it is still in the sandbox.
+5. **Set** ``COGNITO_EMAIL_VIA_SES=true`` and apply, so invitations and password-reset codes come from the same
+   address through SES.
+
+.. warning::
+
+   Keep the order. A sender address set before the domain is verified stops FLIP's own emails. Cognito switched to SES
+   while the account is in the sandbox delivers only to verified addresses, so users stop receiving invitations and
+   reset codes that Cognito's built-in sender delivers today.
+
+**To check email works end to end**, send each email once and open it in a real mail client. While the account is in
+the sandbox, verify each recipient address in the SES console first (*Configuration → Identities → Create identity →
+Email address*).
+
+- **Invitation:** register a new user in FLIP. This one comes from Cognito, so it checks Cognito's sender, not SES.
+- **Access request:** submit the *Request Access* form on the sign-in page. The notification goes to
+  ``SES_VERIFIED_EMAIL``.
+- **XNAT invite:** create a project with that new user in it, then stage and approve it at a trust. When the trust has
+  created the project in its XNAT, each project user without an XNAT account there gets an invite with a set-password
+  link.
+- **Added to a project:** approve a second project at the same trust with the same user. The trust sends this notice
+  only to users who have signed in to its XNAT before (opening the set-password link counts); anyone else gets the
+  invite again.
+
+In the mail client's view of the original message (*Show original* in Gmail), SPF, DKIM and DMARC should all show
+**PASS**, with DKIM signed for ``ALB_SUBDOMAIN``.
 
 .. note::
 
    SES carries only the emails FLIP itself sends: access-request notifications and XNAT credential emails.
-   **Cognito sends user invitations and password-reset codes itself**, not through SES. So a broken or sandboxed SES
-   identity does not stop invitations or password resets, and fixing SES does not fix them. Cognito's built-in sender
-   has its own delivery limits.
+   **Cognito sends user invitations and password-reset codes itself**, not through SES, unless
+   ``COGNITO_EMAIL_VIA_SES=true`` (above). So with the default, a broken or sandboxed SES identity does not stop
+   invitations or password resets, and fixing SES does not fix them. Cognito's built-in sender has its own delivery
+   limits.
 
 .. note::
 
@@ -570,7 +687,7 @@ who has lost their **own** authenticator cannot use it.
 
    .. code-block:: shell
 
-      cd deploy/providers/AWS
+      cd deploy/aws
       USER_POOL_ID=$(terraform output -raw CognitoUserPoolId)
 
 2. **Clear the administrator's TOTP setting.**
@@ -608,9 +725,9 @@ console (``http://localhost:8180/admin``).
 Migrating from a single-account deployment
 *************************************************
 
-Before FLIP#1479 the hub could also run self-contained, in one AWS account that built its own VPC, internet gateway,
-NAT, CloudFront and WAF, and a public FL load balancer. On the Landing Zone Accelerator the FLIP stack is the same, but
-the platform team owns the edge and the network, and the hub's workload account has no internet route.
+Up to release ``v0.13.2`` the hub could also run self-contained, in one AWS account that built its own VPC, internet
+gateway, NAT, CloudFront and WAF, and a public FL load balancer. On the Landing Zone Accelerator the FLIP stack is the
+same, but the platform team owns the edge and the network, and the hub's workload account has no internet route.
 
 .. figure:: ../assets/deploy/central-hub-self-contained-vs-lza.svg
    :align: center
@@ -627,10 +744,10 @@ the platform team owns the edge and the network, and the hub's workload account 
 There is no in-place migration. The Terraform no longer describes the single-account network, so a plan against an
 old state would destroy it. Move the hub instead:
 
-1. **Archive the old hub's files.** Move the old hub env file and every kit file for it out of the checkout; do not
-   rename them. The old staging names (``.env.stag``, ``trust/.env.<CODE>.stag``) are already the new ones, and make
-   tells you to rename the old production names, so either way the retired hub's AES key and URLs would reach the new
-   hub's files.
+1. **Archive the old hub's files.** Move the old hub env file and every kit file for it out of the checkout. Do not
+   rename them in place: the old staging names (``.env.stag``, ``trust/.env.<CODE>.stag``) are already the new ones,
+   and ``make`` prompts you to rename the old production names. Either way, the retired hub's AES key and URLs would
+   end up in the new hub's files.
 2. **Stand up the new hub** in an LZA workload account, with a fresh ``.env.prod`` or ``.env.stag``. Agree the
    network, the edge and the hub's public URL and domain with the platform team first: see
    :ref:`deploy-central-hub-aws-lza-account`.
@@ -643,4 +760,3 @@ old state would destroy it. Move the hub instead:
 5. **Destroy the old account's stack** once no trust points at it, from a checkout of a release that still has that mode
    (``v0.13.2`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
    the Cognito pool, the ``FLIP_API`` secret and the S3 buckets: delete them by hand, or close the account.
-

@@ -24,8 +24,7 @@
 #
 #   Hazard B — replacing fl-server-net-1 kills an in-flight training run (FLIP#770).
 #     A runner cannot ask the hub whether a run is in flight (GET /fl/quiesce is
-#     Cognito-gated, CloudFront strips the internal key, and the scheduler state
-#     is in a private subnet), so the gate asks the plan instead: if nothing on
+#     Cognito-gated and the scheduler state is in a private subnet), so the gate asks the plan instead: if nothing on
 #     the FL watch list changes, apply; otherwise hold for an operator. See
 #     scripts/check-fl-plan-impact.sh.
 #
@@ -166,7 +165,7 @@ jobs:
     #
     # Outside londonaicentre/FLIP, plan, apply and drift all skip unless the
     # repository variable TF_CI_ON_FORK is `true` (adopters:
-    # deploy/providers/AWS/ci/README.md). A fork has no aws-* environments, so each
+    # deploy/aws/ci/README.md). A fork has no aws-* environments, so each
     # run would fail and mail whoever pushed, or for drift whoever last edited it.
     #
     # `always()` is required because start-staging is skipped on main, and a
@@ -187,13 +186,14 @@ jobs:
       contents: read
       id-token: write # mint the OIDC token
       packages: read # probe GHCR for the release image tag
+      actions: read # read this commit's image build runs (the wait step)
 
     steps:
       - name: Checkout code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          # Full history: the image-wait decision below diffs this push against
-          # its predecessor, which a shallow clone cannot reach.
+          # Full history and tags: the release-tag check below resolves
+          # release_tag to a commit, which a shallow clone cannot.
           fetch-depth: 0
 
       # Validated here as well as in the resolver, because the two reject
@@ -243,64 +243,48 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # This workflow fires on `deploy/providers/AWS/**`; the image builds fire on
-      # service paths. An infrastructure-only merge therefore publishes no
-      # `sha-<short7>` image at all, and waiting the full budget for one that
-      # cannot exist burns GHCR_WAIT_SECONDS of idle runner on the commonest kind
-      # of apply. The resolver looks for three images (flip-api, fl-server,
-      # fl-api), but the two FL ones are published by one workflow and share a
-      # single budget, so the worst case is two waits, not three. So the budget is
-      # spent only when this push actually touched a path that builds one of them.
+      # Most applies build no `sha-<short7>` image, and waiting the full budget
+      # for one idles the runner, with FL quiesced on an fl_quiesced re-dispatch.
+      # The resolver waits per image group: the hub (flip-api) and FL (fl-server,
+      # fl-api and Flower's proxy: one workflow, so one budget). A group gets
+      # GHCR_WAIT_SECONDS only while its build workflow has a queued, running or
+      # green push run for this commit; otherwise it probes once (an API error
+      # waits in full). A push and a dispatch get the same answer (FLIP#1811,
+      # scripts/image-wait-budgets.sh).
       - name: Decide how long to wait for this commit's images
         id: wait
         env:
-          BEFORE: ${{ github.event.before }}
-          CONFIGURED_WAIT: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
-        run: |
-          set -euo pipefail
-          # flip-api        <- test_flip_api.yml -> docker_build_flip_api.yml
-          # flare-fl-server
-          # flower-superlink <- fl-docker-build-{nvflare,flower}.yml
-          paths=(
-            flip-api
-            fl-services
-            flip-utils
-            .github/workflows/test_flip_api.yml
-            .github/workflows/docker_build_flip_api.yml
-            .github/workflows/fl-docker-build-nvflare.yml
-            .github/workflows/fl-docker-build-flower.yml
-          )
-          seconds="${CONFIGURED_WAIT}"
-          reason="cannot tell what changed — waiting the full budget"
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${BEFORE}" =~ ^[0-9a-f]{40}$ ]] &&
-            git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            if [[ -z "$(git diff --name-only "${BEFORE}" "${GITHUB_SHA}" -- "${paths[@]}")" ]]; then
-              seconds=0
-              reason="no service path changed in ${BEFORE:0:7}..${GITHUB_SHA:0:7} — probing once instead of waiting"
-            else
-              reason="a service path changed — waiting up to ${CONFIGURED_WAIT}s for its image"
-            fi
-          fi
-          echo "GHCR wait: ${seconds}s (${reason})."
-          echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: deploy/aws/scripts/image-wait-budgets.sh >> "$GITHUB_OUTPUT"
 
-      # Hazard A. Waits for this commit's `sha-<short7>` images, which
-      # docker_build_*.yml publishes only after the service's tests pass — so an
-      # apply cannot deploy an image that never went green. When no image was
-      # published (an infrastructure-only merge) it reuses what the services are
-      # already running, never the mutable tag.
+      # Hazard A. Waits for this commit's `sha-<short7>` images while their build
+      # runs. docker_build_flip_api.yml publishes only after the service's tests
+      # pass — so an apply cannot deploy a flip-api that never went green. When
+      # no image was published (an infrastructure-only merge) it reuses what the
+      # services are already running, never the mutable tag; on develop it first
+      # catches up to a newer develop build if there is one.
       - name: Resolve the image tags to pin
         env:
           GIT_SHA: ${{ github.sha }}
           # Empty on every path but a release dispatch, which is exactly the
           # pre-FLIP#1283 sha behaviour — see scripts/resolve-image-tags.sh.
           RELEASE_TAG: ${{ inputs.release_tag }}
+          # Staging only (FLIP#1375): before reusing a running image, pin the newest
+          # build of an earlier develop commit, so a held apply's images still deploy
+          # after more merges land. Production moves by release_tag.
+          CATCH_UP: ${{ github.ref_name == 'develop' }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
           FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
-          GHCR_WAIT_SECONDS: ${{ steps.wait.outputs.seconds }}
-        run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
+          # The fallback for an empty group budget; the groups come from the step above.
+          GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
+          GHCR_WAIT_SECONDS_HUB: ${{ steps.wait.outputs.hub }}
+          GHCR_WAIT_SECONDS_FL: ${{ steps.wait.outputs.fl }}
+        run: deploy/aws/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
 
       # DOCKER_TAG / DOCKER_FL_TAG are deliberately absent from this env block:
       # they are inherited from the step above via $GITHUB_ENV. Setting them from
@@ -325,20 +309,22 @@ jobs:
           FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
           FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+          FLIP_DEMO_BUCKET_NAME: ${{ vars.FLIP_DEMO_BUCKET_NAME }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
-          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
           SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+          SES_SENDER_EMAIL: ${{ vars.SES_SENDER_EMAIL }}
+          COGNITO_EMAIL_VIA_SES: ${{ vars.COGNITO_EMAIL_VIA_SES }}
           ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
           NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
-          FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+          FL_EDGE_PORT: ${{ vars.FL_EDGE_PORT }}
           # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into
           # the env file as raw exports. The two web-edge values are optional on
@@ -351,13 +337,13 @@ jobs:
           NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
           LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
+          LZA_WEB_DEMO_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_DEMO_DISTRIBUTION_ARN }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
-          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
-          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          FL_API_KEY: ${{ secrets.FL_API_KEY }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
-        run: deploy/providers/AWS/scripts/compose-ci-env.sh
+        run: deploy/aws/scripts/compose-ci-env.sh
 
       - name: Write the EC2 keypair public key
         run: |
@@ -366,7 +352,7 @@ jobs:
             --name /flip/ci/host_aws_public_key \
             --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
             echo "::error::/flip/ci/host_aws_public_key is missing. It is declared in" \
-                 "deploy/providers/AWS/parameter_store.tf and created by the first" \
+                 "deploy/aws/parameter_store.tf and created by the first" \
                  "laptop apply of that root in this account."
             exit 1
           fi
@@ -379,7 +365,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Export the Terraform variables
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           # The compose step's HUB, so `make` reads the env file it wrote and maps
           # it onto TF_VAR_* exactly as a laptop plan would.
@@ -393,7 +379,7 @@ jobs:
         uses: op5dev/tf-via-pr@39ed2635c056ca408ed24cc5c2baf0ef4381a7a5 # v13.7.4
         with:
           command: plan
-          working-directory: deploy/providers/AWS
+          working-directory: deploy/aws
           arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
           validate: true
           format: true
@@ -402,7 +388,7 @@ jobs:
           preserve-plan: true
           # upload-plan is a different thing and MUST stay false: it publishes
           # the plan as a workflow artifact, and the plan file is a zip
-          # containing the full tfstate — AES_KEY_BASE64, INTERNAL_SERVICE_KEY
+          # containing the full tfstate — AES_KEY_BASE64, FL_API_KEY
           # and ADMIN_USER_PASSWORD in plaintext. This repository is public, so
           # that artifact would be a public download of production credentials.
           # An applied-plan audit trail is not worth that; the run log records
@@ -428,13 +414,13 @@ jobs:
         continue-on-error: true
         env:
           AWS_REGION: ${{ vars.AWS_REGION }}
-        run: deploy/providers/AWS/scripts/staging-power.sh status
+        run: deploy/aws/scripts/staging-power.sh status
 
       # Hazard B. Exit 1 holds the deploy with the resources named; exit 2 means
       # the plan could not be read, which is also a hold — never an apply.
       - name: Check the plan for FL impact
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.fl_quiesced) }}
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           # Empty on main and on any run where the step above could not answer,
           # and the script treats anything but the literal "true" as "the gate
@@ -458,7 +444,7 @@ jobs:
       - name: Emit the plan advisories (FL gate skipped)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.fl_quiesced }}
         continue-on-error: true
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           ADVISORY_ONLY: "true"
         run: |
@@ -481,16 +467,16 @@ jobs:
       # tf-via-pr moves `plan-file` onto its own working path, so hand it a copy
       # rather than the file it is about to overwrite.
       - name: Stage the reviewed plan
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         run: cp tfplan tfplan.gated
 
       - name: Terraform apply
         uses: op5dev/tf-via-pr@39ed2635c056ca408ed24cc5c2baf0ef4381a7a5 # v13.7.4
         with:
           command: apply
-          working-directory: deploy/providers/AWS
+          working-directory: deploy/aws
           arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
-          plan-file: deploy/providers/AWS/tfplan.gated
+          plan-file: deploy/aws/tfplan.gated
           # Belt and braces. Today tf-via-pr only uploads for `command: plan`, so
           # this step would not publish anything — but the state-in-plaintext
           # consequence is severe enough on a public repo that it should not
@@ -502,7 +488,7 @@ jobs:
       # the pool or client is replaced; this is the run that would replace them,
       # so it says so.
       - name: Check the UI's Cognito ids against Terraform
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           UI_POOL_ID: ${{ vars.AWS_COGNITO_USER_POOL_ID }}
           UI_CLIENT_ID: ${{ vars.AWS_COGNITO_APP_CLIENT_ID }}
@@ -517,6 +503,11 @@ jobs:
   ui:
     name: Publish flip-ui (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
     needs: apply
+    # Without a status function the implicit success() also requires apply's own
+    # dependencies, and start-staging is always skipped on main, so every
+    # production publish was skipped (v0.15.0). always() lifts that; the result
+    # check keeps a held or failed apply from publishing.
+    if: always() && needs.apply.result == 'success'
     uses: ./.github/workflows/publish_ui.yml
     # The ceiling for publish_ui.yml's jobs: its build job narrows to
     # contents: read, so only the publish job can mint a token.
@@ -526,6 +517,19 @@ jobs:
     with:
       environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
       release_tag: ${{ inputs.release_tag }}
+
+  # The public demo, from its own workflow so its role trusts nothing that can
+  # reach the UI bucket (FLIP#2012). Same gate as ui.
+  demo:
+    name: Publish the public demo (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    needs: apply
+    if: always() && needs.apply.result == 'success'
+    uses: ./.github/workflows/publish_demo.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
 
   # ---------------------------------------------------------------------------
   # The staging cycle after the apply (FLIP#1596): restore, check, hold, stop.

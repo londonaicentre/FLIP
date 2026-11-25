@@ -14,15 +14,27 @@ import uuid
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlmodel import Session, col
 
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Projects
 from flip_api.db.models.user_models import PermissionRef
-from flip_api.domain.schemas.status import ProjectStatus
-from flip_api.project_services.get_projects import get_projects_endpoint, get_projects_paginated_orm
-from flip_api.utils.paging_utils import get_filter_details, get_paging_details
+from flip_api.domain.schemas.status import ProjectStatus, ProjectType
+from flip_api.project_services.get_projects import get_projects_endpoint, get_projects_paginated_orm, router
+from flip_api.utils.paging_utils import FilterInfo, paging_params
 
-paging_details = get_paging_details()
+paging_details = paging_params()
+
+PROJECT_ID = uuid.uuid4()
+QUERY_ID = uuid.uuid4()
+
+
+def _rows(rows):
+    return MagicMock(all=MagicMock(return_value=rows))
 
 
 def test_get_projects_paginated_orm_no_results():
@@ -35,7 +47,7 @@ def test_get_projects_paginated_orm_no_results():
         session=session,
         user_id=uuid.uuid4(),  # Give random user which won't have access to any projects
         paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert project_response.data == []
@@ -90,7 +102,7 @@ def test_get_projects_paginated_orm_some_results(user_id):
         session=session,
         user_id=user_id,
         paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert len(project_response.data) == 2
@@ -177,7 +189,7 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
         session=session,
         user_id=user_id,
         paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert len(response.data) == 1
@@ -199,13 +211,11 @@ def test_get_projects_endpoint_researcher_filters_by_user_id(
 ):
     """A user without CAN_MANAGE_PROJECTS (e.g. a researcher) must have the per-user filter applied."""
     user_id = uuid.uuid4()
-    request = MagicMock()
-    request.query_params = {}
     session = MagicMock(spec=Session)
     mock_has_permissions.return_value = False
     mock_get_projects_paginated_orm.return_value = MagicMock(data=[], total_rows=0)
 
-    get_projects_endpoint(request=request, session=session, user_id=user_id)
+    get_projects_endpoint(paging_details=paging_details, session=session, user_id=user_id)
 
     mock_has_permissions.assert_called_once_with(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], session)
     _, kwargs = mock_get_projects_paginated_orm.call_args
@@ -220,13 +230,11 @@ def test_get_projects_endpoint_admin_bypasses_user_filter(
 ):
     """A user with CAN_MANAGE_PROJECTS (e.g. an admin) lists every project — user_id=None is passed through."""
     user_id = uuid.uuid4()
-    request = MagicMock()
-    request.query_params = {}
     session = MagicMock(spec=Session)
     mock_has_permissions.return_value = True
     mock_get_projects_paginated_orm.return_value = MagicMock(data=[], total_rows=0)
 
-    get_projects_endpoint(request=request, session=session, user_id=user_id)
+    get_projects_endpoint(paging_details=paging_details, session=session, user_id=user_id)
 
     _, kwargs = mock_get_projects_paginated_orm.call_args
     assert kwargs["user_id"] is None
@@ -242,157 +250,66 @@ def test_get_projects_endpoint_500_when_paginated_orm_raises(
     HTTP 500 — re-raising the raw SQLAlchemyError would leak DB internals to the
     response body.
     """
-    import pytest
     from fastapi import HTTPException
 
-    request = MagicMock()
-    request.query_params = {}
     session = MagicMock(spec=Session)
     mock_has_permissions.return_value = True
     mock_get_projects_paginated_orm.side_effect = RuntimeError("db connection dropped")
 
     with pytest.raises(HTTPException) as exc_info:
-        get_projects_endpoint(request=request, session=session, user_id=uuid.uuid4())
+        get_projects_endpoint(paging_details=paging_details, session=session, user_id=uuid.uuid4())
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Error occurred while fetching projects."
 
 
-def test_get_projects_paginated_orm_reads_total_cohort_from_query_stats(user_id):
-    """A well-formed QueryStats.stats row populates total_cohort on the response
-    — exercises the happy-path branch alongside the malformed-JSON guard.
-    """
+@pytest.mark.parametrize(
+    ("stats_rows", "expected"),
+    [
+        # Happy path: a well-formed QueryStats.stats row populates total_cohort.
+        pytest.param([(QUERY_ID, '{"TotalCount": 42}')], 42, id="well-formed"),
+        # Malformed JSON, an empty stats string and a None query_id (skipped by the guard) must not abort
+        # the load — log + continue, the project still surfaces with totalCohort=0.
+        pytest.param(
+            [(QUERY_ID, "not-a-json-blob"), (QUERY_ID, ""), (None, '{"record_count": 99}')],
+            0,
+            id="malformed-skipped",
+        ),
+    ],
+)
+def test_get_projects_paginated_orm_total_cohort_from_query_stats(user_id, stats_rows, expected):
+    """QueryStats.stats feeds total_cohort; unparsable rows are skipped rather than failing the list."""
     session = MagicMock(spec=Session)
-
-    project_id = uuid.uuid4()
-    query_id = uuid.uuid4()
     project = Projects(
-        id=project_id,
+        id=PROJECT_ID,
         name="P",
         description="d",
         owner_id=user_id,
         status=ProjectStatus.APPROVED,
         creation_timestamp=datetime.utcnow(),
     )
-
-    projects_call = MagicMock(all=MagicMock(return_value=[(project, "Owner")]))
-    count_call = MagicMock(one_or_none=MagicMock(return_value=1))
-    trusts_call = MagicMock(all=MagicMock(return_value=[]))
-    queries_call = MagicMock(
-        all=MagicMock(
-            return_value=[
-                (
-                    query_id,
-                    project_id,
-                    "Q",
-                    "SELECT 1",
-                    datetime.utcnow(),
-                    None,
-                    [],
-                )
-            ]
-        )
-    )
-    pair_rows_call = MagicMock(all=MagicMock(return_value=[]))
-    pending_rows_call = MagicMock(all=MagicMock(return_value=[]))
-    stats_call = MagicMock(all=MagicMock(return_value=[(query_id, '{"TotalCount": 42}')]))
-    stage_audit_call = MagicMock(all=MagicMock(return_value=[]))
-    user_counts_call = MagicMock(all=MagicMock(return_value=[]))
     session.exec.side_effect = [
-        projects_call,
-        count_call,
-        trusts_call,
-        queries_call,
-        pair_rows_call,
-        pending_rows_call,
-        stats_call,
-        stage_audit_call,
-        user_counts_call,
+        _rows([(project, "Owner")]),
+        MagicMock(one_or_none=MagicMock(return_value=1)),  # count
+        _rows([]),  # trusts
+        _rows([(QUERY_ID, PROJECT_ID, "Q", "SELECT 1", datetime.utcnow(), None, [])]),  # queries
+        _rows([]),  # pair rows
+        _rows([]),  # pending rows
+        _rows(stats_rows),
+        _rows([]),  # stage audit
+        _rows([]),  # user counts
     ]
 
     response = get_projects_paginated_orm(
         session=session,
         user_id=user_id,
         paging_details=paging_details,
-        filter_details=get_filter_details(),
-    )
-
-    assert response.data[0].query is not None
-    assert response.data[0].query.total_cohort == 42
-
-
-def test_get_projects_paginated_orm_skips_malformed_query_stats_json(user_id):
-    """A QueryStats.stats row with invalid JSON must not abort the whole load —
-    log + continue, the project still surfaces with totalCohort=0.
-    """
-    session = MagicMock(spec=Session)
-
-    project_id = uuid.uuid4()
-    query_id = uuid.uuid4()
-    project = Projects(
-        id=project_id,
-        name="P",
-        description="d",
-        owner_id=user_id,
-        status=ProjectStatus.APPROVED,
-        creation_timestamp=datetime.utcnow(),
-    )
-
-    projects_call = MagicMock(all=MagicMock(return_value=[(project, "Owner")]))
-    count_call = MagicMock(one_or_none=MagicMock(return_value=1))
-    trusts_call = MagicMock(all=MagicMock(return_value=[]))
-    queries_call = MagicMock(
-        all=MagicMock(
-            return_value=[
-                (
-                    query_id,
-                    project_id,
-                    "Q",
-                    "SELECT 1",
-                    datetime.utcnow(),
-                    None,
-                    [],
-                )
-            ]
-        )
-    )
-    pair_rows_call = MagicMock(all=MagicMock(return_value=[]))
-    pending_rows_call = MagicMock(all=MagicMock(return_value=[]))
-    # Malformed JSON + a row with empty stats string + a row with a valid payload.
-    stats_call = MagicMock(
-        all=MagicMock(
-            return_value=[
-                (query_id, "not-a-json-blob"),
-                (query_id, ""),
-                (None, '{"record_count": 99}'),  # None query_id → skipped by the guard
-            ]
-        )
-    )
-    stage_audit_call = MagicMock(all=MagicMock(return_value=[]))
-    user_counts_call = MagicMock(all=MagicMock(return_value=[]))
-    session.exec.side_effect = [
-        projects_call,
-        count_call,
-        trusts_call,
-        queries_call,
-        pair_rows_call,
-        pending_rows_call,
-        stats_call,
-        stage_audit_call,
-        user_counts_call,
-    ]
-
-    response = get_projects_paginated_orm(
-        session=session,
-        user_id=user_id,
-        paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert len(response.data) == 1
-    # The malformed payloads were tolerated; total_cohort falls back to 0.
     assert response.data[0].query is not None
-    assert response.data[0].query.total_cohort == 0
+    assert response.data[0].query.total_cohort == expected
 
 
 def test_get_projects_paginated_orm_applies_search_and_owner_filters(user_id):
@@ -407,8 +324,8 @@ def test_get_projects_paginated_orm_applies_search_and_owner_filters(user_id):
     session.exec.return_value.all.return_value = []
     session.exec.return_value.one_or_none.return_value = None
 
-    search_paging = get_paging_details({"search": "cancer"})
-    owner_filter = get_filter_details({"owner": str(user_id)})
+    search_paging = paging_params(search="cancer")
+    owner_filter = FilterInfo(owner=user_id)
 
     get_projects_paginated_orm(
         session=session,
@@ -476,7 +393,7 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
         session=session,
         user_id=user_id,
         paging_details=paging_details,
-        filter_details=get_filter_details(),
+        filter_details=FilterInfo(),
     )
 
     assert len(response.data) == 1
@@ -498,12 +415,11 @@ def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
 
     def conditions_for(project_type: str | None) -> list:
         session.exec.reset_mock()
-        params: dict[str, str | uuid.UUID] = {"projectType": project_type} if project_type else {}
         get_projects_paginated_orm(
             session=session,
             user_id=user_id,
             paging_details=paging_details,
-            filter_details=get_filter_details(params),
+            filter_details=FilterInfo(project_type=ProjectType(project_type) if project_type else None),
         )
         where = session.exec.call_args_list[0].args[0].whereclause
         return list(getattr(where, "clauses", [where]))
@@ -517,3 +433,42 @@ def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
     # No projectType filter: neither polarity is constrained.
     assert not selects_on_has_imaging(None, True)
     assert not selects_on_has_imaging(None, False)
+
+
+@pytest.fixture
+def projects_client():
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[verify_token] = uuid.uuid4
+    app.dependency_overrides[get_session] = lambda: MagicMock(spec=Session)
+    return TestClient(app)
+
+
+@patch("flip_api.project_services.get_projects.get_projects_paginated_orm")
+@patch("flip_api.project_services.get_projects.has_permissions", return_value=False)
+def test_get_projects_route_reads_the_query_params_the_ui_sends(
+    mock_has_permissions: MagicMock, mock_get_projects_paginated_orm: MagicMock, projects_client: TestClient
+):
+    """The UI's `owner` and `projectType` reach the filter; a misspelt alias would drop it silently."""
+    owner = uuid.uuid4()
+    mock_get_projects_paginated_orm.return_value = MagicMock(data=[], total_rows=0)
+
+    response = projects_client.get(
+        "/projects", params={"owner": str(owner), "projectType": "omop_only", "pageSize": 5, "search": "ct"}
+    )
+
+    assert response.status_code == 200
+    _, kwargs = mock_get_projects_paginated_orm.call_args
+    assert kwargs["filter_details"] == FilterInfo(owner=owner, project_type=ProjectType.OMOP_ONLY)
+    assert kwargs["paging_details"].page_size == 5
+    assert kwargs["paging_details"].search_str == "ct"
+
+
+@pytest.mark.parametrize("params", [{"projectType": "bogus"}, {"owner": "not-a-uuid"}, {"pageSize": 0}])
+@patch("flip_api.project_services.get_projects.get_projects_paginated_orm")
+def test_get_projects_route_refuses_a_malformed_filter(
+    mock_get_projects_paginated_orm: MagicMock, params: dict, projects_client: TestClient
+):
+    """A bad filter is a 422, never a silent fall-back to the unfiltered list."""
+    assert projects_client.get("/projects", params=params).status_code == 422
+    mock_get_projects_paginated_orm.assert_not_called()

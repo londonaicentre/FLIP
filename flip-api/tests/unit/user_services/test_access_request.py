@@ -29,6 +29,7 @@ from flip_api.user_services.access_request import (
     request_access,
     update_access_request_status,
 )
+from flip_api.utils.paging_utils import paging_params
 
 
 @pytest.fixture
@@ -163,22 +164,20 @@ def test_api_endpoint_returns_204(mocked_settings):
 
 
 @pytest.fixture
-def mock_request():
-    """A minimal request stand-in exposing empty pagination query params."""
-    request = MagicMock()
-    request.query_params = {}
-    return request
+def paging():
+    """The default first page."""
+    return paging_params()
 
 
-def test_list_access_requests_requires_permission(mock_request, mock_session):
+def test_list_access_requests_requires_permission(paging, mock_session):
     """Listing is gated on CAN_MANAGE_USERS."""
     with patch("flip_api.user_services.access_request.has_permissions", return_value=False):
         with pytest.raises(HTTPException) as exc_info:
-            list_access_requests(mock_request, None, mock_session, uuid4())
+            list_access_requests(paging, None, mock_session, uuid4())
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
 
-def test_list_access_requests_returns_paginated(mock_request, mock_session):
+def test_list_access_requests_returns_paginated(paging, mock_session):
     """A permitted caller gets the persisted requests wrapped in paginated data."""
     access_request = AccessRequest(email="a@b.com", full_name="A B", reason_for_access="please")
     count_result = MagicMock()
@@ -188,7 +187,7 @@ def test_list_access_requests_returns_paginated(mock_request, mock_session):
     mock_session.exec.side_effect = [count_result, data_result]
 
     with patch("flip_api.user_services.access_request.has_permissions", return_value=True):
-        result = list_access_requests(mock_request, None, mock_session, uuid4())
+        result = list_access_requests(paging, None, mock_session, uuid4())
 
     assert result.total_records == 1
     assert result.page == 1
@@ -197,25 +196,7 @@ def test_list_access_requests_returns_paginated(mock_request, mock_session):
     assert result.data[0].status == AccessRequestStatus.PENDING
 
 
-def test_list_access_requests_reraises_http_exception(mock_request, mock_session):
-    """An HTTPException raised while handling the list (e.g. bad paging params) propagates unchanged.
-
-    Guards the ``except HTTPException: raise`` re-raise: without it the generic
-    ``except Exception`` below would swallow a deliberate 4xx into an opaque 500.
-    """
-    with (
-        patch("flip_api.user_services.access_request.has_permissions", return_value=True),
-        patch(
-            "flip_api.user_services.access_request.get_paging_details",
-            side_effect=HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad paging"),
-        ),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            list_access_requests(mock_request, None, mock_session, uuid4())
-        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-
-
-def test_list_access_requests_wraps_unexpected_error_as_500(mock_request, mock_session):
+def test_list_access_requests_wraps_unexpected_error_as_500(paging, mock_session):
     """A non-HTTP error during listing is logged and surfaced as a 500."""
     mock_session.exec.side_effect = Exception("db down")
     with (
@@ -223,7 +204,7 @@ def test_list_access_requests_wraps_unexpected_error_as_500(mock_request, mock_s
         patch("flip_api.user_services.access_request.logger"),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            list_access_requests(mock_request, None, mock_session, uuid4())
+            list_access_requests(paging, None, mock_session, uuid4())
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 

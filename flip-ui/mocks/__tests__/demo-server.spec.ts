@@ -85,6 +85,9 @@ describe("makeDemoServer route coverage", () => {
         // the signed-in identity — MainLayout resolves permissions from it.
         const resPermissions = await client.get("/users/demo-researcher/permissions");
         expect(resPermissions.status).toBe(200);
+        // Neither an admin nor a Trust Admin, so the trust card's kit section stays hidden and its
+        // routes, which this server does not serve, are never called (FLIP#1852).
+        expect(resPermissions.data).toEqual({ permissions: [] });
     });
 
     it("lists every registered project, in registry order", async () => {
@@ -92,6 +95,20 @@ describe("makeDemoServer route coverage", () => {
         expect(res.status).toBe(200);
         expect(res.data.totalRecords).toBe(DEMO_PROJECTS.length);
         expect(res.data.data.map((p: { id: string }) => p.id)).toEqual(DEMO_PROJECTS.map(d => projectOf(d).id));
+    });
+
+    it("filters the Projects list by type and search", async () => {
+        const all = (await client.get("/projects")).data.data as { id: string; name: string; has_imaging?: boolean }[];
+        const omop = (await client.get("/projects?projectType=omop_only")).data;
+        const imaging = (await client.get("/projects?projectType=imaging")).data;
+        expect(omop.data.length).toBeGreaterThan(0);
+        expect(omop.data.every((p: { has_imaging?: boolean }) => p.has_imaging === false)).toBe(true);
+        expect(imaging.totalRecords + omop.totalRecords).toBe(all.length);
+
+        const name = all[0].name;
+        const searched = (await client.get(`/projects?search=${encodeURIComponent(name.toUpperCase())}`)).data;
+        expect(searched.data.map((p: { name: string }) => p.name)).toContain(name);
+        expect(searched.totalRecords).toBeLessThan(all.length);
     });
 
     it("answers /model/job-types", async () => {
@@ -158,6 +175,13 @@ describe("makeDemoServer route coverage", () => {
         }
     });
 
+    it("carries each model's creation time, newest first", async () => {
+        const { data } = (await client.get("/models")).data as { data: { creationTimestamp: string }[] };
+        const created = data.map(model => model.creationTimestamp);
+        expect(created.every(Boolean)).toBe(true);
+        expect(created).toEqual([...created].sort().reverse());
+    });
+
     it("filters the estate-wide Models list by project and sums statusCounts to totalRecords", async () => {
         const twoModels = DEMO_PROJECTS.find(d => modelIdsOf(d).length === 2);
         expect(twoModels, "a project with two models").toBeDefined();
@@ -166,6 +190,26 @@ describe("makeDemoServer route coverage", () => {
         expect(res.data.totalRecords).toBe(2);
         const counted = Object.values(res.data.statusCounts as Record<string, number>).reduce((a, b) => a + b, 0);
         expect(counted).toBe(res.data.totalRecords);
+    });
+
+    it("filters the Models list by status and search, keeping the tile counts status-unfiltered", async () => {
+        const all = await client.get("/models");
+        const picked = Object.keys(all.data.statusCounts as Record<string, number>)[0];
+        const res = await client.get(`/models?status=${picked},ERROR`);
+        expect(res.data.data.length).toBeGreaterThan(0);
+        expect(res.data.data.every((m: { status: string }) => m.status === picked)).toBe(true);
+        expect(res.data.totalRecords).toBe(all.data.statusCounts[picked]);
+        expect(res.data.statusCounts).toEqual(all.data.statusCounts);
+
+        const absent = ["ERROR", "RUNNING", "PENDING"].find(s => !(s in all.data.statusCounts));
+        const none = await client.get(`/models?status=${absent}`);
+        expect(none.data.data).toEqual([]);
+        expect(none.data.totalRecords).toBe(0);
+
+        const name = (all.data.data[0] as { name: string }).name;
+        const searched = await client.get(`/models?search=${encodeURIComponent(name.toUpperCase())}`);
+        expect(searched.data.data.map((m: { name: string }) => m.name)).toContain(name);
+        expect(searched.data.totalRecords).toBeLessThan(all.data.totalRecords);
     });
 
     it("answers the FL network status routes behind the Connection Status nets card", async () => {

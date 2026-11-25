@@ -12,7 +12,8 @@
  */
 
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
-import { afterEach, describe, expect, it } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
 import { deriveTrust, SERVICE_REGISTRY } from "@/utils/connection-health";
@@ -126,10 +127,20 @@ const mountDrawer = async (trust: ITrustResponse | null, show = true, hubVersion
     return wrapper;
 };
 
+// The card's Trust kit section reads the auth store; with nobody signed in it renders nothing.
+beforeEach(() => setActivePinia(createPinia()));
+// Pin the clock to the fixtures' `now`, so heartbeat ages are exact however long the run
+// takes. Only Date is faked, so promise flushing and timers stay real.
+beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+});
+
 afterEach(() => {
     wrapper?.unmount();
     wrapper = null;
     document.body.replaceChildren();
+    vi.useRealTimers();
 });
 
 describe("TrustDetailDrawer", () => {

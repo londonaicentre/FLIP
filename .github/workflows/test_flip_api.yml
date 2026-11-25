@@ -26,11 +26,20 @@ on:
       # deploy/instance.mk, so `make unit_test` cannot even start without it.
       - ".env.development.example"
       - "deploy/instance.mk"
+      # test_trust_kit.py installs a kit it built with the trust host's installer (FLIP#1852).
+      - "trust/deploy/scripts/*.py"
+      - "trust/.env.example"
   pull_request:
     branches: [main, develop]
 
 permissions:
   contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   # Gate for pull requests into develop: run the suite only when the PR touches this
@@ -49,6 +58,8 @@ jobs:
         .github/workflows/test_flip_api.yml
         .env.development.example
         deploy/instance.mk
+        trust/deploy/scripts/*.py
+        trust/.env.example
 
   flip-api:
     needs: changes
@@ -71,11 +82,11 @@ jobs:
         with:
           # Stated literally because flip-api, unlike the trust services, has no
           # .python-version file to point `python-version-file` at; keep this in
-          # step with requires-python and the Dockerfile base (both 3.12). Do not
+          # step with requires-python and the Dockerfile base (both 3.13). Do not
           # restore the previous `github.event.inputs.python-version || '3.11'`
           # form — this workflow has no workflow_dispatch trigger, so that input
           # was always empty and the job silently ran 3.11.
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv (if used for dependency management)
         run: pip install uv

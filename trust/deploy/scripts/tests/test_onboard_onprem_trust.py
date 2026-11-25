@@ -18,8 +18,8 @@ Regression cover for the on-prem onboarding crash: a trust data dir
 (OMOP_DATA_DIR / ORTHANC_STORAGE_DIR) owned by a container after a previous
 `up` — the omop-db postgres image leaves PGDATA mode 0700 owned by its own
 uid — made check_data_dir raise an uncaught PermissionError instead of
-rendering a clean checklist row. The dir must now be reported as a
-non-blocking WARN.
+rendering a clean checklist row. The dir is in use, so it passes; only a
+root-owned one (a mount source Docker created) warns.
 
 A real 0700 dir can't be exercised under CI's root user (root bypasses mode
 bits), so the unreadable case monkeypatches Path.iterdir to raise
@@ -92,9 +92,9 @@ def _check(path: Path):
     )
 
 
-def test_1_unreadable_dir_warns_not_crashes() -> None:
-    """Container-owned dir we can't list -> non-blocking WARN, never raises/FAILs."""
-    print("▶ unreadable (container-owned) data dir -> WARN, no crash")
+def test_1_unreadable_dir_passes_not_crashes() -> None:
+    """Container-owned dir we can't list -> PASS (a running site's normal state), never raises/FAILs."""
+    print("▶ unreadable (container-owned) data dir -> PASS, no crash; root-owned -> WARN")
     with tempfile.TemporaryDirectory() as td:
         d = Path(td) / "db_data"
         d.mkdir()
@@ -108,8 +108,48 @@ def test_1_unreadable_dir_warns_not_crashes() -> None:
                 raised = True
                 print(f"    raised: {type(exc).__name__}: {exc}")
         _assert(not raised, "does not raise on PermissionError (the regression)")
-        _assert(result is not None and result.status == mod.Status.WARN, "status is WARN (non-blocking)")
-        _assert(result is not None and result.status != mod.Status.FAIL, "not a blocking FAIL")
+        _assert(result is not None and result.status == mod.Status.PASS, "status is PASS", str(result))
+        real = d.stat()
+        as_root = os.stat_result((real.st_mode, real.st_ino, real.st_dev, real.st_nlink, 0, *real[5:]))
+        with (
+            mock.patch.object(mod.Path, "iterdir", side_effect=denied),
+            mock.patch.object(mod.Path, "stat", return_value=as_root),
+        ):
+            rooted = _check(d)
+        _assert(rooted.status == mod.Status.WARN and "root" in rooted.detail, "root-owned: WARN", str(rooted))
+
+        def as_uid(uid: int):
+            return os.stat_result((real.st_mode, real.st_ino, real.st_dev, real.st_nlink, uid, *real[5:]))
+
+        def orthanc(owner: int, **kit: str):
+            kit_vars = {"ORTHANC_STORAGE_DIR": str(d), **kit}
+            with (
+                mock.patch.object(mod.Path, "iterdir", side_effect=denied),
+                mock.patch.object(mod.Path, "stat", return_value=as_uid(owner)),
+            ):
+                return mod.check_data_dir(
+                    "Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, True, SCRIPTS_DIR.parents[2], image_uid=999
+                )
+
+        # The owner must be the uid the container runs as: FLIP_UID, else the image's (FLIP#1731).
+        _assert(orthanc(999).status == mod.Status.PASS, "Orthanc dir owned by the image uid: PASS")
+        _assert(orthanc(4242, FLIP_UID="4242").status == mod.Status.PASS, "owned by FLIP_UID: PASS")
+        stale = orthanc(999, FLIP_UID="4242")
+        _assert(stale.status == mod.Status.WARN and "uid 4242" in stale.detail, "left at 999: WARN", str(stale))
+        _assert(orthanc(1234).status == mod.Status.WARN, "any other owner: WARN")
+        with (
+            mock.patch.object(mod.Path, "iterdir", side_effect=denied),
+            mock.patch.object(mod.Path, "is_dir", return_value=True),
+            mock.patch.object(mod.Path, "stat", side_effect=PermissionError(13, "Permission denied")),
+        ):
+            unknown = _check(d)
+        _assert(unknown.status == mod.Status.WARN, "owner unreadable: WARN, nothing is known", str(unknown))
+        with (
+            mock.patch.object(mod.Path, "iterdir", side_effect=denied),
+            mock.patch.object(mod.Path, "stat", return_value=as_uid(70)),
+        ):
+            postgres = _check(d)
+        _assert(postgres.status == mod.Status.PASS, "OMOP dir without FLIP_UID: Postgres's uid is not fixed, PASS")
 
 
 def test_2_populated_dir_passes() -> None:
@@ -697,11 +737,15 @@ def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
             ok = mod.check_fl_endpoint_reachable(flare, True)
         _assert(ok.status == mod.Status.PASS, "connects -> PASS", str(ok))
         _assert(probe.call_args.args == ("fl.hub.example", 8002), "probed the dialled host:port", str(probe.call_args))
-        with mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"):
+        with (
+            mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"),
+            mock.patch.object(mod, "lookup_egress_ip", return_value="203.0.113.7"),
+        ):
             bad = mod.check_fl_endpoint_reachable(flare, True)
         _assert(bad.status == mod.Status.FAIL, "cannot connect -> FAIL", str(bad))
         _assert("fl.hub.example:8002" in bad.detail, "FAIL names host:port", bad.detail)
         _assert(any("TLS-inspection" in h for h in bad.hints), "hint covers the TLS-inspection proxy case")
+        _assert("leaves from: 203.0.113.7." in bad.hints[-1], "timeout hint names this host's egress address")
         pending = mod.check_fl_endpoint_reachable({"FL_BACKEND": "flower"}, True)
         _assert(pending.status == mod.Status.PENDING, "no endpoint yet -> PENDING", str(pending))
 
@@ -1020,11 +1064,258 @@ def test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist() -> None:
         _assert(pending.status == mod.Status.PENDING, "PENDING without the kit", str(pending))
 
 
+def test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list() -> None:
+    print("\n[50] FL endpoint: a timeout asks for the site's egress address; the lookup never fails the row")
+    kit = {"FL_BACKEND": "flower", "NLB_SUBDOMAIN": "fl.hub.example", "FL_EDGE_PORT": "8002"}
+    timed_out = mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)")
+
+    with timed_out, mock.patch.object(mod, "lookup_egress_ip", return_value=None):
+        unknown = mod.check_fl_endpoint_reachable(kit, True)
+    _assert(unknown.status == mod.Status.FAIL, "lookup failed -> still the same FAIL", str(unknown))
+    _assert("your network team knows it" in unknown.hints[-1], "hint survives without the address", unknown.hints[-1])
+
+    for failure in (None, "connection refused"):
+        with (
+            mock.patch.object(mod, "probe_tcp", return_value=failure),
+            mock.patch.object(mod, "lookup_egress_ip") as lookup,
+        ):
+            row = mod.check_fl_endpoint_reachable(kit, True)
+        _assert(not lookup.called, f"no lookup when the probe says {failure or 'connected'}")
+        _assert(not any("leaves from" in h for h in row.hints), f"no address hint on {failure or 'PASS'}")
+
+    def answer(body: bytes) -> mock.MagicMock:
+        opened = mock.MagicMock()
+        opened.__enter__.return_value.read.return_value = body
+        return opened
+
+    with mock.patch.object(mod.urllib.request, "urlopen", return_value=answer(b"203.0.113.7\n")) as urlopen:
+        _assert(mod.lookup_egress_ip() == "203.0.113.7", "lookup returns the address")
+    _assert(urlopen.call_args.kwargs["timeout"] == mod.PROBE_TIMEOUT_SECONDS, "lookup is bounded by the probe timeout")
+    with mock.patch.object(mod.urllib.request, "urlopen", return_value=answer(b"<html>Blocked by proxy</html>")):
+        _assert(mod.lookup_egress_ip() is None, "an intercepted answer is not printed as an address")
+    for error in (urllib.error.URLError("blocked"), TimeoutError(), RuntimeError("anything")):
+        with mock.patch.object(mod.urllib.request, "urlopen", side_effect=error):
+            _assert(mod.lookup_egress_ip() is None, f"{type(error).__name__} -> None, not a crash")
+
+
+def test_51_log_level_debug_fails_a_deployed_kit() -> None:
+    """FLIP-SR-050: a .prod/.stag kit left at TRUST_LOG_LEVEL=DEBUG is a blocking FAIL."""
+    print("\n[51] TRUST_LOG_LEVEL=DEBUG on a deployed kit -> FAIL")
+    for env in ("prod", "stag"):
+        result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, f"trust/.env.SITE.{env}")
+        _assert(result.status == mod.Status.FAIL, f".{env} at DEBUG is a FAIL", result.detail)
+        _assert(any("INFO" in h for h in result.hints), "hint names INFO", result.detail)
+        _assert(any("rotate" in h for h in result.hints), "hint says to rotate the keys")
+
+
+def test_52_log_level_debug_warns_a_development_kit() -> None:
+    """DEBUG on a development kit is a non-blocking WARN (mock data, throwaway creds)."""
+    print("\n[52] TRUST_LOG_LEVEL=DEBUG on a development kit -> WARN")
+    result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, "trust/.env.SITE.development")
+    _assert(result.status == mod.Status.WARN, "development at DEBUG is a WARN, not a blocker", result.detail)
+
+
+def test_53_log_level_info_passes_and_unset_warns() -> None:
+    """INFO (any non-DEBUG level) passes; an unset level is a WARN naming the variable."""
+    print("\n[53] TRUST_LOG_LEVEL=INFO -> PASS; unset -> WARN")
+    ok = mod.check_log_level({"TRUST_LOG_LEVEL": "info"}, True, "trust/.env.SITE.prod")
+    _assert(ok.status == mod.Status.PASS, "INFO passes (case-insensitive)", ok.detail)
+    unset = mod.check_log_level({}, True, "trust/.env.SITE.prod")
+    _assert(unset.status == mod.Status.WARN, "unset level is a WARN", unset.detail)
+
+
+def test_60_log_level_passes_only_a_level_quieter_than_debug() -> None:
+    """NOTSET and a numeric level log everything, as DEBUG does, so only the named quiet levels pass."""
+    print("\n[60] TRUST_LOG_LEVEL: only INFO / WARNING / ERROR / CRITICAL pass")
+    for level in ("INFO", "warning", "ERROR", "CRITICAL"):
+        result = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
+        _assert(result.status == mod.Status.PASS, f"{level} passes", result.detail)
+    for level in ("NOTSET", "0", "5", "TRACE"):
+        deployed = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
+        _assert(deployed.status == mod.Status.FAIL, f"{level} on a deployed kit is a FAIL", deployed.detail)
+        dev = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.development")
+        _assert(dev.status == mod.Status.WARN, f"{level} on a development kit is a WARN", dev.detail)
+
+
+def test_61_an_empty_trust_local_password_is_not_a_rotated_one() -> None:
+    """A password set to nothing was not rotated; a key the kit does not carry at all is left to the other checks."""
+    print("\n[61] Trust-local passwords: an empty value is unrotated")
+    repo_root = SCRIPTS_DIR.parents[2]
+    rotated = {key: "rotated-secret" for key in mod.TRUST_LOCAL_PASSWORD_KEYS}  # pragma: allowlist secret
+    emptied = {**rotated, "GRAFANA_ADMIN_PASSWORD": ""}
+    check = mod.check_unrotated_passwords(emptied, True, repo_root, "SITE", "trust/.env.SITE.prod")
+    _assert(check.status == mod.Status.FAIL, "an empty password fails a deployed kit", str(check))
+    _assert(any("GRAFANA_ADMIN_PASSWORD" in hint for hint in check.hints), "the hint names the empty key", str(check))
+    absent = {key: value for key, value in rotated.items() if key != "GRAFANA_ADMIN_PASSWORD"}
+    check = mod.check_unrotated_passwords(absent, True, repo_root, "SITE", "trust/.env.SITE.prod")
+    _assert(check.status == mod.Status.PASS, "a key the kit does not carry is not counted", str(check))
+
+
+def test_54_hub_shared_allows_the_other_backends_kit_date_empty() -> None:
+    """Only the running backend's kit date is required (FLIP#1476); a placeholder still fails."""
+    print("▶ hub-shared row: the other backend's kit date may be empty")
+    base = {k: "x" for k in mod.HUB_SHARED_KEYS}
+    for backend, other, own in (
+        ("nvflare", "FLOWER_KIT_DATE", "FLARE_KIT_DATE"),
+        ("flower", "FLARE_KIT_DATE", "FLOWER_KIT_DATE"),
+    ):
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, other: ""}, True)
+        _assert(check.status == mod.Status.PASS, f"{backend}: empty {other} passes", check.detail)
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, other: "<run-make-register-trust>"}, True)
+        _assert(check.status == mod.Status.FAIL, f"{backend}: placeholder {other} fails", check.detail)
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, own: ""}, True)
+        _assert(check.status == mod.Status.FAIL and own in check.detail, f"{backend}: empty {own} fails", check.detail)
+
+
+def test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones() -> None:
+    print("55. The checklist's Hub-shared keys are trust_kit_lib's, minus FL_EDGE_PORT")
+    expected = (
+        "AES_KEY_BASE64",
+        "CENTRAL_HUB_API_URL",
+        "TRUST_API_KEY_HEADER",
+        "FL_BACKEND",
+        "FLOWER_KIT_DATE",
+        "FLARE_KIT_DATE",
+        "DOCKER_TAG",
+        "DOCKER_FL_TAG",
+        "NLB_SUBDOMAIN",
+        "FL_SERVER_PORT",
+    )
+    _assert(mod.HUB_SHARED_KEYS == expected, "the ten required keys, in order", repr(mod.HUB_SHARED_KEYS))
+    _assert("FL_EDGE_PORT" not in mod.HUB_SHARED_KEYS, "FL_EDGE_PORT is not required")
+    check = mod.check_hub_shared({}, False)
+    _assert(check.label == "Hub-shared block (10 keys)", "the row label still counts ten keys", check.label)
+
+
+def test_56_fl_kit_contents_a_kit_private_to_another_uid_is_not_called_missing() -> None:
+    """The kit is private to the FL client's uid (FLIP#1964); an operator who is not that uid cannot list it, and
+    its subdirectories must not be reported missing. CI runs as root, which bypasses mode bits, so the access
+    check itself is patched."""
+    print("▶ FL kit contents: a slot dir this uid cannot enter -> WARN 'not checked', not FAIL 'missing'")
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        (Path(td) / "net-1" / "certificates").mkdir()
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FL_KIT_SLOT_NUMBER": "1"}
+        sealed: set[str] = set()
+        real_access = os.access
+
+        def access(path, mode):
+            return False if str(path) in sealed else real_access(path, mode)
+
+        with mock.patch.object(mod.os, "access", side_effect=access):
+            sealed = {str(slot)}
+            flare = mod.check_fl_kit_contents(base, True)
+            sealed = {str(Path(td) / "net-1")}
+            flower = mod.check_fl_kit_contents({**base, "FL_BACKEND": "flower"}, True)
+        open_kit = mod.check_fl_kit_contents(base, True)
+    _assert(flare.status == mod.Status.WARN, "nvflare: WARN, not FAIL", str(flare))
+    _assert(flare.detail.startswith(f"not checked: {slot} belongs to uid"), "names the slot dir", flare.detail)
+    _assert("sudo -E make onboard-onprem-trust" in flare.hints[0], "says how to check it", flare.hints[0])
+    _assert(flower.status == mod.Status.WARN and "net-1 belongs to uid" in flower.detail, "flower too", str(flower))
+    _assert(open_kit.status == mod.Status.PASS, "a kit this uid can enter is still checked", str(open_kit))
+
+
+def test_57_fl_kit_contents_a_closed_folder_above_the_slot_is_named_not_crashed_on() -> None:
+    """A closed net-1 above the slot (a `chown -R` one level too high): before Python 3.14 pathlib raises on every
+    path below it, and from 3.14 answers False. Both are simulated here, so the row must come from os.access
+    alone and name net-1, on every interpreter."""
+    print("▶ FL kit contents: a net-1 this uid cannot enter, above the slot -> WARN naming net-1, no traceback")
+    with tempfile.TemporaryDirectory() as td:
+        net = Path(td) / "net-1"
+        slot = net / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        (net / "keys").mkdir()
+        (net / "keys" / "supernode_credentials_1").touch()
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FL_KIT_SLOT_NUMBER": "1"}
+        real_access, real_is_dir, real_is_file = os.access, mod.Path.is_dir, mod.Path.is_file
+
+        def below_net(path) -> bool:
+            return str(path).startswith(f"{net}/")
+
+        def access(path, mode):
+            return False if str(path) == str(net) else real_access(path, mode)
+
+        def raises(real):  # Python 3.12 and 3.13
+            def probe(self, *args, **kwargs):
+                if below_net(self):
+                    raise PermissionError(13, "Permission denied", str(self))
+                return real(self, *args, **kwargs)
+
+            return probe
+
+        def answers_false(real):  # Python 3.14 on
+            return lambda self, *args, **kwargs: False if below_net(self) else real(self, *args, **kwargs)
+
+        rows = []
+        with mock.patch.object(mod.os, "access", side_effect=access):
+            for backend in ("nvflare", "flower"):
+                for pathlib_says in (raises, answers_false):
+                    with (
+                        mock.patch.object(mod.Path, "is_dir", pathlib_says(real_is_dir)),
+                        mock.patch.object(mod.Path, "is_file", pathlib_says(real_is_file)),
+                    ):
+                        rows.append(mod.check_fl_kit_contents({**base, "FL_BACKEND": backend}, True))
+    for row in rows:
+        _assert(row.status == mod.Status.WARN, "WARN, not FAIL or a traceback", str(row))
+        _assert(row.detail.startswith(f"not checked: {net} belongs to uid"), "names net-1", row.detail)
+
+
+def test_58_a_site_without_the_membership_store_dir_is_told_the_exact_root_step() -> None:
+    """An upgrade from before FLIP#857: the kit has no COHORT_SNAPSHOT_STORAGE_DIR and its /opt/flip default
+    is root's. The row names the default and only that variable, and the root step carries KIT and HUB:
+    run bare, `make -C trust prepare-host-dirs` prepares the development paths."""
+    print("▶ unset store dir under a root-owned /opt/flip -> FAIL naming the default and the full root step")
+    with tempfile.TemporaryDirectory() as td:
+        kit = {
+            "FL_KIT_SLOT_NUMBER": "2",
+            "OMOP_DATA_DIR": "./omop-db/volumes/Trust_2/db_data",
+            "BASE_IMAGES_DOWNLOAD_DIR": f"{td}/images",
+            "XNAT_DATA_DIR": f"{td}/xnat",
+        }
+        # /opt/flip is root's on the BDMS host; root ignores mode bits, so fake it (and / when there is no /opt).
+        writable = lambda path, mode: str(path) not in {"/", "/opt", "/opt/flip"}  # noqa: E731
+        with (
+            mock.patch.dict(os.environ, {"HUB": "prod"}),
+            mock.patch.object(mod.os, "access", side_effect=writable),
+        ):
+            check = mod.check_data_dir_paths(kit, True, "trust/.env.BDMS.prod", "BDMS")
+            uid_row = mod.check_container_uid({}, True, "trust/.env.BDMS.prod", "BDMS")
+    store = "/opt/flip/cohort-snapshots/trust-2"
+    _assert(check.status == mod.Status.FAIL, "FAIL", str(check))
+    _assert(f"COHORT_SNAPSHOT_STORAGE_DIR (unset, so {store};" in check.detail, "names the default", check.detail)
+    command = "sudo -E make -C trust prepare-host-dirs KIT=BDMS HUB=prod"
+    _assert(command in check.hints[0], "the root step carries KIT and HUB", check.hints[0])
+    _assert(check.hints[1].startswith("or set COHORT_SNAPSHOT_STORAGE_DIR in"), "names only that var", check.hints[1])
+    _assert(command in uid_row.detail or os.getuid() == 0, "the container uid row too", uid_row.detail)
+
+
+def test_59_standalone_ready_also_names_the_upgrade() -> None:
+    """The checklist is the first step of a site upgrade too, where up-onprem-trust would reset XNAT."""
+    print("▶ READY footer, standalone: names upgrade-onprem-trust beside the first install")
+    out = io.StringIO()
+    with (
+        mock.patch.object(sys, "argv", ["prog", "BDMS"]),
+        mock.patch.object(sys, "stdout", out),
+        mock.patch.dict(os.environ, {"HUB": "prod"}),
+        mock.patch.object(mod, "run_checks", return_value=[mod.Check("x", mod.Status.PASS, "")]),
+    ):
+        try:
+            mod.main()
+        except SystemExit:
+            pass
+    footer = out.getvalue().split("Status: READY", 1)[1]
+    _assert("make upgrade-onprem-trust KIT=BDMS" in footer, "names the upgrade", footer)
+    _assert("reset XNAT" in footer, "says why", footer)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
 
-    test_1_unreadable_dir_warns_not_crashes()
+    test_1_unreadable_dir_passes_not_crashes()
     test_2_populated_dir_passes()
     test_3_empty_dir_warns()
     test_4_missing_dir_warns()
@@ -1073,10 +1364,54 @@ def main() -> None:
     test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded()
     test_48_sample_data_off_needs_no_seed_marker_dir()
     test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist()
+    test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list()
+    test_51_log_level_debug_fails_a_deployed_kit()
+    test_52_log_level_debug_warns_a_development_kit()
+    test_53_log_level_info_passes_and_unset_warns()
+    test_54_hub_shared_allows_the_other_backends_kit_date_empty()
+    test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()
+    test_56_fl_kit_contents_a_kit_private_to_another_uid_is_not_called_missing()
+    test_57_fl_kit_contents_a_closed_folder_above_the_slot_is_named_not_crashed_on()
+    test_58_a_site_without_the_membership_store_dir_is_told_the_exact_root_step()
+    test_59_standalone_ready_also_names_the_upgrade()
+    test_60_log_level_passes_only_a_level_quieter_than_debug()
+    test_61_an_empty_trust_local_password_is_not_a_rotated_one()
+    test_62_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)
+
+
+def test_62_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked() -> None:
+    """A site root installed: the folder above its data dirs is root's. Only a first install seeds (FLIP#1985)."""
+    print("\n[60] existing data dirs under a root-owned parent: first install FAIL, upgrade PASS")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        (locked / "omop").mkdir(parents=True)
+        (locked / "pacs").mkdir()
+        kit = {"OMOP_DATA_DIR": f"{locked}/omop", "ORTHANC_STORAGE_DIR": f"{locked}/pacs"}
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            first = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod")
+            upgrade = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod", upgrade=True)
+            missing = mod.check_data_dir_paths(
+                {**kit, "COHORT_SNAPSHOT_STORAGE_DIR": f"{locked}/snapshots"}, True, "k", upgrade=True
+            )
+    _assert(first.status == mod.Status.FAIL and "seed marker" in first.detail, "first install: FAIL", str(first))
+    _assert(upgrade.status == mod.Status.PASS, "upgrade: PASS", f"{upgrade.status}: {upgrade.detail}")
+    _assert(
+        missing.status == mod.Status.FAIL and "COHORT_SNAPSHOT_STORAGE_DIR" in missing.detail,
+        "upgrade: a dir it would still create is checked",
+        str(missing),
+    )
+    with mock.patch.object(sys, "argv", ["prog", "SITE", "--gate", "--upgrade"]):
+        with mock.patch.object(mod, "run_checks", side_effect=SystemExit) as run:
+            try:
+                mod.main()
+            except SystemExit:
+                pass
+    _assert(run.call_args.args[3] is True, "--upgrade reaches the row", str(run.call_args))
 
 
 if __name__ == "__main__":

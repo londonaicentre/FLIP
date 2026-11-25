@@ -26,7 +26,7 @@ from flip_api.config import get_settings
 from flip_api.db.db_auth_logger import logger
 
 # RDS Proxy drops idle client connections after `idle_client_timeout` (1800s by
-# default — see deploy/providers/AWS/rds_proxy.tf). Recycle pooled connections
+# default — see deploy/aws/rds_proxy.tf). Recycle pooled connections
 # comfortably below that so we never hand out a connection the proxy has already
 # closed; pool_pre_ping is the belt-and-braces liveness check on top.
 _POOL_RECYCLE_SECONDS = 1500

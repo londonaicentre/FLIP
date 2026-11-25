@@ -12,7 +12,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_access_project
@@ -21,7 +21,7 @@ from flip_api.db.database import get_session
 from flip_api.domain.interfaces.project import IModelsInfoResponse
 from flip_api.project_services.services.project_services import get_project, get_project_models_service
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import IPagedData, get_total_pages
+from flip_api.utils.paging_utils import IPagedData, PagingInfo, get_total_pages, paging_params
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
 
@@ -48,8 +48,8 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
     },
 )
 def get_models(
-    request: Request,
     project_id: UUID,
+    paging_info: PagingInfo = Depends(paging_params),
     session: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ) -> IPagedData[IModelsInfoResponse]:
@@ -57,7 +57,7 @@ def get_models(
     Get the models associated with a project.
 
     Args:
-        request (Request): The HTTP request object, used to access query parameters.
+        paging_info (PagingInfo): The page and search string.
         project_id (UUID): The unique identifier of the project.
         session (Session): The database session for querying.
         user_id (UUID): The ID of the user making the request.
@@ -86,8 +86,7 @@ def get_models(
         )
 
     # Get the models associated with the project
-    models, paging_info = get_project_models_service(project_id, session, dict(request.query_params))
-    print(f"Models retrieved for project ID: {project_id}: {models}")
+    models = get_project_models_service(project_id, session, paging_info)
     if not models.data:
         # This is a valid case where no models are found for the project yet
         logger.info(f"No models found for project ID: {project_id}")

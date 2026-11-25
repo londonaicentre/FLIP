@@ -230,34 +230,25 @@ def _patch_session(monkeypatch):
     return session_mock
 
 
-def test_main_prints_deleted_status_json(monkeypatch, capsys):
+@pytest.mark.parametrize(
+    ("name", "outcome"),
+    [
+        ("GSTT", {"status": "deleted", "freed_fl_kit_slot": "Trust_001"}),
+        ("Ghost", {"status": "not_found"}),
+    ],
+    ids=["deleted", "not_found"],
+)
+def test_main_prints_status_json(monkeypatch, capsys, name, outcome):
     from flip_api.scripts import delete_trust as cli
 
     _patch_session(monkeypatch)
-    monkeypatch.setattr(
-        cli,
-        "delete_one_trust",
-        lambda name, session: {"status": "deleted", "name": name, "freed_fl_kit_slot": "Trust_001"},
-    )
-    monkeypatch.setattr("sys.argv", ["delete_trust", "--name", "GSTT"])
+    monkeypatch.setattr(cli, "delete_one_trust", lambda n, session: {**outcome, "name": n})
+    monkeypatch.setattr("sys.argv", ["delete_trust", "--name", name])
 
     cli.main()
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"status": "deleted", "name": "GSTT", "freed_fl_kit_slot": "Trust_001"}
-
-
-def test_main_prints_not_found_status_json(monkeypatch, capsys):
-    from flip_api.scripts import delete_trust as cli
-
-    _patch_session(monkeypatch)
-    monkeypatch.setattr(cli, "delete_one_trust", lambda name, session: {"status": "not_found", "name": name})
-    monkeypatch.setattr("sys.argv", ["delete_trust", "--name", "Ghost"])
-
-    cli.main()
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload == {"status": "not_found", "name": "Ghost"}
+    assert payload == {**outcome, "name": name}
 
 
 def test_main_requires_name(monkeypatch, capsys):

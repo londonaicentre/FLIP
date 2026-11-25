@@ -59,7 +59,12 @@ Quick checks, in order
      -o jsonpath='{.items[0].metadata.name}')
    kubectl logs -n flip-trust "$FL_POD" --tail=50
 
-The entries below reuse ``$XNAT_POD``.
+Many entries below use ``$XNAT_POD``. If you jumped straight to one, set it first:
+
+.. code-block:: shell
+
+   XNAT_POD=$(kubectl get pods -n flip-trust -l app.kubernetes.io/component=xnat-web \
+     -o jsonpath='{.items[0].metadata.name}')
 
 **********************
 Pods and deployments
@@ -99,6 +104,12 @@ Start with the pod's events and logs:
    * - FL client ``Pending`` with ``hostPath type check failed``
      - The FL participant kit is not on the node.
      - Step 3 of :doc:`../deploy-flip/deploy-flip-node-kubernetes`, then deploy again.
+   * - FL client in ``Init`` after an upgrade, with ``hostPath type check failed``
+     - The upgrade was run without the path the kit is staged at.
+     - :ref:`ts-k8s-fl-client-kit-path`
+   * - ``omop-db-0`` and ``xnat-db-0`` never ready, with no logs, on Ubuntu 26.04
+     - AppArmor denies signals inside containers.
+     - :ref:`ts-k8s-apparmor-signals`
    * - ``xnat-web`` ``Running`` but ``0/1`` ready for several minutes
      - Its readiness check fails: ``000`` means XNAT is still starting; ``401`` or ``403`` means this XNAT version
        closed the path the check uses.
@@ -114,12 +125,108 @@ Start with the pod's events and logs:
    The "Troubleshooting" section of the :gh:`chart README <trust/deploy/helm/README.md>` for pods stuck in
    ``Pending`` or ``CrashLoopBackOff``, a slow XNAT start and the FL client checklist.
 
+.. _ts-k8s-apparmor-signals:
+
+Database pods never start on an Ubuntu 26.04 node
+=================================================
+
+**Symptom.** After an install or upgrade, ``omop-db-0`` and ``xnat-db-0`` never become ready. They show
+``PostStartHookError`` or stay in ``ContainerCreating``, ``kubectl logs`` prints nothing, and a deleted pod stays
+``Terminating``. Inside the container, process 1 is still ``gosu postgres ...``, running as root at the pod's CPU
+limit. In any container on the node, a shell that kills its own child gets ``Permission denied``.
+
+**Cause.** Ubuntu 26.04 sets ``kernel.apparmor_restrict_unprivileged_unconfined = 1``. With it, containerd's
+containers run under a stacked AppArmor label, ``cri-containerd.apparmor.d//&unconfined``, while the profile only
+allows signals between processes labelled ``cri-containerd.apparmor.d``. Every signal sent inside a container is
+then denied. The Postgres images drop root with ``gosu``, which must signal its own threads to do so and spins
+forever. Containers that never take that step keep running, so the node can look healthy while the kernel log
+fills with denials, including those of Postgres processes that are already up.
+
+**Check.** The label of any running container, the denials, and the setting:
+
+.. code-block:: shell
+
+   kubectl exec -n flip-trust deploy/trust-release-flip-trust-orthanc -- cat /proc/1/attr/current
+   sudo journalctl -k | grep 'apparmor="DENIED"' | grep 'operation="signal"' | tail -3
+   sysctl kernel.apparmor_restrict_unprivileged_unconfined
+
+``cri-containerd.apparmor.d//&unconfined (enforce)`` is this problem; a node without it shows
+``cri-containerd.apparmor.d (enforce)`` and logs no signal denial.
+
+**Fix.** As root on the node, change the setting and keep it across reboots:
+
+.. code-block:: shell
+
+   sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+   echo 'kernel.apparmor_restrict_unprivileged_unconfined=0' | sudo tee /etc/sysctl.d/90-flip-apparmor.conf
+
+A container keeps the label it was created with, so only new pods are fixed. Remove the stuck database pods, which
+will not terminate on their own, and let the StatefulSets recreate them:
+
+.. code-block:: shell
+
+   kubectl delete pod -n flip-trust trust-release-flip-trust-omop-db-0 trust-release-flip-trust-xnat-db-0 \
+     --grace-period=0 --force
+
+Restart the release's other pods at a quiet time, so they also run under the plain label.
+
+**Without root on the node.** A pod whose security context sets ``appArmorProfile.type: Unconfined`` starts
+normally. The chart has no value for it, so patch the two StatefulSets and force-delete the stuck pods as above.
+Undo the patch once the node is fixed:
+
+.. code-block:: shell
+
+   for s in omop-db xnat-db; do
+     kubectl patch statefulset -n flip-trust trust-release-flip-trust-$s --type merge \
+       -p '{"spec":{"template":{"spec":{"securityContext":{"appArmorProfile":{"type":"Unconfined"}}}}}}'
+   done
+
+Seen on Ubuntu 26.04 with AppArmor 5.0 and k3s 1.36. An Ubuntu 24.04 node has the setting at ``0`` and is not
+affected.
+
+.. _ts-k8s-fl-client-kit-path:
+
+The FL client stays in ``Init`` after an upgrade: ``hostPath type check failed``
+================================================================================
+
+**Symptom.** ``upgrade-trust-k8s`` reports success, but the FL client's new pod stays in ``Init:0/2`` and the trust
+drops off the FL network. The pod's events carry::
+
+   MountVolume.SetUp failed for volume "fl-client-kit" : hostPath type check failed, /opt/flip/fl-kit is not a directory
+
+**Cause.** The kit was staged at a path other than the default, with ``KIT_DEST=<path>`` on ``stage-kit`` and on
+the first deploy, and the upgrade was run without it. Before v0.16, every deploy target passed
+``flClient.kitHostPath`` on the Helm command line with the default ``/opt/flip/fl-kit``, and the upgrade's rollout
+wait did not cover the FL client, so the command exited 0.
+
+From v0.16 a deploy or upgrade without ``KIT_DEST`` or ``FL_CLIENT_KIT_HOST_PATH`` keeps the path the release
+already mounts and says so, and an FL client that was ready before the upgrade must be ready again before the
+command exits 0. Passing either variable is how you move the kit.
+
+**Check.** Compare the path in the previous revision with the current one:
+
+.. code-block:: shell
+
+   helm history trust-release -n flip-trust | tail -3
+   helm get values trust-release -n flip-trust --revision <previous> | grep kitHostPath
+   helm get values trust-release -n flip-trust | grep kitHostPath
+
+**Fix.** On a checkout older than v0.16, run the same upgrade again with the path the kit is staged at:
+
+.. code-block:: shell
+
+   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG=<tag> \
+     FL_CLIENT_KIT_HOST_PATH=<path> YES=1
+
+``FL_CLIENT_KIT_HOST_PATH`` is what the targets render; it takes its default from ``KIT_DEST``. Before any upgrade
+of a release someone else deployed, read ``helm get values`` for settings that were passed on the command line.
+
 .. _ts-k8s-xnat-db-roles:
 
 xnat-db crash-loops on upgrade: no ``postgres`` role
 ====================================================
 
-*Symptom.* ``helm upgrade`` reports success, then ``xnat-db-0`` goes ``CrashLoopBackOff``. The pod's events
+**Symptom.** ``helm upgrade`` reports success, then ``xnat-db-0`` goes ``CrashLoopBackOff``. The pod's events
 carry a ``FailedPostStartHook`` entry whose message ends in::
 
    psql: error: could not connect to server: FATAL:  role "postgres" does not exist
@@ -130,27 +237,27 @@ The ``postgres`` container log carries the server's own side of the same refusal
 
 ``xnat-web`` then fails its readiness check and every DICOM path stops with it.
 
-*Cause.* The volume was first initialised by a chart that rendered ``POSTGRES_USER``. The Postgres entrypoint
+**Cause.** The volume was first initialised by a chart that rendered ``POSTGRES_USER``. The Postgres entrypoint
 honours that variable only at the first initdb, so that database's single superuser is ``xnat`` and no
 ``postgres`` role exists. A data volume is never initialised twice, so the layout survives every later chart
 and only shows up when a release starts connecting to it.
 
-*Check.* Ask the database which roles it holds:
+**Check.** Ask the database which roles it holds:
 
 .. code-block:: shell
 
-   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- psql -X -U xnat -d postgres \
+   kubectl -n flip-trust exec trust-release-flip-trust-xnat-db-0 -c postgres -- psql -X -U xnat -d postgres \
      -tAc "select rolname, rolsuper from pg_roles where rolname in ('postgres','xnat')"
 
 ``xnat|t`` on its own is this layout. ``postgres|t`` alongside ``xnat|f`` is a current one.
 
-*Fix.* A release that carries FLIP#1658 probes both roles over the local socket and connects as whichever
+**Fix.** Releases from ``v0.14.0`` probe both roles over the local socket and connect as whichever
 answers, so the upgrade completes and the application role's password is re-synced either way. On an older
 release, create the missing role once, after dumping the database:
 
 .. code-block:: shell
 
-   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- \
+   kubectl -n flip-trust exec trust-release-flip-trust-xnat-db-0 -c postgres -- \
      psql -X -v ON_ERROR_STOP=1 -U xnat -d postgres -c "CREATE ROLE postgres SUPERUSER LOGIN"
 
 No password is needed: the statement runs over the container's local socket, where the image's authentication
@@ -220,14 +327,13 @@ Upgrade refused: ``rollingUpdate: Forbidden`` on a ``Recreate`` Deployment
 
 The release stays on its previous revision.
 
-**Cause.** The chart now renders as ``Recreate`` a Deployment the cluster created as ``RollingUpdate``. FLIP#857
-did this to data-access-api when its snapshot store is ReadWriteOnce. The API server filled in ``rollingUpdate``
+**Cause.** The chart now renders as ``Recreate`` a Deployment the cluster created as ``RollingUpdate``. It does this
+to data-access-api when its cohort snapshot store is ReadWriteOnce. The API server filled in ``rollingUpdate``
 defaults when the Deployment was created, and no field manager owns them, so Helm 4's server-side apply keeps them
 beside the new ``type: Recreate`` and the object is invalid.
 
-**Fix.** ``make deploy`` (and so ``deploy-trust-k8s`` and ``upgrade-trust-k8s``) switches such Deployments before
-the upgrade (FLIP#1524, ``scripts/migrate-strategy.sh``). A plain ``helm upgrade`` does not; patch the named
-Deployment once, then upgrade:
+**Fix.** The chart's ``make deploy`` (and so ``deploy-trust-k8s`` and ``upgrade-trust-k8s``) switches such
+Deployments before the upgrade, with ``scripts/migrate-strategy.sh``. A plain ``helm upgrade`` does not; patch the named Deployment once, then upgrade:
 
 .. code-block:: shell
 
@@ -238,11 +344,18 @@ Setting ``rollingUpdate: null`` in the chart does not help. Helm 3 applies clien
 
 .. _ts-k8s-xnat-init-timeout:
 
-Deploy fails with ``resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready``
-==========================================================================================
+Deploy reports ``xnat-init did not complete``
+=============================================
 
-**Cause.** The ``xnat-init`` job, which configures XNAT after each install or upgrade, ran longer than the deploy's
-wait budget. Helm has already applied the new spec by then, so the error names Helm, not the wait.
+**Symptom.** ``make deploy`` (or ``deploy-trust-k8s`` / ``upgrade-trust-k8s``) prints ``the release is live and
+rolled out, but xnat-init did not complete`` after ``❌  XNAT init failed — check logs:``. A plain ``helm install``
+or ``helm upgrade`` of the chart, which still runs ``xnat-init`` as a hook, reports the same thing as
+``resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready``.
+
+**Cause.** The ``xnat-init`` job, which configures XNAT after each install or upgrade, ran longer than the wait
+budget, or failed. The release is already applied and rolled out by then; only XNAT's configuration step is
+unfinished. A job that fails ends the wait at once and its log follows the message; see the next entry for the most
+common failure on a cluster you run yourself.
 
 **Fix.** Time one run of the job, then deploy with a larger budget (the default is ``30m``):
 
@@ -251,10 +364,120 @@ wait budget. Helm has already applied the new spec by then, so the error names H
    kubectl get job -n flip-trust -w
    make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
-If the job is wedged rather than slow, set ``xnat.initJob.enabled: false`` in your values file (``VALUES_FILE``, see
-"Key values" on :doc:`../deploy-flip/deploy-flip-node-kubernetes`), deploy, and run
-``make -C trust/deploy/helm xnat-init`` on its own, where its logs are easy to read. "The wait budget" under Step 4
+If the job is wedged rather than slow, run ``make -C trust/deploy/helm xnat-init`` on its own, where its logs are
+easy to read; the release does not need deploying again. "The wait budget" under Step 4
 of :doc:`../deploy-flip/deploy-flip-node-kubernetes` explains the setting.
+
+.. _ts-k8s-api-server-egress:
+
+``xnat-init`` fails: ``Container Service cannot reach its kubernetes backend (HTTP 500)``
+==========================================================================================
+
+**Symptom.** The ``xnat-init`` job log ends with ``Pinging the kubernetes backend...`` and then this error, and the
+job retries until its ``backoffLimit``. On a trust with NVFLARE job pods, no job pod is ever created either.
+
+**Cause.** XNAT's Container Service starts its conversion jobs through the Kubernetes API, from ``xnat-web``, and
+NetworkPolicy matches the API server's real endpoint, not the ``kubernetes`` Service's 443. On k3s (which enforces
+NetworkPolicy out of the box) and kind the API server listens on 6443, minikube on 8443, which the chart's egress
+does not allow.
+
+**Fix.** Name the endpoint in ``networkPolicies.apiServer`` and deploy again:
+
+.. code-block:: shell
+
+   kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes \
+     -o jsonpath='{.items[0].endpoints[*].addresses[0]} {.items[0].ports[0].port}'
+
+.. code-block:: yaml
+
+   networkPolicies:
+     apiServer:
+       cidrs: ["<address>/32"]   # one per address, on a cluster with several control-plane nodes
+       port: <port>
+
+.. _ts-k8s-namespaced-account:
+
+Deploying with an account limited to one namespace
+==================================================
+
+**Symptom.** With a kubeconfig that holds the built-in ``admin`` role in the trust's namespace only:
+
+- ``make preflight`` fails with ``Cluster unreachable``, although ``kubectl get pods`` works in the namespace;
+- the deploy fails with ``resourcequotas "trust-release-flip-trust-xnat-container-jobs" is forbidden``, after
+  most of the release has been applied.
+
+**Cause.** The preflight tests reachability with ``kubectl cluster-info``, which lists Services in
+``kube-system``. The chart creates a ResourceQuota for XNAT's conversion jobs, and ``admin`` may read quotas but
+not write them. The make targets also read the nodes and the StorageClasses, and apply the namespace itself.
+
+**Fix.** Have a cluster administrator create the namespace and grant the account these rights beside ``admin``:
+
+.. code-block:: yaml
+
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: Role
+   metadata: {name: flip-operator-quota, namespace: <namespace>}
+   rules:
+     - apiGroups: [""]
+       resources: [resourcequotas, limitranges]
+       verbs: [get, list, watch, create, update, patch, delete]
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: Role
+   metadata: {name: flip-operator-cluster-info, namespace: kube-system}
+   rules:
+     - apiGroups: [""]
+       resources: [services]
+       verbs: [get, list]
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: ClusterRole
+   metadata: {name: flip-operator-cluster-read}
+   rules:
+     - apiGroups: [""]
+       resources: [nodes]
+       verbs: [get, list]
+     - apiGroups: [storage.k8s.io]
+       resources: [storageclasses]
+       verbs: [get, list]
+     - apiGroups: [""]
+       resources: [namespaces]
+       resourceNames: [<namespace>]
+       verbs: [get, patch]
+
+Bind each to the account (two RoleBindings and a ClusterRoleBinding). The preflight then passes with one warning,
+that the account cannot create namespaces, which is expected. If a deploy already failed on the quota, run it
+again: nothing needs removing.
+
+.. _ts-k8s-second-release:
+
+A second release on a cluster that already runs one
+===================================================
+
+Two trusts can share a cluster, each in its own namespace, for example a staging trust beside a production one.
+The targets do not know about the other release, so guard against these:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Risk
+     - What to do
+   * - Every target defaults to namespace ``flip-trust`` and release ``trust-release``. A command for the second
+       trust that omits ``NAMESPACE=`` acts on the first: an upgrade would point it at the other trust's hub.
+     - Run the second trust only through a wrapper that always passes ``KIT``, ``HUB``, ``NAMESPACE`` and
+       ``KUBE_CONTEXT``, with a kubeconfig that has no rights in the first namespace
+       (:ref:`ts-k8s-namespaced-account`). A slip is then refused by the cluster.
+   * - Both releases mount the FL kit from ``/opt/flip/fl-kit`` on the node by default.
+     - Give the second its own ``KIT_DEST``, or deliver its kit as a Secret (``flClient.kit.source: secret``,
+       ``make kit-secret``), which puts no file on the node.
+   * - Each release's log collector is a DaemonSet that reads every pod's logs on the node, so each trust's log
+       store would hold the other's logs.
+     - Set ``observability.enabled: false`` on the release that must not hold the other's logs.
+   * - With ``flClient.gpu.allocation: runtime``, each FL client takes the node's GPU 0 without a reservation.
+     - Enable the GPU on one release only, or accept that two jobs running at once share its memory.
+
+Put those values in a file named by the kit's ``K8S_PLATFORM_VALUES``, so every deploy and upgrade keeps them.
 
 ****************************
 DICOM import into XNAT
@@ -277,7 +500,7 @@ crashing:
 **Cause.** The image the pod runs pairs a plugin with the wrong XNAT core. A C-ECHO never reaches XNAT's importer, so
 it cannot detect this. Three reasons are common:
 
-#. **The pod runs an image built before the fix**: one pinned in your overrides or kit file, or a tag such as
+#. **The pod runs an outdated image**: one pinned in your overrides or kit file, or a tag such as
    ``stag`` that was rebuilt after the pod pulled it. A redeploy does not replace the pod while its tag is
    unchanged; restart it to pull the rebuilt image:
    ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-xnat-web``.
@@ -319,6 +542,32 @@ this XNAT: check the receiver first (:ref:`ts-k8s-pacs-not-storable`).
    How ``smoke-cstore`` judges a run, and its exit codes and settings, are in
    :gh:`trust/deploy/helm/TROUBLESHOOTING.md` (section 2.7).
 
+.. _ts-k8s-dicom-receiver-disabled:
+
+C-STORE is refused: ``Unable to access DICOM SCP port 8104``
+============================================================
+
+**Symptom.** ``smoke-cstore`` and the self-test's ``xnat c-store`` check fail with ``the C-STORE association
+failed outright``. Orthanc's log carries::
+
+   DicomAssociation - connecting to AET "FLIP_XNAT": TCP Initialization Error: Connection refused
+
+and XNAT's ``/data/xnat/home/logs/dicom.log``::
+
+   Unable to access DICOM SCP port 8104. The port may be already in use ... Starting with the DICOM receiver disabled.
+
+**Cause.** XNAT could not open its receiver port when ``xnat-init`` configured the receiver, and left it
+disabled. Why the port was busy is not established. It was seen once, on a first install where XNAT had waited
+half an hour for its database.
+
+**Fix.** Restart ``xnat-web``, which opens the receiver from its saved configuration, then run the check again:
+
+.. code-block:: shell
+
+   kubectl rollout restart -n flip-trust deploy/trust-release-flip-trust-xnat-web
+   kubectl rollout status  -n flip-trust deploy/trust-release-flip-trust-xnat-web --timeout=15m
+   make -C trust/deploy/helm smoke-cstore
+
 .. _ts-k8s-pacs-not-storable:
 
 ``PacsNotStorableException: null`` in ``dqr.log``
@@ -328,7 +577,7 @@ Every retrieval cycle, a few minutes apart, logs this exception, and the PACS se
 
 **Cause.** The name is misleading: it is not about the PACS. Each queued retrieval names XNAT's receiver as
 ``<AE title>:<port>``, and XNAT stores it only if a registered DICOM receiver matches that string exactly. The AE
-title and port come from ``xnat.web.dicomAet`` and ``xnat.web.dicomPort`` (defaults ``XNAT`` and ``8104``).
+title and port come from ``xnat.web.dicomAet`` and ``xnat.web.dicomPort`` (defaults ``FLIP_XNAT`` and ``8104``).
 Releases before the DICOM and web ports were split could send ``XNAT:8080``, the web port, which matches nothing.
 
 **Check.** Compare the destination the requests carry with the receivers XNAT has:
@@ -349,7 +598,7 @@ Releases before the DICOM and web ports were split could send ``XNAT:8080``, the
    .. code-block:: shell
 
       kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d xnat -c \
-        "UPDATE xhbm_queued_pacs_request SET destination_ae_title = 'XNAT:8104'
+        "UPDATE xhbm_queued_pacs_request SET destination_ae_title = 'FLIP_XNAT:8104'
          WHERE destination_ae_title = 'XNAT:8080';"
 
 .. _ts-k8s-unassigned:
@@ -357,15 +606,9 @@ Releases before the DICOM and web ports were split could send ``XNAT:8080``, the
 Studies arrive but land in the Unassigned prearchive
 ====================================================
 
-Retrieval works (the PACS sends, requests reach ``RECEIVED``), but no sessions appear in the project.
-``dqr.log`` shows:
-
-.. code-block:: text
-
-   WARN ... PacsDequeueThread - Cannot build session. 0 prearchive sessions found
-   for study 1.2.826... in project <imaging-project-id>.
-
-and ``/data/xnat/prearchive/`` fills with top-level timestamp folders instead of ``<project>/<timestamp>/``.
+Retrieval works (the PACS sends), but no sessions appear in the project, and ``/data/xnat/prearchive/`` fills
+with top-level timestamp folders instead of ``<project>/<timestamp>/``. A ``FAILED`` request status and the
+``Received zero files ...`` warning in ``dqr.log`` do not identify this fault; they are normal (see the note below).
 
 **Cause.** XNAT's DICOM receiver is the stock one. Routing studies to the requesting project, and relabelling them
 the way the FL client looks them up, needs the retrieval plugin's identifier on the receiver.
@@ -381,7 +624,7 @@ stock receiver and create this one:
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      curl -s -X POST -u admin:<admin-pass> -H "Content-Type: application/json" \
      http://localhost:8080/xapi/dicomscp -d '{
-       "aeTitle": "XNAT", "port": 8104, "enabled": true,
+       "aeTitle": "FLIP_XNAT", "port": 8104, "enabled": true,
        "customProcessing": true, "directArchive": true,
        "identifier": "dqrObjectIdentifier", "anonymizationEnabled": true,
        "whitelistEnabled": false, "routingExpressionsEnabled": false
@@ -392,8 +635,9 @@ hand: delete the top-level timestamp folders and re-pull them (:ref:`ts-k8s-forc
 
 .. note::
 
-   With direct archiving on, the ``Cannot build session`` warning still appears on every pull and is harmless:
-   sessions skip the prearchive. Count the project's sessions with
+   With direct archiving on, DQR marks every request ``FAILED`` and logs the
+   ``Received zero files for study ... in project ...`` warning on every pull. Both are harmless: sessions skip the
+   prearchive, the only place DQR looks. Count the project's sessions with
    ``ls /data/xnat/archive/<imaging-project-id>/arc001 | wc -l`` in the pod.
 
 .. _ts-k8s-xnat-401:
@@ -521,10 +765,10 @@ the pinned image in place, so every project's conversion trigger keeps working. 
 dcm2niix jobs swamp the node, or wait for a slot
 ================================================
 
-**Before the conversion cap (FLIP#1448):** during a cohort pull the namespace fills with Pending pods that are not
-the release's own, one per archived scan, each requesting a whole CPU. The node sits near 100% of its CPU requests
-and nothing else schedules: a restarted trust pod stays Pending, and on AKS ``az aks command invoke`` fails because
-its own pod cannot start.
+**Symptom (no conversion cap, or a backlog from before it):** during a cohort pull the namespace fills with Pending pods
+that are not the release's own, one per archived scan, each requesting a whole CPU. The node sits near 100% of its CPU
+requests and nothing else schedules: a restarted trust pod stays Pending, and on AKS ``az aks command invoke`` fails
+because its own pod cannot start.
 
 **Cause.** Each conversion job requested a whole CPU, and they all started at once. The chart now caps them
 (``xnat.containerService.maxConcurrentJobs``, see "Container Service jobs (dcm2niix)" in the
@@ -799,6 +1043,23 @@ If you manage the values by hand, add the port to ``networkPolicies.allowedEgres
    "FL client won't connect" in the :gh:`chart README <trust/deploy/helm/README.md>` for the kit path, kit owner
    and GPU checks.
 
+.. _ts-k8s-job-pods-no-study:
+
+Job pods on: a project's jobs never start at this trust
+=======================================================
+
+**Symptom.** With ``flClient.nvflare.jobPods.enabled``, a project's training fails at the start and the hub's FL server
+log names this site with ``K8sJobLauncher is configured for site … but no job image was specified``, or
+``cannot build the study entry of project …``.
+
+**Cause.** NVFLARE takes a job's image and pod template from the project's study entry, which the FL client's
+launcher builds when the job starts, from the kit's default study. A trust older than v0.16 has no entry for a
+project's study at all: it must upgrade before its hub. On v0.16 or later the error means the default study is
+missing from the kit: ``fl-client-init`` did not switch it.
+
+**Fix.** Upgrade the trust. On v0.16 or later, read ``kubectl logs <fl-client pod> -c fl-client-init`` and redeploy
+so it runs again.
+
 .. _ts-k8s-fl-reset:
 
 The FL client's connection to the FL server is reset after the TLS hello
@@ -902,7 +1163,7 @@ Defaults for the mocked Orthanc; a real PACS overrides them through the values n
      - Port
      - Role
    * - XNAT receiver
-     - ``XNAT`` (``xnat.web.dicomAet``)
+     - ``FLIP_XNAT`` (``xnat.web.dicomAet``)
      - ``xnat-web-dicom``
      - 8104 (``xnat.web.dicomPort``)
      - Receives the studies the PACS sends after a C-MOVE
@@ -923,6 +1184,8 @@ identifier=dqrObjectIdentifier``:
 
 Fix a wrong receiver through XNAT's API (:ref:`ts-k8s-unassigned`), not with SQL: XNAT caches the receiver, so a
 database-only change needs a restart.
+
+.. _ts-k8s-manual-dicom:
 
 Manual DICOM tests
 ==================

@@ -23,7 +23,6 @@ Usage:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -54,7 +53,7 @@ def hub_only_networks() -> set[str]:
     names: dict[str, str] = {}
     section = entry = None
     in_networks = False
-    for line in (REPO / "deploy" / "compose.development.yml").read_text().splitlines():
+    for line in (REPO / "deploy" / "compose" / "compose.development.yml").read_text().splitlines():
         if top := re.match(r"^([\w-]+):", line):
             section, entry = top[1], None
         elif key := re.match(r"^  ([\w-]+):\s*$", line):
@@ -90,7 +89,7 @@ class BuildTrue(unittest.TestCase):
 
     def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
         services = {
-            **repo_built_services("deploy/compose.development.yml"),
+            **repo_built_services("deploy/compose/compose.development.yml"),
             **repo_built_services("trust/deploy/compose/compose_trust.development.yml"),
         }
         assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()
@@ -111,7 +110,17 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert "--kit-file" in gate, gate
         assert ".env.SCR.prod" in gate, gate
         assert "_upgrade-trust-apply" in out, out
+        # XNAT's port guard runs before the plan rewrites the kit's tag: nothing changes on a refusal.
+        assert out.index("must differ") < out.index("site_upgrade.py plan"), out
         assert_data_safe(out, "upgrade-onprem-trust")
+
+    def test_a_relative_kit_file_reaches_the_xnat_sub_make_as_a_full_path(self):
+        """A command-line KIT_FILE is passed on as typed, and trust/xnat would look for it in its own directory."""
+        out = dry_run("upgrade-trust", "KIT_FILE=.env.SCR.prod", "YES=1")
+        assert '[ "8198" = "8199" ]' in out, f"the port guard did not read the kit's ports:\n{out}"
+        for line in out.splitlines():
+            if "-C xnat " in line and "KIT=SCR" in line:
+                assert "KIT_FILE='/" in line, line
 
 
 class HostDirsArePreparedNotEscalated(unittest.TestCase):
@@ -120,7 +129,7 @@ class HostDirsArePreparedNotEscalated(unittest.TestCase):
 
     def test_deployed_up_trust_runs_no_root_container_and_names_the_remedy(self):
         out = dry_run("up-trust")
-        assert "alpine:3.20 chown" not in out, out
+        assert not re.search(r"busybox:1\.36@sha256:[0-9a-f]{64} chown", out), out
         assert "make -C trust prepare-host-dirs KIT=SCR HUB=prod" in out, out
 
     def test_prepare_host_dirs_creates_every_mount_source(self):
@@ -259,12 +268,10 @@ AWS_STUB_ENV = {
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
     "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
     "AICENTRE_BUCKET_NAME": "probe-aicentre",
-    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
+    "FL_API_KEY": "probe",  # pragma: allowlist secret
     "MANAGE_DNS": "false",
 }
-AWS = "deploy/providers/AWS"
+AWS = "deploy/aws"
 KIT = (
     "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
     "FL_KIT_SLOT=Trust_9\n"
@@ -284,7 +291,7 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
-            "deploy/providers/AWS/Makefile",
+            "deploy/aws/Makefile",
             "deploy/portable.mk",
             "flip-api/Makefile",  # register-trusts recurses into it to mint the XNAT credentials
             "trust/Makefile",
@@ -409,7 +416,10 @@ class MakeKitSelection(unittest.TestCase):
         (self.root / "trust/.env.OTHER.prod").write_text(KIT.replace("SLOT_NUMBER=9", "SLOT_NUMBER=8"))
         (self.root / "trust/.env.SITE.prod").write_text(KIT)
         docker = self.root / "bin/docker"
-        docker.write_text('#!/bin/sh\ncase "$*" in compose*trust8*) exit 1;; esac\n')
+        docker.write_text(
+            '#!/bin/sh\ncase "$*" in compose*trust8*) exit 1;; *config*) echo fl-client-net-1;;'
+            ' compose*) echo "$*";; esac\n'
+        )
         docker.chmod(0o755)
         result = self.make("down-fl-clients", "HUB=prod", subdir="trust")
         assert result.returncode != 0, result.stdout + result.stderr
@@ -427,7 +437,7 @@ class MakeKitSelection(unittest.TestCase):
         env_file.write_text("".join(f"{key}={value}\n" for key, value in AWS_STUB_ENV.items()))
         kit = f"{self.root}/trust/.env.SITE.lza-prod"
         for target, subdir, expected in (
-            ("register-trusts", "deploy/providers/AWS", f'KIT_FILES="{kit}"'),
+            ("register-trusts", "deploy/aws", f'KIT_FILES="{kit}"'),
             ("sync-kit", "trust/deploy/helm", f"--kit-file {kit}"),
             ("upgrade-trust-k8s", "trust/deploy/helm", f"plan --kit-file {kit}"),
         ):
@@ -463,7 +473,10 @@ class MakeKitSelection(unittest.TestCase):
         """A stack started before the FLIP#1479 rename still carries the old kit name in its label."""
         self.write_kits(".env.SITE.prod")
         docker = self.root / "bin/docker"
-        docker.write_text('#!/bin/sh\ncase "$*" in *" -q") echo occupied;; *environment_file*) echo "$OWNER";; esac\n')
+        docker.write_text(
+            '#!/bin/sh\ncase "$*" in *" -q") echo occupied;; *environment_file*) echo "$OWNER";;'
+            " *config*) echo fl-client-net-1;; esac\n"
+        )
         docker.chmod(0o755)
         for owner, allowed in (
             ("/srv/flip/trust/.env.SITE.production", True),
@@ -592,6 +605,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             "    elif 'environment_file' in args[-1]: print(os.environ['SLOT_OWNER'])\n"
             "    elif 'working_dir' in args[-1]: print('/previous/checkout/trust')\n"
             "elif args[0] != 'compose': sys.exit('Unexpected Docker command')\n"
+            "elif 'config' in args: print('fl-client-net-1')\n"
         )
         docker.chmod(0o755)
         self.env["DOCKER_CALLS"] = str(calls_file)
@@ -684,6 +698,8 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     gate = next(line for line in output.splitlines() if "onboard_onprem_trust.py" in line)
                     args = shlex.split(gate)
                     assert "--gate" in args, gate
+                    # Only the upgrade's gate skips the seed-marker folder: it never seeds (FLIP#1985).
+                    assert ("--upgrade" in args) == (target == "upgrade-onprem-trust"), gate
                     assert Path(args[args.index("--kit-file") + 1]) == kit_file, gate
                     if target == "upgrade-onprem-trust":
                         plan = next(line for line in output.splitlines() if "site_upgrade.py plan" in line)
@@ -741,6 +757,33 @@ class RotateTrustKeys(unittest.TestCase):
         assert "--name" in line, line
         assert "--code" not in line, line
 
+    def test_it_stages_by_default_and_revokes_only_on_request(self):
+        """FLIP#1714: the old key keeps working unless REVOKE_OLD=1 asks for the immediate cutover."""
+        assert "--revoke-old" not in self.recipe()
+        out = dry_run("rotate-trust-keys", "REVOKE_OLD=1", subdir=".")
+        line = next((ln for ln in out.splitlines() if "flip_api.scripts.register_trust" in ln), "")
+        assert "--revoke-old" in line, out
+
+    def test_a_revoke_old_value_other_than_0_or_1_is_refused_before_anything_runs(self):
+        """`REVOKE_OLD=true` must not quietly stage and leave a leaked key valid (FLIP#1714)."""
+        for value in ("true", "yes", "2"):
+            with self.subTest(value=value):
+                result = run_target("rotate-trust-keys", f"REVOKE_OLD={value}", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+                assert result.returncode != 0, result.stdout
+                assert "REVOKE_OLD must be empty, 0 or 1" in result.stdout, result.stdout
+                assert "flip_api.scripts.register_trust" not in result.stdout, result.stdout
+                assert "Waiting for the hub" not in result.stdout, result.stdout
+        for value in ("", "0", "1"):
+            with self.subTest(value=value):
+                out = dry_run("rotate-trust-keys", f"REVOKE_OLD={value}", subdir=".")
+                assert "flip_api.scripts.register_trust" in out
+
+    def test_it_reports_which_mode_ran_from_the_kit(self):
+        """The closing line comes from the kit's `staged_until`, not from the flag the operator typed."""
+        out = dry_run("rotate-trust-keys", subdir=".")
+        assert "staged_until" in out, out
+        assert "Old key refused from now on" in out, out
+
     def test_it_does_not_call_a_separate_rotation_module(self):
         """Rotation is a flag on the registration CLI; there is no rotate_trust_keys module."""
         assert "rotate_trust_keys" not in dry_run("rotate-trust-keys", subdir=".")
@@ -756,6 +799,36 @@ class RotateTrustKeys(unittest.TestCase):
         assert writer is not None, out
         assert writer.rstrip().endswith("\\"), "the writer call must continue into its failure guard"
         assert "could not be written" in out, out
+
+
+class LocalRegistrationRefusesADeployedHub(unittest.TestCase):
+    """With HUB set, the targets that exec into the local flip-api point at the AWS Makefile (FLIP#938).
+
+    Otherwise they wait 3 minutes for a local hub, or register on a dev one and overwrite the real kit.
+    """
+
+    TARGETS = {"register-trust": "register-trusts", "rotate-trust-keys": "rotate-trust-keys"}
+
+    def test_a_deployed_hub_is_refused_before_waiting_for_one(self):
+        for target, aws_target in self.TARGETS.items():
+            with self.subTest(target=target):
+                # ALLOW_FOREIGN_PROJECT: a dev stack on this host belongs to another checkout than the scratch copy.
+                result = run_target(target, "HUB=stag", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+                assert result.returncode != 0, result.stdout
+                assert f"make -C deploy/aws {aws_target} KIT=SCR HUB=stag" in result.stdout, result.stdout
+                assert "Waiting for the hub" not in result.stdout, result.stdout
+
+    def test_the_deployed_hub_hint_keeps_revoke_old(self):
+        """An operator who copies the hint for a leaked key must get the cutover, not a staged rotation."""
+        result = run_target("rotate-trust-keys", "HUB=stag", "REVOKE_OLD=1", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+        assert result.returncode != 0, result.stdout
+        hint = "make -C deploy/aws rotate-trust-keys KIT=SCR HUB=stag REVOKE_OLD=1"
+        assert hint in result.stdout, result.stdout
+
+    def test_development_still_registers_on_the_local_hub(self):
+        for target in self.TARGETS:
+            with self.subTest(target=target):
+                assert "flip_api.scripts.register_trust" in dry_run(target, "HUB=", subdir=".")
 
 
 def compose_targets(makefile: str) -> set[str]:
@@ -834,7 +907,7 @@ class HubProjectOwnerGuard(unittest.TestCase):
         assert self.guard("/elsewhere/deploy").returncode == 0  # project `deploy` is not kc-deploy
 
     def test_only_allow_foreign_project_1_skips_the_check(self):
-        # Not FORCE: `up` hands it on to generate-internal-service-key, which rotates the key.
+        # Not FORCE: `up` hands it on to generate-fl-api-key, which rotates the key.
         cases = (("ALLOW_FOREIGN_PROJECT=1", True), ("ALLOW_FOREIGN_PROJECT=true", False), ("FORCE=1", False))
         for extra, allowed in cases:
             with self.subTest(extra=extra):
@@ -850,12 +923,12 @@ class HubProjectOwnerGuard(unittest.TestCase):
                 assert re.search(rf"^{re.escape(target)}: _check-compose-project-owner(\s|$)", makefile, re.M), target
 
 
-class GenerateInternalServiceKey(unittest.TestCase):
+class GenerateFlApiKey(unittest.TestCase):
     """The key lands in the env file the stack runs from, not always `.env.development` (FLIP#1603)."""
 
     def env_file_arg(self, *extra: str) -> str:
-        out = dry_run("generate-internal-service-key", *extra, subdir=".")
-        line = next(line for line in out.splitlines() if "generate_internal_service_key" in line)
+        out = dry_run("generate-fl-api-key", *extra, subdir=".")
+        line = next(line for line in out.splitlines() if "generate_fl_api_key" in line)
         args = shlex.split(line)
         return args[args.index("--env-file") + 1]
 
@@ -973,25 +1046,45 @@ class E2eSmokeQuery(unittest.TestCase):
         assert self.query_file("HUB=", "QUERY_FILE=/tmp/mine.sql") == "/tmp/mine.sql"
 
 
+class E2eSmokeSpleenBackend(unittest.TestCase):
+    """The spleen smokes upload the tutorial matching FL_BACKEND and keep the label enrichment (FLIP#1695)."""
+
+    def test_each_backend_uploads_its_own_app(self):
+        apps = {"nvflare": "app_files", "flower": "app"}
+        tutorials = {
+            "e2e_smoke_spleen": "image_segmentation/3d_spleen_segmentation",
+            "e2e_smoke_spleen_evaluation": "image_evaluation/3d_spleen_segmentation_evaluation",
+        }
+        for target, tutorial in tutorials.items():
+            for backend, app in apps.items():
+                out = dry_run(target, f"FL_BACKEND={backend}", subdir="flip-api")
+                model_dir = re.search(r'--model-files-dir "([^"]+)"', out)[1]
+                query = re.search(r'--query-file "([^"]+)"', out)[1]
+                assert model_dir.endswith(f"/fl-tutorials/{backend}/{tutorial}/{app}"), (target, out)
+                assert query.endswith(f"/fl-tutorials/{backend}/image_segmentation/3d_spleen_segmentation/query.sql")
+                assert "upload_spleen_labels_to_xnat.py" in out, (target, backend)
+                for rel in (model_dir, query):
+                    assert (REPO / "flip-api" / rel).exists(), (target, backend, rel)
+
+
 HUB_MAKEFILES = ("Makefile", "deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk")
-KEY_PAIR = ("INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH")
 
 
-class FirstUpInternalServiceKey(unittest.TestCase):
-    """The first `make up` hands compose the key pair generate-internal-service-key just wrote (FLIP#1501).
+class FirstUpFlApiKey(unittest.TestCase):
+    """The first `make up` hands compose the FL_API_KEY generate-fl-api-key just wrote (FLIP#1501).
 
     Real generator behind a stub `uv`, a stub `docker` recording compose's env, a non-default MAIN_ENV_FILE.
     """
 
     def run_up(self, env_text, *extra, chosen=".env.b.development"):
-        """`make up-no-trust` in a scratch checkout: compose's env, and the pair the generator left in `chosen`."""
+        """`make up-no-trust` in a scratch checkout: compose's key, and the one the generator left in `chosen`."""
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp).resolve()
             root = base / "checkout"
             for rel in (*HUB_MAKEFILES, "flip-api/Makefile"):
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(REPO / rel, root / rel)
-            (root / ".env.b.development").write_bytes(b"INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n")
+            (root / ".env.b.development").write_bytes(b"FL_API_KEY=\n")
             env_file = root / chosen
             env_file.write_bytes(env_text.encode())
             bin_dir = base / "bin"
@@ -1009,12 +1102,11 @@ class FirstUpInternalServiceKey(unittest.TestCase):
             (bin_dir / "docker").write_text(
                 f"#!{sys.executable}\nimport json, os, sys\n"
                 "if 'compose' in sys.argv and 'up' in sys.argv:\n"
-                f"    keys = {sorted(KEY_PAIR)!r}\n"
-                f"    json.dump({{k: os.environ.get(k) for k in keys}}, open({str(seen)!r}, 'w'))\n"
+                f"    json.dump(os.environ.get('FL_API_KEY'), open({str(seen)!r}, 'w'))\n"
             )
             for stub in bin_dir.iterdir():
                 stub.chmod(0o755)
-            excluded = {"MAKEFLAGS", "PROD", "FLIP_INSTANCE", "FORCE", "ENV_FILE", *KEY_PAIR}
+            excluded = {"MAKEFLAGS", "PROD", "FLIP_INSTANCE", "FORCE", "ENV_FILE", "FL_API_KEY"}
             env = {key: value for key, value in os.environ.items() if key not in excluded}
             env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
             skipped = ("create-networks", "_ensure-fl-jobs-dir", "_ensure-object-store-dir", "_check-fl-provisioned")
@@ -1033,45 +1125,40 @@ class FirstUpInternalServiceKey(unittest.TestCase):
                 key, sep, value = line.partition("=")
                 if sep:
                     written.setdefault(key, value.strip())
-            return json.loads(seen.read_text()), {key: written[key] for key in KEY_PAIR}
+            return json.loads(seen.read_text()), written["FL_API_KEY"]
 
-    def assert_compose_got_what_was_written(self, seen, written):
-        key, key_hash = written["INTERNAL_SERVICE_KEY"], written["INTERNAL_SERVICE_KEY_HASH"]
-        assert key, written
-        assert key_hash == hashlib.sha256(key.encode()).hexdigest(), written
-        assert seen == written, seen
-
-    def test_compose_gets_the_pair_the_generator_wrote(self):
-        in_sync = hashlib.sha256(b"k").hexdigest()
+    def test_compose_gets_the_key_the_generator_wrote(self):
         cases = {
-            "generated": "INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n",
-            "hash repaired": "INTERNAL_SERVICE_KEY=k\nINTERNAL_SERVICE_KEY_HASH=stale\n",
-            "duplicate lines": f"INTERNAL_SERVICE_KEY=k\nINTERNAL_SERVICE_KEY_HASH={in_sync}\nINTERNAL_SERVICE_KEY=x\n",
-            "CRLF": f"INTERNAL_SERVICE_KEY=k\r\nINTERNAL_SERVICE_KEY_HASH={in_sync}\r\n",
+            "generated": "FL_API_KEY=\n",
+            "kept": "FL_API_KEY=k\n",
+            "duplicate lines": "FL_API_KEY=k\nFL_API_KEY=x\n",
+            "CRLF": "FL_API_KEY=k\r\n",
         }
         for name, env_text in cases.items():
             with self.subTest(case=name):
-                self.assert_compose_got_what_was_written(*self.run_up(env_text))
+                seen, written = self.run_up(env_text)
+                assert written, name
+                assert seen == written, seen
 
     def test_an_explicit_env_file_is_both_written_and_read(self):
-        env_text = "INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n"
-        self.assert_compose_got_what_was_written(*self.run_up(env_text, "ENV_FILE=other.env", chosen="other.env"))
+        seen, written = self.run_up("FL_API_KEY=\n", "ENV_FILE=other.env", chosen="other.env")
+        assert written
+        assert seen == written, seen
 
-    def test_every_target_that_generates_the_key_composes_with_the_fresh_pair(self):
+    def test_every_target_that_generates_the_key_composes_with_the_fresh_one(self):
         makefile = (REPO / "Makefile").read_text()
-        targets = re.findall(r"^([\w-]+):[^=\n]*\bgenerate-internal-service-key\b", makefile, re.M)
+        targets = re.findall(r"^([\w-]+):[^=\n]*\bgenerate-fl-api-key\b", makefile, re.M)
         assert {"up", "up-no-trust"} <= set(targets), targets
         for target in targets:
             recipe = re.search(rf"^{re.escape(target)}:.*\n((?:\t.*\n)+)", makefile, re.M)[1]
             compose = [line for line in recipe.splitlines() if COMPOSE_COMMAND.search(line)]
             with self.subTest(target=target):
                 assert compose, recipe
-                assert all("$(FRESH_INTERNAL_SERVICE_KEY)" in line for line in compose), recipe
+                assert all("$(FRESH_FL_API_KEY)" in line for line in compose), recipe
 
-    def test_the_example_ships_no_pair_to_repair(self):
+    def test_the_example_ships_no_key(self):
         example = (REPO / ".env.development.example").read_text()
-        assert re.search(r"^INTERNAL_SERVICE_KEY=$", example, re.M), "the example's key must be empty"
-        assert re.search(r"^INTERNAL_SERVICE_KEY_HASH=$", example, re.M), "the example's hash must be empty"
+        assert re.search(r"^FL_API_KEY=$", example, re.M), "the example's key must be empty"
 
 
 if __name__ == "__main__":

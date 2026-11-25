@@ -33,7 +33,7 @@ from torch import nn
 AUTOENCODER_CONFIG = Path(__file__).parent / "autoencoder_config.yaml"
 
 
-def load_net_config():
+def load_net_config() -> dict[str, Any]:
     """Read the ``net_config`` block from the ``config.json`` next to this file."""
     config_path = Path(__file__).parent / "config.json"
     with open(config_path, "r") as f:
@@ -93,7 +93,7 @@ class LatentDiffusionModelNetwork(nn.Module):
     - Diffusion Model (to generate samples in the latent space) — the module actually trained
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         net_config = load_net_config()
         document = read_autoencoder_document()
@@ -116,9 +116,7 @@ class LatentDiffusionModelNetwork(nn.Module):
             channels=net_config["diffusion_model"]["channels"],
             num_res_blocks=net_config["diffusion_model"]["num_res_blocks"],
             attention_levels=net_config["diffusion_model"]["attention_levels"],
-            # torch's scaled_dot_product_attention, not MONAI's einsum. With a single condition token
-            # the einsum is a bmm with inner dimension 1, which torch 2.13 sends to a Triton kernel the
-            # FL images cannot compile (FLIP#1700); it also needs less memory. Same weights either way.
+            # torch's scaled_dot_product_attention rather than MONAI's einsum: less memory, same weights.
             use_flash_attention=True,
         )
 

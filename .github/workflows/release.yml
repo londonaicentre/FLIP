@@ -61,6 +61,7 @@ jobs:
         permissions: # override top-level read-only default to allow tag/release creation
             contents: write
             actions: write # dispatch the image builds at the release tag (see the step below)
+            packages: write # push the versioned trust chart to GHCR (FLIP#1646)
 
         steps:
             - name: Checkout repository
@@ -204,10 +205,30 @@ jobs:
                   BUILD_POLL_MAX_FAILURES: ${{ vars.RELEASE_BUILD_POLL_MAX_FAILURES || 10 }}
               run: bash "$GITHUB_WORKSPACE/.github/scripts/wait-for-release-builds.sh"
 
+            # The trust Helm chart is published here, immediately after the images it deploys
+            # exist and before anything irreversible (the Terraform apply, the Release). A chart
+            # pushed earlier would reference tags that may never build.
+            #
+            # package_chart.py sets three things from the tag: the chart's own SemVer version and
+            # appVersion (helm package flags), and `global.image.tag` in values.yaml. The last one is the whole point
+            # — without it `flip-trust:0.13.0` would be a versioned chart deploying whatever
+            # `stag` happens to be that week, which is exactly the property the trust auto-upgrade
+            # agent (FLIP#1640) cannot build on. The stamping is in-checkout only; nothing is
+            # committed back, so main's values.yaml keeps its empty (floating) default for dev.
+            - name: Publish the versioned trust Helm chart
+              if: steps.release_check.outputs.exists == 'false'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ steps.version.outputs.tag }}
+              run: |
+                  set -euo pipefail
+                  echo "$GH_TOKEN" | helm registry login ghcr.io \
+                    --username "${{ github.actor }}" --password-stdin
+                  python3 trust/deploy/helm/scripts/package_chart.py --version "$TAG"
+
             # generate_release_notes lets GitHub choose the previous release itself, which is
             # whatever was published most recently — including a flip-utils release cut seconds
-            # after ours on the same push. Pin the range to the previous *platform* tag instead,
-            # the way release-pypi.yml already does for its own artefact.
+            # after ours on the same push. Pin the range to the previous *platform* tag instead.
             - name: Prepare release notes
               if: steps.release_check.outputs.exists == 'false'
               id: notes
@@ -237,11 +258,13 @@ jobs:
                     "${API_ARGS[@]}" --jq '.body')
 
                   # The curated header (Highlights, Breaking Changes, Site upgrade, …) from the
-                  # release-notes template goes ABOVE the generated changelog, the same way
-                  # release-pypi.yml publishes it — the "Site upgrade" section is what trust
-                  # operators act on, so it belongs on the platform release.
-                  # The licence block is stripped by its whole-line delimiters — see
-                  # release-pypi.yml for why an unanchored range would eat every section.
+                  # release-notes template goes ABOVE the generated changelog — the "Site upgrade"
+                  # section is what trust operators act on, so it belongs on the platform release
+                  # (and only there: the flip-utils release lists its own PRs, release-pypi.yml).
+                  # The licence block is stripped by its whole-line delimiters (`^<!--$` / `^-->$`)
+                  # because only it spans lines that way. The template's other comments are
+                  # single-line, and an unanchored `/^<!--/,/-->/` opens a range on one of those
+                  # that does not close until the NEXT comment, eating every section in between.
                   VERSION="${{ steps.version.outputs.version }}"
                   HEADER=$(sed '/^<!--$/,/^-->$/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
                     | sed "s/{{PROJECT}}/FLIP/g" \

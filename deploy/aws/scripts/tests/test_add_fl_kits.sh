@@ -1,0 +1,688 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Black-box tests for scripts/add_fl_kits.sh — slot numbering, net discovery, the
+# required-files-last upload order, and the mint-loop recovery reporting.
+#
+# Drives the REAL script with `aws` / `make` / `openssl` stubbed on PATH (no credentials,
+# no network) inside a throwaway repo skeleton, so the checkout's provisioning workspace
+# is never touched. The plan scenarios abort at the confirmation and assert the printed
+# Plan; the mint scenarios run to completion (YES=1).
+#
+# The Flower scenarios at the end drive add_fl_kits_flower.sh through the same entry
+# point, with their own `aws` / `make` stubs: numbering, the order that keeps a slot
+# unclaimable until the SuperLink has registered its key, and the abort reporting.
+#
+# Usage:
+#     bash deploy/aws/scripts/tests/test_add_fl_kits.sh
+
+set -u
+
+SCRIPT_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/add_fl_kits.sh"
+
+TEST_ROOT="$(mktemp -d)"
+trap 'rm -rf "${TEST_ROOT}"' EXIT
+
+# The script derives REPO_ROOT (and so the workspace parent) from its own location —
+# copy it into a repo skeleton under TEST_ROOT so mint-loop paths stay in the sandbox.
+FAKE_REPO="${TEST_ROOT}/repo"
+mkdir -p "${FAKE_REPO}/deploy/aws/scripts" "${FAKE_REPO}/fl-services/nvflare"
+cp "${SCRIPT_SRC}" "${SCRIPT_SRC%.sh}_flower.sh" "${FAKE_REPO}/deploy/aws/scripts/"
+SCRIPT="${FAKE_REPO}/deploy/aws/scripts/add_fl_kits.sh"
+WORKSPACE_PARENT="${FAKE_REPO}/fl-services/nvflare/provision/workspace-stag"
+
+MOCKBIN="${TEST_ROOT}/mockbin"
+mkdir -p "${MOCKBIN}"
+
+# Mock aws. Fixtures (per case, via FIXTURE_DIR):
+#   nets                  — one top-level prefix per line (s3 ls of the kit date prefix)
+#   <net>.services        — one Trust_*/fl-server-* per line (s3 ls of a net's services/)
+#   <net>.<name>.keycount — override the never-overwrite KeyCount probe; default 0 (empty)
+#   ca-state / kit-state  — the CA state exists under fl-flare-ca-state/ / among the kits
+#   uploads               — written by the mock: one line per upload to s3, with its args
+#   cp.log                — written by the mock: every `s3 cp` as "<src> <dst>"
+cat > "${MOCKBIN}/aws" <<'MOCK_AWS'
+#!/usr/bin/env bash
+if [[ "$1" == "s3" && "$2" == "ls" ]]; then
+    fx="${FIXTURE_DIR}/nets"
+    [[ "$3" =~ /(net-[0-9]+)/services/$ ]] && fx="${FIXTURE_DIR}/${BASH_REMATCH[1]}.services"
+    while read -r n; do [[ -n "$n" ]] && printf '                           PRE %s/\n' "$n"; done < "$fx"
+    exit 0
+fi
+if [[ "$1" == "s3api" && "$2" == "list-objects-v2" ]]; then  # never-overwrite KeyCount probe
+    prefix=""
+    while [[ $# -gt 0 ]]; do [[ "$1" == "--prefix" ]] && prefix="$2"; shift; done
+    [[ "$prefix" =~ /(net-[0-9]+)/services/(Trust_[^/]+)/$ ]] || exit 1
+    fx="${FIXTURE_DIR}/${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.keycount"
+    if [[ -f "$fx" ]]; then cat "$fx"; else echo 0; fi
+    exit 0
+fi
+if [[ "$1" == "s3" && "$2" == "cp" ]]; then
+    shift 2
+    src="" dst="" skip=""
+    for a in "$@"; do
+        if [[ -n "$skip" ]]; then skip=""; continue; fi
+        [[ "$a" == --exclude || "$a" == --include ]] && { skip=1; continue; }
+        [[ "$a" == --* ]] && continue
+        [[ -z "$src" ]] && { src="$a"; continue; }
+        dst="$a"
+    done
+    echo "${src} ${dst}" >> "${FIXTURE_DIR}/cp.log"
+    if [[ "$dst" == s3://*/services/* ]]; then
+        echo "${dst#*/fl-flare-participant-kits/*/} $*" >> "${FIXTURE_DIR}/uploads"
+    elif [[ "$dst" != s3://* && "$src" == */ ]]; then  # recursive download: only a CA state the fixture holds
+        marker=""
+        [[ "$src" == */fl-flare-ca-state/* ]] && marker="ca-state"
+        [[ "$src" == */state/ ]] && marker="kit-state"
+        if [[ -n "$marker" && -f "${FIXTURE_DIR}/${marker}" ]]; then
+            mkdir -p "$dst"
+            echo '{}' > "${dst}cert.json"
+        fi
+    elif [[ "$dst" != s3://* ]]; then  # download: create the destination so later reads work
+        mkdir -p "$(dirname "$dst")"
+        : > "$dst"
+    fi
+    exit 0
+fi
+echo "mock aws: unexpected call: $*" >&2
+exit 1
+MOCK_AWS
+
+# Mock make (the provision-add-client-<env> mint): writes the kit's required startup
+# files, minus any named in the case's `unminted` fixture. Mock openssl: fingerprints
+# always match — the mismatch path is a pure string compare, not worth real certs.
+cat > "${MOCKBIN}/make" <<'MOCK_MAKE'
+#!/usr/bin/env bash
+for a in "$@"; do
+    case "$a" in
+    provision-add-client-*) env="${a#provision-add-client-}" ;;
+    NET_NUMBER=*) net="net-${a#NET_NUMBER=}" ;;
+    CLIENT_NAME=*) name="${a#CLIENT_NAME=}" ;;
+    esac
+done
+startup="$2/provision/workspace-${env}/${net}/services/${name}/startup"
+rm -rf "${startup}"
+mkdir -p "${startup}"
+for f in client.crt client.key rootCA.pem fed_client.json sub_start.sh; do
+    grep -qx "$f" "${FIXTURE_DIR}/unminted" 2>/dev/null || : > "${startup}/${f}"
+done
+MOCK_MAKE
+printf '#!/usr/bin/env bash\necho "SHA256 Fingerprint=MO:CK"\nexit 0\n' > "${MOCKBIN}/openssl"
+chmod +x "${MOCKBIN}/aws" "${MOCKBIN}/make" "${MOCKBIN}/openssl"
+
+PASS=0
+FAIL=0
+KEYCOUNT_OVERRIDES=()  # "net Trust_X <count>" lines, reset per case
+UNMINTED=""  # startup files the mock mint leaves out of each kit, reset per case
+YES_MODE=""
+STATE_FIXTURES=()  # ca-state and/or kit-state: where the mocked bucket holds the CA state
+ENV_MODE=""  # ENV_NAME for the next run_case (default stag; the Makefile passes it from HUB via deploy/env_mode.mk)
+
+# run_case <label> <N> <top-level prefixes> <net=services...>...
+run_case() {
+    local name="$1" N="$2" nets="$3" spec ov
+    shift 3
+    FX="$(mktemp -d "${TEST_ROOT}/fx.XXXXXX")"
+    printf '%s\n' ${nets} > "${FX}/nets"
+    for spec in "$@"; do
+        printf '%s\n' ${spec#*=} > "${FX}/${spec%%=*}.services"
+    done
+    for ov in "${KEYCOUNT_OVERRIDES[@]:-}"; do
+        [[ -n "${ov}" ]] && echo "${ov##* }" > "${FX}/$(echo "${ov}" | awk '{print $1"."$2}').keycount"
+    done
+    for ov in "${STATE_FIXTURES[@]:-}"; do
+        [[ -n "${ov}" ]] && : > "${FX}/${ov}"
+    done
+    printf '%s\n' ${UNMINTED} > "${FX}/unminted"
+    LAST_OUT="$(printf 'n\n' | env PATH="${MOCKBIN}:${PATH}" \
+        N="${N}" ENV_NAME="${ENV_MODE:-stag}" AICENTRE_BUCKET_NAME=testbucket FLARE_KIT_DATE=2026-01-01 \
+        FL_BACKEND=nvflare FIXTURE_DIR="${FX}" YES="${YES_MODE}" \
+        bash "${SCRIPT}" 2>&1)"
+    LAST_RC=$?
+    echo "── ${name}"
+    KEYCOUNT_OVERRIDES=()
+    UNMINTED=""
+    STATE_FIXTURES=()
+    YES_MODE=""
+    ENV_MODE=""
+}
+
+check_contains() {  # assert a substring, with the expected exit code
+    local label="$1" want_rc="$2" want_substr="$3"
+    if [[ "${LAST_RC}" -eq "${want_rc}" && "${LAST_OUT}" == *"${want_substr}"* ]]; then
+        echo "   ✅ ${label}"
+        PASS=$((PASS + 1))
+    else
+        echo "   ❌ ${label} (rc=${LAST_RC}, want ${want_rc})"
+        echo "      wanted substring: ${want_substr}"
+        echo "      got: ${LAST_OUT}"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+check_plan() {  # assert the plan's mint line (the run aborts at the prompt)
+    check_contains "$1" 1 "     mint          $2"
+}
+
+check_last_upload() {  # assert a kit's final upload carries exactly the required startup files
+    local label="$1" kit="$2" last
+    last="$(grep "^${kit}/ " "${FX}/uploads" 2>/dev/null | tail -1)"
+    if [[ "${last}" == *"--exclude * --include startup/client.crt --include startup/client.key --include startup/rootCA.pem --include startup/fed_client.json --include startup/sub_start.sh" ]]; then
+        echo "   ✅ ${label}"
+        PASS=$((PASS + 1))
+    else
+        echo "   ❌ ${label}"
+        echo "      uploads: $(cat "${FX}/uploads" 2>/dev/null)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+seed_workspace() {  # pre-seed a net's CA state + server kit so the run skips the restore: <net> [signed names]
+    local net="$1" signed="${2:-}" name
+    mkdir -p "${WORKSPACE_PARENT}/${net}/state" \
+        "${WORKSPACE_PARENT}/${net}/services/fl-server-${net}/startup"
+    {
+        printf '{"root_cert": "x"'
+        for name in ${signed}; do printf ', "%s": {"cert": "x"}' "${name}"; done
+        printf '}\n'
+    } > "${WORKSPACE_PARENT}/${net}/state/cert.json"
+    echo 'mock' > "${WORKSPACE_PARENT}/${net}/services/fl-server-${net}/startup/rootCA.pem"
+}
+
+# --- Plan scenarios (abort at the confirmation prompt) --------------------------------
+
+seed_workspace net-1
+seed_workspace net-2
+
+run_case "mint the next names (N=2)" 2 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
+check_plan "mint Trust_3 Trust_4" "Trust_3 Trust_4  (existing max: Trust_2)"
+
+# A name on one net only (a half-uploaded kit) still bumps the numbering, so it is never reused.
+run_case "half-uploaded name bumps max (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 Trust_9" "net-2=Trust_1 Trust_2"
+check_plan "mint Trust_10" "Trust_10  (existing max: Trust_9)"
+
+run_case "non-numeric name does not affect max (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 Trust_K8s" "net-2=Trust_1 Trust_2 Trust_K8s"
+check_plan "mint Trust_3" "Trust_3  (existing max: Trust_2)"
+
+# Zero-padded suffixes parse as decimal: bash arithmetic reads leading-zero numerals as
+# octal, so Trust_008 crashed the max_num comparison ("value too great for base") and
+# Trust_010 would compute max as 8. flip-api accepts such names (Python int() is decimal).
+run_case "zero-padded suffixes parse as decimal (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_008 Trust_010" "net-2=Trust_008 Trust_010"
+check_plan "mint Trust_11 (max is decimal 10, not octal 8)" "Trust_11  (existing max: Trust_10)"
+
+# A name the CA has signed still bumps the numbering after its kit left S3 (withdrawn, or
+# minted by a run that failed before its upload): a second certificate is never issued for it.
+seed_workspace net-1 "Trust_1 Trust_2 Trust_7"
+run_case "name signed by the CA but not in S3 bumps max (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
+check_plan "mint Trust_8" "Trust_8  (existing max: Trust_7)"
+seed_workspace net-1
+
+# A stray prefix such as net-1-old/ is not a net (it would otherwise read as a second net-1).
+run_case "stray net-like prefix ignored (N=1)" 1 "net-1 net-1-old state" \
+    "net-1=Trust_1"
+check_contains "nets line lists net-1 only" 1 "     nets          net-1
+"
+
+# --- Mint scenarios (YES=1, past the confirmation prompt) -----------------------------
+
+# Full run: workspaces pre-seeded, mint + upload mocked. The required startup files go
+# in each kit's last upload, so flip-api never counts a half-uploaded kit.
+seed_workspace net-1
+seed_workspace net-2
+YES_MODE=1
+run_case "full mint run (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
+check_contains "run succeeds and reports the mint" 0 "Minted Trust_3"
+check_last_upload "net-1: required startup files uploaded last" net-1/services/Trust_3
+check_last_upload "net-2: required startup files uploaded last" net-2/services/Trust_3
+
+# RECOVERY GUIDANCE ON GUARD ABORT: net-1's kit mints + uploads, then the never-overwrite
+# guard trips on net-2. The abort must still print what was uploaded and the recovery —
+# a guard `exit 1` bypasses the ERR trap, so this asserts the die() path keeps the
+# guidance on exactly the partial-run paths.
+seed_workspace net-1
+seed_workspace net-2
+KEYCOUNT_OVERRIDES=("net-2 Trust_3 5")
+YES_MODE=1
+run_case "guard abort after upload keeps recovery guidance (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
+check_contains "refuses net-2 overwrite" 1 "already has objects — refusing to overwrite"
+check_contains "reports the net-1 upload" 1 "Kits uploaded this run (the last may be partial): net-1/Trust_3"
+check_contains "says how to recover" 1 "with the number of slots still needed"
+check_contains "says what to delete" 1 "aws s3 rm --recursive s3://testbucket/fl-flare-participant-kits/2026-01-01/<net>/services/<name>/"
+
+# A minted kit without one of the required startup files (nvflare changed its kit layout,
+# say) would never count as complete in flip-api: the run stops before uploading it.
+seed_workspace net-1
+seed_workspace net-2
+UNMINTED="sub_start.sh"
+YES_MODE=1
+run_case "kit missing a required startup file is not uploaded (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
+check_contains "names the missing file" 1 "the minted Trust_3 kit has no startup/sub_start.sh"
+check_contains "nothing reached S3" 1 "Nothing was uploaded"
+
+# --- CA state location: its own prefix, never among the kits ---------------------------
+
+check_cp_log() {  # assert the last run's `s3 cp` log does (want=0) or does not (want=1) match a pattern
+    local label="$1" want="$2" pattern="$3"
+    grep -qE "${pattern}" "${FX}/cp.log"
+    if [[ $? -eq "${want}" ]]; then
+        echo "   ✅ ${label}"
+        PASS=$((PASS + 1))
+    else
+        echo "   ❌ ${label}"
+        echo "      cp log: $(cat "${FX}/cp.log")"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# 11. A fresh checkout restores the CA state from fl-flare-ca-state/ and refreshes it there.
+rm -rf "${WORKSPACE_PARENT}"
+STATE_FIXTURES=(ca-state)
+YES_MODE=1
+run_case "CA state read from and written to its own prefix (N=1)" 1 "net-1" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1"
+check_contains "run succeeds" 0 "Minted Trust_3"
+check_cp_log "cert.json refreshed under fl-flare-ca-state/" 0 \
+    '/state/cert\.json s3://testbucket/fl-flare-ca-state/2026-01-01/net-1/cert\.json$'
+check_cp_log "nothing read from or written to state/ among the kits" 1 'fl-flare-participant-kits/[^ ]*/state/'
+
+# 12. An estate uploaded before the move: read from among the kits, said in one line, written to the new prefix.
+rm -rf "${WORKSPACE_PARENT}"
+STATE_FIXTURES=(kit-state)
+YES_MODE=1
+run_case "CA state still among the kits is read with a notice (N=1)" 1 "net-1" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1"
+check_contains "falls back and says so" 0 \
+    "none there — reading s3://testbucket/fl-flare-participant-kits/2026-01-01/net-1/state/"
+check_cp_log "cert.json refreshed under fl-flare-ca-state/" 0 \
+    '/state/cert\.json s3://testbucket/fl-flare-ca-state/2026-01-01/net-1/cert\.json$'
+check_cp_log "nothing written to state/ among the kits" 1 ' s3://testbucket/fl-flare-participant-kits/[^ ]*/state/'
+
+# 13. No CA state in either place: refuse to mint.
+rm -rf "${WORKSPACE_PARENT}"
+YES_MODE=1
+run_case "no CA state anywhere is refused (N=1)" 1 "net-1" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1"
+check_contains "refuses to mint without the CA state" 1 "the S3 mirror has no cert.json"
+
+# --- ENV_NAME (FLIP#749): the environment CLASS the Makefile derives from HUB (deploy/env_mode.mk's
+# --- ENV_CLASS); anything else is refused ---
+
+seed_workspace net-1
+seed_workspace net-2
+ENV_MODE=stag
+run_case "ENV_NAME=stag plans as the stag env (N=2)" 2 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
+check_plan "mint Trust_3 Trust_4" "Trust_3 Trust_4  (existing max: Trust_2)"
+check_contains "plan header names the stag env" 1 "Plan (stag):"
+
+WORKSPACE_PARENT="${WORKSPACE_PARENT%-stag}-prod"
+seed_workspace net-1
+seed_workspace net-2
+ENV_MODE=prod
+run_case "ENV_NAME=prod plans as the prod env (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
+check_contains "plan header names the prod env" 1 "Plan (prod):"
+
+ENV_MODE=lza-stag
+run_case "anything but prod|stag is refused (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
+check_contains "rejects ENV_NAME=lza-stag before touching anything" 1 "ENV_NAME must be"
+
+# ======================================================================================
+# Flower (FLIP#1942): add_fl_kits_flower.sh, reached through the same entry point
+# ======================================================================================
+
+FLOWER_MOCKBIN="${TEST_ROOT}/mockbin-flower"
+mkdir -p "${FLOWER_MOCKBIN}"
+
+# Mock aws for the Flower path. Fixtures (per case, via FIXTURE_DIR):
+#   nets            — one top-level prefix per line (s3 ls of the kit date prefix)
+#   keys            — one object name per line under <net>/keys/ (s3 ls of it)
+#   minted          — the minted_slot_names record, when the bucket holds one
+#   keycount.<key>  — override the never-overwrite KeyCount probe; default 0 (empty)
+#   register.exit   — exit code of the registration task's container; default 0
+#   no-sync / no-success / no-ok — the copy to the hub delivers nothing / the registration
+#                     log lacks its closing line / lacks the per-key "OK:" lines
+#   deployed        — the FLOWER_KITS_S3_URI in flip-api's live task definition; default
+#                     the kit date the case runs with
+#   keys.fail / minted.fail / logs.fail — that read fails with an AWS error
+#   runtask.<family> — ECS refuses to start that task, with this reason
+#   calls           — written by the mock: one line per write or task, in order
+cat > "${FLOWER_MOCKBIN}/aws" <<'MOCK_AWS'
+#!/usr/bin/env bash
+fx="${FIXTURE_DIR}"
+if [[ "$1" == "s3" && "$2" == "ls" ]]; then
+    if [[ "$3" == */keys/ ]]; then
+        [[ -f "${fx}/keys.fail" ]] && { echo "An error occurred (AccessDenied)" >&2; exit 1; }
+        while read -r n; do [[ -n "$n" ]] && printf '2026-01-01 00:00:00        204 %s\n' "$n"; done < "${fx}/keys"
+    else
+        while read -r n; do [[ -n "$n" ]] && printf '                           PRE %s/\n' "$n"; done < "${fx}/nets"
+    fi
+    exit 0
+fi
+if [[ "$1" == "s3api" && "$2" == "list-objects-v2" ]]; then
+    prefix=""
+    while [[ $# -gt 0 ]]; do [[ "$1" == "--prefix" ]] && prefix="$2"; shift; done
+    if [[ "$prefix" == fl-flower-kit-state/*/minted_slot_names ]]; then
+        [[ -f "${fx}/minted.fail" ]] && exit 1
+        if [[ -f "${fx}/minted" ]]; then echo 1; else echo 0; fi
+    elif [[ "$prefix" =~ /net-1/keys/(supernode_credentials_[0-9]+)$ ]]; then
+        if [[ -f "${fx}/keycount.${BASH_REMATCH[1]}" ]]; then cat "${fx}/keycount.${BASH_REMATCH[1]}"; else echo 0; fi
+    else
+        exit 1
+    fi
+    exit 0
+fi
+if [[ "$1" == "s3" && "$2" == "cp" ]]; then
+    src="$3" dst="$4"
+    if [[ "$dst" == s3://*/fl-flower-kit-state/* ]]; then
+        cp "$src" "${fx}/minted"
+        echo "record $(tr '\n' ' ' < "$src")" >> "${fx}/calls"
+    elif [[ "$dst" == s3://*/net-1/keys/* ]]; then
+        echo "upload ${dst##*/}" >> "${fx}/calls"
+    elif [[ "$src" == s3://*/fl-flower-kit-state/* ]]; then
+        cp "${fx}/minted" "$dst"
+    else
+        echo "mock aws: unexpected cp: $*" >&2
+        exit 1
+    fi
+    exit 0
+fi
+if [[ "$1" == "ecs" && "$2" == "describe-services" && "$6" == flip-api ]]; then
+    echo "arn:aws:ecs:eu-west-2:000000000000:task-definition/flip-api:7"
+    exit 0
+fi
+if [[ "$1" == "ecs" && "$2" == "describe-task-definition" ]]; then
+    if [[ -f "${fx}/deployed" ]]; then cat "${fx}/deployed"; else echo "s3://testbucket/fl-flower-participant-kits/2026-01-01"; fi
+    exit 0
+fi
+if [[ "$1" == "ecs" && "$2" == "describe-services" ]]; then
+    printf 'subnet-a,subnet-b\tsg-%s\tDISABLED\n' "$6"
+    exit 0
+fi
+if [[ "$1" == "ecs" && "$2" == "run-task" ]]; then
+    family="" overrides="" network=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --task-definition) family="$2" ;;
+        --overrides) overrides="$2" ;;
+        --network-configuration) network="$2" ;;
+        esac
+        shift
+    done
+    echo "run-task ${family} ${network} ${overrides}" >> "${fx}/calls"
+    if [[ -f "${fx}/runtask.${family}" ]]; then
+        printf 'None\t%s\n' "$(xargs < "${fx}/runtask.${family}")"
+        exit 0
+    fi
+    # The copy to the hub: what the registration task will find on EFS.
+    if [[ "$family" == efs-provision-certs && ! -f "${fx}/no-sync" ]]; then
+        { grep '\.pub$' "${fx}/keys"; sed -n 's/^upload \(.*\.pub\)$/\1/p' "${fx}/calls"; } > "${fx}/efs"
+    fi
+    echo "arn:aws:ecs:eu-west-2:000000000000:task/flip-cluster/${family}-task"
+    exit 0
+fi
+if [[ "$1" == "ecs" && "$2" == "wait" ]]; then
+    exit 0
+fi
+if [[ "$1" == "ecs" && "$2" == "describe-tasks" ]]; then
+    if [[ "$*" == *flower-register-supernode-keys-task* && -f "${fx}/register.exit" ]]; then
+        cat "${fx}/register.exit"
+    else
+        echo 0
+    fi
+    exit 0
+fi
+if [[ "$1" == "logs" && "$2" == "get-log-events" ]]; then
+    [[ -f "${fx}/logs.fail" ]] && { echo "An error occurred (AccessDeniedException)" >&2; exit 254; }
+    while read -r n; do
+        [[ -n "$n" ]] || continue
+        printf '  Registering /keys/%s...\t' "$n"
+        [[ -f "${fx}/no-ok" ]] || printf '    OK: %s node_id=1\t' "$n"
+    done < "${fx}/efs"
+    [[ -f "${fx}/no-success" ]] || printf 'All SuperNode keys registered successfully.'
+    echo
+    exit 0
+fi
+echo "mock aws: unexpected call: $*" >&2
+exit 1
+MOCK_AWS
+
+# Mock make (the provision-add-supernode mint): writes the key pair, minus the half
+# named in the case's `unminted` fixture.
+cat > "${FLOWER_MOCKBIN}/make" <<'MOCK_MAKE'
+#!/usr/bin/env bash
+for a in "$@"; do
+    case "$a" in
+    KEY_NUMBER=*) number="${a#KEY_NUMBER=}" ;;
+    OUT_DIR=*) out="${a#OUT_DIR=}" ;;
+    esac
+done
+mkdir -p "${out}/keys"
+for half in "" ".pub"; do
+    grep -qx "half${half}" "${FIXTURE_DIR}/unminted" 2>/dev/null || : > "${out}/keys/supernode_credentials_${number}${half}"
+done
+MOCK_MAKE
+chmod +x "${FLOWER_MOCKBIN}/aws" "${FLOWER_MOCKBIN}/make"
+
+FLOWER_FIXTURES=()  # "<file>=<content>" fixture files for the next run_flower_case
+FLOWER_BACKEND=""  # FL_BACKEND for the next run_flower_case (default flower)
+
+# run_flower_case <label> <N> <top-level prefixes> <objects under net-1/keys/>
+run_flower_case() {
+    local name="$1" N="$2" nets="$3" keys="$4" spec
+    FX="$(mktemp -d "${TEST_ROOT}/fx.XXXXXX")"
+    printf '%s\n' ${nets} > "${FX}/nets"
+    printf '%s\n' ${keys} > "${FX}/keys"
+    : > "${FX}/calls"
+    : > "${FX}/efs"
+    for spec in "${FLOWER_FIXTURES[@]:-}"; do
+        [[ -n "${spec}" ]] && printf '%s\n' ${spec#*=} > "${FX}/${spec%%=*}"
+    done
+    LAST_OUT="$(printf 'n\n' | env PATH="${FLOWER_MOCKBIN}:${PATH}" \
+        N="${N}" ENV_NAME=stag AICENTRE_BUCKET_NAME=testbucket FLOWER_KIT_DATE=2026-01-01 \
+        FL_BACKEND="${FLOWER_BACKEND:-flower}" FIXTURE_DIR="${FX}" YES="${YES_MODE}" LOG_POLL_SECONDS=0 \
+        bash "${SCRIPT}" 2>&1)"
+    LAST_RC=$?
+    echo "── ${name}"
+    FLOWER_FIXTURES=()
+    FLOWER_BACKEND=""
+    YES_MODE=""
+}
+
+check_calls() {  # assert the mock's call log: every write and task, in order
+    local label="$1" want="$2" got
+    got="$(cat "${FX}/calls")"
+    if [[ "${got}" == "${want}" ]]; then
+        echo "   ✅ ${label}"
+        PASS=$((PASS + 1))
+    else
+        echo "   ❌ ${label}"
+        echo "      wanted: ${want}"
+        echo "      got: ${got}"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+PAIRS_1_2="supernode_credentials_1 supernode_credentials_1.pub supernode_credentials_2 supernode_credentials_2.pub"
+
+# --- Plan scenarios (abort at the confirmation prompt) --------------------------------
+
+run_flower_case "flower: mint the next names (N=2)" 2 "net-1" "${PAIRS_1_2}"
+check_plan "mint Trust_3 Trust_4" "Trust_3 Trust_4  (existing max: Trust_2)"
+check_calls "nothing written before the confirmation" ""
+
+# A public key with no private key (a run that failed before its last step) still bumps the numbering.
+run_flower_case "flower: half-uploaded key bumps max (N=1)" 1 "net-1" "${PAIRS_1_2} supernode_credentials_9.pub"
+check_plan "mint Trust_10" "Trust_10  (existing max: Trust_9)"
+
+# A name already minted still bumps the numbering after its key left S3 (withdrawn, or
+# minted by a run that failed before its upload): a second key is never issued for it.
+FLOWER_FIXTURES=("minted=Trust_1 Trust_2 Trust_7")
+run_flower_case "flower: name minted but not in S3 bumps max (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_plan "mint Trust_8" "Trust_8  (existing max: Trust_7)"
+
+run_flower_case "flower: other objects under keys/ are not slots (N=1)" 1 "net-1" "${PAIRS_1_2} notes.txt supernode_credentials_x.pub"
+check_plan "mint Trust_3" "Trust_3  (existing max: Trust_2)"
+
+# The hub runs one SuperLink: a kit with a second net cannot be grown through its task definitions.
+run_flower_case "flower: a kit with a second net is refused (N=1)" 1 "net-1 net-2" "${PAIRS_1_2}"
+check_contains "refuses before the plan" 1 "Expected net-1 alone"
+
+FLOWER_BACKEND=fedml
+run_flower_case "an unknown backend is refused (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "rejects FL_BACKEND=fedml" 1 "FL_BACKEND must be 'nvflare' or 'flower'"
+
+# --- Mint scenarios (YES=1, past the confirmation prompt) -----------------------------
+
+SYNC_TASK="run-task efs-provision-certs awsvpcConfiguration={subnets=[subnet-a,subnet-b],securityGroups=[sg-fl-server-net-1],assignPublicIp=DISABLED} {\"containerOverrides\":[{\"name\":\"provision-efs-certs\",\"command\":[\"aws s3 sync s3://testbucket/fl-flower-participant-kits/2026-01-01/net-1/keys/ /mnt/flower-keys/ --exclude '*' --include '*.pub'\"]}]}"
+REGISTER_TASK="run-task flower-register-supernode-keys awsvpcConfiguration={subnets=[subnet-a,subnet-b],securityGroups=[sg-fl-api-net-1],assignPublicIp=DISABLED} "
+
+# Full run. The order is the contract: the names are recorded first, the public keys
+# reach S3, then the hub, then the SuperLink, and only then do the private keys go up —
+# so flip-api never counts a slot whose SuperNode the SuperLink would refuse. The copy
+# to the hub is the key sync alone (the task's own command wipes the certificates),
+# and the registration task runs as Terraform defines it.
+YES_MODE=1
+run_flower_case "flower: full mint run (N=2)" 2 "net-1" "${PAIRS_1_2}"
+check_contains "run succeeds and reports the mint" 0 "Minted Trust_3 Trust_4"
+check_calls "names recorded, public keys, hub copy, registration, private keys last" \
+"record Trust_1 Trust_2 Trust_3 Trust_4 
+upload supernode_credentials_3.pub
+upload supernode_credentials_4.pub
+${SYNC_TASK}
+${REGISTER_TASK}
+upload supernode_credentials_3
+upload supernode_credentials_4"
+
+# The registration task fails: no private key is uploaded, so no new slot is claimable,
+# and the abort says which public keys to delete.
+YES_MODE=1
+FLOWER_FIXTURES=("register.exit=1")
+run_flower_case "flower: failed registration leaves the slot unclaimable (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "reports the failed task" 1 "The flower-register-supernode-keys task flower-register-supernode-keys-task failed (exit code '1':"
+check_contains "names the orphan public key" 1 "Public keys uploaded this run whose slot is NOT claimable: net-1/supernode_credentials_3.pub"
+check_contains "says what to delete" 1 "aws s3 rm s3://testbucket/fl-flower-participant-kits/2026-01-01/net-1/keys/supernode_credentials_<n>.pub"
+check_calls "the private key never reached S3" \
+"record Trust_1 Trust_2 Trust_3 
+upload supernode_credentials_3.pub
+${SYNC_TASK}
+${REGISTER_TASK}"
+
+# Exit code 0 is not enough (Fargate has reported it for a failed one-off container):
+# the task's log must say every key was registered.
+YES_MODE=1
+FLOWER_FIXTURES=("no-success=1")
+run_flower_case "flower: exit 0 without the registration's own report is a failure (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "refuses to trust the exit code alone" 1 "did not report every key registered"
+check_contains "names the orphan public key" 1 "NOT claimable: net-1/supernode_credentials_3.pub"
+
+# The registration ran but the new key never reached the hub: it registered the old keys only.
+YES_MODE=1
+FLOWER_FIXTURES=("no-sync=1")
+run_flower_case "flower: a key the registration never saw is a failure (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "names the key that was not registered" 1 "did not register supernode_credentials_3.pub"
+
+# The task reports success but has no registration line for the new key (a reply it did not
+# recognise, say): seeing the key is not enough, so the slot is not released.
+YES_MODE=1
+FLOWER_FIXTURES=("no-ok=1")
+run_flower_case "flower: a key with no registration line is a failure (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "names the key that was not registered" 1 "did not register supernode_credentials_3.pub"
+check_calls "the private key never reached S3" \
+"record Trust_1 Trust_2 Trust_3 
+upload supernode_credentials_3.pub
+${SYNC_TASK}
+${REGISTER_TASK}"
+
+# The env file's kit date is not the one the hub runs (mid-rotation, or stale): the copy to the
+# hub would put that date's keys on the live EFS, so nothing is touched.
+FLOWER_FIXTURES=("deployed=s3://testbucket/fl-flower-participant-kits/2026-02-02")
+run_flower_case "flower: a kit date the hub does not run is refused (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "names both dates" 1 "The hub serves its Flower kits from 's3://testbucket/fl-flower-participant-kits/2026-02-02'"
+check_calls "nothing written" ""
+
+# ECS refuses to start the copy task: its reason is reported, not a timeout on a task that never was.
+YES_MODE=1
+FLOWER_FIXTURES=("runtask.efs-provision-certs=Capacity is unavailable at this time")
+run_flower_case "flower: a task ECS would not start is reported with its reason (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "gives ECS's reason" 1 "ECS did not start the efs-provision-certs task: Capacity is unavailable at this time."
+check_contains "names the orphan public key" 1 "NOT claimable: net-1/supernode_credentials_3.pub"
+
+# The registration log cannot be read (a missing logs:GetLogEvents, say): said as such, not as a
+# failed registration, and still no slot is released.
+YES_MODE=1
+FLOWER_FIXTURES=("logs.fail=1")
+run_flower_case "flower: an unreadable registration log is reported as such (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "gives the AWS error" 1 "Could not read the registration task's log (/ecs/fl-server-net-1): An error occurred (AccessDeniedException)"
+check_contains "names the orphan public key" 1 "NOT claimable: net-1/supernode_credentials_3.pub"
+
+# The two reads the numbering depends on fail closed: nothing is written.
+FLOWER_FIXTURES=("keys.fail=1")
+run_flower_case "flower: an unreadable keys listing stops the run (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "refuses to number" 1 "refusing to compute slot numbers"
+check_calls "nothing written" ""
+FLOWER_FIXTURES=("minted.fail=1")
+run_flower_case "flower: an unreadable minted-names record stops the run (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "refuses to number" 1 "refusing to compute slot numbers without it"
+check_calls "nothing written" ""
+
+# A run keeps every name the record already held, including one whose key left S3.
+YES_MODE=1
+FLOWER_FIXTURES=("minted=Trust_1 Trust_2 Trust_7")
+run_flower_case "flower: the record keeps the names it held (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "run succeeds" 0 "Minted Trust_8"
+check_calls "record keeps Trust_7, then the rest of the run" \
+"record Trust_1 Trust_2 Trust_7 Trust_8 
+upload supernode_credentials_8.pub
+${SYNC_TASK}
+${REGISTER_TASK}
+upload supernode_credentials_8"
+
+# Two slots, the second refused: the report names only the public key that did go up.
+YES_MODE=1
+FLOWER_FIXTURES=("keycount.supernode_credentials_4=1")
+run_flower_case "flower: a partial run names exactly what it uploaded (N=2)" 2 "net-1" "${PAIRS_1_2}"
+check_contains "names the one orphan" 1 "NOT claimable: net-1/supernode_credentials_3.pub
+"
+check_calls "only the first public key went up" \
+"record Trust_1 Trust_2 Trust_3 Trust_4 
+upload supernode_credentials_3.pub"
+
+# An object already at the new key's name is never overwritten; the name stays spent.
+YES_MODE=1
+FLOWER_FIXTURES=("keycount.supernode_credentials_3=1")
+run_flower_case "flower: an existing key is never overwritten (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "refuses the overwrite" 1 "already has objects — refusing to overwrite"
+check_contains "nothing half-uploaded" 1 "No key was left half-uploaded"
+check_calls "only the name was recorded" "record Trust_1 Trust_2 Trust_3 "
+
+# A mint that leaves half a pair would never count as complete in flip-api: nothing is uploaded.
+YES_MODE=1
+FLOWER_FIXTURES=("unminted=half.pub")
+run_flower_case "flower: half a minted pair is not uploaded (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "names the missing half" 1 "the mint left no keys/supernode_credentials_3.pub"
+check_contains "nothing half-uploaded" 1 "No key was left half-uploaded"
+
+echo ""
+echo "==== ${PASS} passed, ${FAIL} failed ===="
+[[ "${FAIL}" -eq 0 ]]

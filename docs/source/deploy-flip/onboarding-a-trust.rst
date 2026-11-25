@@ -19,6 +19,10 @@ This is the runbook for adding a trust to a running FLIP network, on any platfor
 admin's; steps 5 to 7 are the trust operator's. Only step 5, the install, differs by platform, and it lives on
 the platform's own page.
 
+A site on a Docker Compose host gets its kit from the FLIP UI instead: `Docker Compose host — download the kit from
+the FLIP UI`_ replaces steps 1 to 4 there. Steps 1 to 4 are the command-line route, for Kubernetes, the AWS and Azure
+nodes, and any node the hub team runs itself.
+
 Before you start, the trust should have worked through :doc:`trust-readiness-checklist`, and you should check the
 requirements on :doc:`deploy-trust-node`.
 
@@ -26,9 +30,9 @@ requirements on :doc:`deploy-trust-node`.
    :local:
    :depth: 1
 
-**************
-How to read it
-**************
+*****************************
+Placeholders and environments
+*****************************
 
 .. list-table::
    :header-rows: 1
@@ -43,6 +47,51 @@ How to read it
 
 The commands target the production hub (``HUB=prod``, kit file ``trust/.env.<CODE>.prod``). For the staging hub use
 ``HUB=stag`` (``.stag``).
+
+.. _onboarding-kit-from-ui:
+
+***********************************************************
+Docker Compose host — download the kit from the FLIP UI
+***********************************************************
+
+*Who: FLIP admin, then the trust's Trust Admin*
+
+#. *FLIP admin:* on the **Connection Status** page, click **Add Trust** and enter the trust's name, code and region.
+   The trust is registered and assigned an FL slot, but it has no keys yet and cannot connect.
+#. *FLIP admin:* make the site's contact a Trust Admin of that trust (:ref:`assigning-a-trust-admin`), and tell them
+   which release the hub runs (its ``/api/health`` reports it). From then on the trust's Trust Admins, not the hub,
+   approve or decline its projects.
+#. *Trust Admin:* open **My Trust** and, under **Trust kit**, click **Download kit**. The browser saves
+   ``flip-trust-kit-<CODE>-<date>.tar.gz.enc`` and a dialog shows its passphrase once. Save the passphrase: the hub
+   keeps neither it nor the file.
+#. *Trust Admin or trust operator:* copy the file to the trust host. In a checkout of that release
+   (step 1 of :doc:`deploy-flip-node-on-prem`), run:
+
+   .. code-block:: shell
+
+      make -C trust install-kit FILE=<path to the downloaded file>
+
+   It asks for the passphrase, creates ``trust/.env.<CODE>.prod`` with the trust's keys and the hub-shared settings,
+   generates the trust-local and XNAT passwords on the host, and puts the FL files under the kit's ``FL_KIT_DIR``
+   (``/opt/flip/fl-kit`` unless you change it). It needs ``openssl`` and ``uv``. A relative ``FILE`` is read from
+   ``trust/``. Add ``HUB=stag`` for the staging hub and ``DELETE=1`` to delete the download once it is installed.
+#. *Trust operator:* send the host's public egress IP to the FLIP admin, who must admit it at the FL endpoint
+   (:ref:`deploy-trust-node-network`). Then continue at step 3 of :doc:`deploy-flip-node-on-prem`; ``FL_KIT_DIR`` is
+   already set.
+
+.. important::
+
+   The first download creates the trust's two keys, and it is the only download that carries them. Leave it to the
+   site's Trust Admin: a FLIP admin can also download from the trust's card on **Connection Status**, and would then
+   be the one holding the keys. Every later download is an *update* kit with the hub-shared settings and FL
+   credentials only. If the first download or its passphrase is lost, see `Later — issue new keys`_.
+
+.. warning::
+
+   The downloaded file holds the platform encryption key and an FL TLS private key and, in a full kit, the trust's
+   API key. Download it
+   on a machine you trust and delete it once it is installed. Each download is recorded in the trust's audit log
+   against the account that made it.
 
 *******************************
 Step 1 — Create the kit
@@ -65,37 +114,33 @@ Step 2 — Register the trust on the hub
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod
+   make -C deploy/aws register-trusts KIT=<CODE> HUB=prod
 
 This registers the trust with the hub and writes the trust's **credentials** into its kit file (API key, internal
 service key, FL slot and expected trust id), and mints the trust's XNAT database and message-broker passwords.
-No hub redeploy is needed. Most of the **hub-shared settings**,
-including the encryption key and the hub URL, are still placeholders afterwards; step 3 fills them.
+No hub redeploy is needed. It then fills the **hub-shared settings**, including the encryption key and the hub
+URL, from your local ``.env.prod``, and fails naming any setting missing there.
 
 .. important::
 
    The hub keeps only hashes of these credentials and cannot show them again; registering the same trust again
-   returns no new credentials. Keep the kit file safe. If it is lost, the trust must be deleted on the hub
-   (``make -C deploy/providers/AWS delete-trust NAME=<trust name>``, which also removes its history there) and
-   registered afresh — see :doc:`/sys-admin/admin-backup-and-restore`.
+   returns no new credentials. Keep the kit file safe. If it is lost, the trust needs new keys: see
+   `Later — issue new keys`_.
 
 *******************************************
-Step 3 — Fill in the hub-shared settings
+Step 3 — Check the hub-shared settings
 *******************************************
 
 *Who: FLIP admin, from the repo root with your local* ``.env.prod`` *present*
+
+Step 2 copied the hub-shared settings from your local env file into the kit. To refresh them later without
+registering again (after you change one in ``.env.prod``):
 
 .. code-block:: shell
 
    make sync-trust-kit KIT=<CODE> HUB=prod
 
-This copies the hub-shared settings from your local env file into the kit and leaves the credentials from step 2
-untouched.
-
-.. important::
-
-   Do not skip this step. Without it the kit's encryption key and hub URL stay as placeholders: the
-   trust can neither reach the hub nor decrypt a task, and the kit can be neither packaged nor started.
+This leaves the credentials from step 2 untouched.
 
 .. seealso::
 
@@ -121,11 +166,11 @@ checks out that release before installing.
 
        .. code-block:: shell
 
-          make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
+          make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=prod
 
        It ships the kit as ``.env.<CODE>.prod`` with the FL kit share of its ``FL_KIT_SLOT``, and refuses to run if
        any placeholder is still unfilled. It fetches the FL kit share from S3 and writes the
-       tarball under ``deploy/providers/AWS/build/trust-kits/``. It does not modify the kit file.
+       tarball under ``deploy/aws/build/trust-kits/``. It does not modify the kit file.
    * - Kubernetes
      - The kit file ``trust/.env.<CODE>.prod`` and this trust's share of the FL participant kit. The operator
        stages the FL kit onto the node with ``stage-kit``.
@@ -182,9 +227,10 @@ Step 7 — Load the OMOP core vocabulary
 
 *Who: trust operator, once, after the first start*
 
-The node's OMOP database starts without the OMOP core vocabulary: SNOMED CT, LOINC and the other licensed
-vocabularies that cohort queries resolve concepts through. Each site downloads its own copy under its own licences;
-the AI Centre cannot hand on its copy, because the licences do not clearly allow that redistribution.
+The node's OMOP database starts without the OMOP core vocabulary: SNOMED CT, LOINC and the other licensed vocabularies
+that cohort queries resolve concepts through. Each site downloads its own copy under its own licences; the London AI
+Centre for Value-Based Healthcare, which maintains FLIP, cannot pass on its copy, because the licences do not clearly
+allow that redistribution.
 
 .. warning::
 
@@ -212,8 +258,8 @@ the AI Centre cannot hand on its copy, because the licences do not clearly allow
         ./files/load_core_vocab.sh <export dir> files/OMOPCDM_postgresql_5.4_constraints.sql
 
    The full roster takes about 25 minutes. Re-running is safe: tables that already hold the vocabulary are skipped.
-   On Kubernetes, run it over a ``kubectl port-forward`` to the ``omop-db`` service, or let the chart load it from
-   an S3 bucket instead; see "Load the OMOP core vocabulary" on :doc:`deploy-flip-node-kubernetes`.
+   On Kubernetes, run it over a ``kubectl port-forward`` to the ``omop-db`` service, or stage the same folder onto
+   the node and let the chart load it; see "Load the OMOP core vocabulary" on :doc:`deploy-flip-node-kubernetes`.
 
 #. **Check it.** With the same variables, ``./files/load_core_vocab.sh --check`` loads nothing and exits 0 once every
    table is loaded.
@@ -262,9 +308,9 @@ Optional — set a site privacy policy (FLARE)
 *Who: trust operator*
 
 As the data holder, you can apply your own privacy filter to everything the FL client sends to the FL server,
-whatever the researcher's app configures. The filter binds what the researcher's app declares, not what its
-code does: FLARE job code runs in the FL client's job process, so code review remains the control there
-(FLIP#1572).
+whatever the researcher's app configures. The filter applies to what the researcher's app declares, not to what
+its code does: FLARE job code runs inside the FL client's job process, so reviewing that code remains the control
+for it (FLIP#1572).
 
 #. In your kit file, uncomment ``FL_SITE_PRIVACY_POLICY`` and, optionally, its parameters. An invalid combination
    stops the FL client at startup, by design.
@@ -291,6 +337,25 @@ Later — rotate hub-shared settings
 When the admin changes a hub-shared value (the encryption key, image tags or FL backend), the credentials do not need
 to be re-issued.
 
+**Docker Compose host, from the FLIP UI.** The trust's card shows *Kit update available* when a hub-shared setting
+or the date of the FL kits has changed since the kit was last downloaded from the UI. A trust whose kit was never
+downloaded there shows no such label.
+
+#. *Trust Admin:* click **Download kit** on the card and save the passphrase. This is an update kit: it carries no
+   keys and leaves the trust's own untouched.
+#. *Trust operator:* with no FL job running, install it and apply it from the repo root:
+
+   .. code-block:: shell
+
+      make -C trust install-kit FILE=<path to the downloaded file>
+      make -C trust down-fl-clients-kit KIT=<CODE> HUB=prod   # so the FL client remounts the new FL files
+      make upgrade-onprem-trust KIT=<CODE> YES=1
+
+   ``install-kit`` replaces the hub-shared settings and the FL files and keeps everything the site set. It also keeps
+   the image tags (``DOCKER_TAG``, ``DOCKER_FL_TAG``): those move only with ``upgrade-onprem-trust``.
+
+**Command-line route.**
+
 #. *FLIP admin:* refresh the kit from the repo root, then send it to the operator over the same encrypted channel.
 
    .. code-block:: shell
@@ -307,6 +372,34 @@ to be re-issued.
 
    On a Docker Compose host, do not use ``up-onprem-trust`` on a running trust. It is the first-install command and
    resets XNAT.
+
+**********************
+Later — issue new keys
+**********************
+
+*Who: the trust's Trust Admin or a FLIP admin, then the trust operator*
+
+Do this when a trust's keys may have been exposed, or when its kit or the passphrase of its first download is lost.
+The trust keeps its id, code and FL slot.
+
+.. warning::
+
+   The hub refuses the old API key at once. The trust is offline until the new kit is installed and its containers
+   are recreated, so agree a time with the site and make sure no FL job is running.
+
+#. On the trust's card, click **Issue new keys** and type the trust's code to confirm. The browser saves a kit that
+   carries the new keys, and the dialog shows its passphrase once.
+#. *Trust operator:* install and apply it exactly as an update kit above. The trust-internal service key changes
+   with the API key, and ``upgrade-onprem-trust`` recreates every container that holds either.
+
+On a host whose kit file is lost as well, ``install-kit`` writes a new one with new trust-local passwords. The
+databases already on the host keep the passwords they were created with, so copy those into the new kit file before
+starting anything.
+
+A trust registered from the command line gets update kits and new keys from its card in the same way; its card
+shows *Kit update available* only after a first download from the UI. For a node the
+UI route does not cover (Kubernetes, AWS EC2, Azure), the FLIP admin rotates from the command line instead:
+:ref:`deploy-central-hub-rotate-trust-keys`.
 
 ********************************
 Later — upgrade to a new release

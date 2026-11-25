@@ -61,6 +61,7 @@ from flip_api.project_services.services.project_services import (
     unstage_project_service,
     update_project_status,
 )
+from flip_api.utils.paging_utils import paging_params
 from flip_api.utils.project_manager import get_project_by_id
 
 MOCK_SERVICE_PATH = "flip_api.project_services.services.project_services"
@@ -231,33 +232,19 @@ class TestEditProjectService:
                 session=mock_db_session,
             )
 
-    def test_edit_project_service_not_found(self, mock_db_session: MagicMock):
-        project_id = uuid4()
-        current_user_id = uuid4()
-        payload = IProjectDetails(name="Test", description="Test", users=[])
-
-        mock_db_session.get.return_value = None
-
-        # As for delete: the service's not-found ValueError surfaces as a generic 500 (logged, not
-        # returned); the router 404s a missing or deleted project before calling in.
-        with pytest.raises(HTTPException) as exc_info:
-            edit_project_service(project_id, payload, current_user_id, mock_db_session)
-
-        assert exc_info.value.status_code == 500
-        assert exc_info.value.detail == "Internal server error"
-
-    def test_edit_project_service_deleted_project(self, mock_db_session: MagicMock, sample_project: Projects):
+    @pytest.mark.parametrize("found", [False, True], ids=["missing", "deleted"])
+    def test_edit_project_service_missing_or_deleted(
+        self, found: bool, mock_db_session: MagicMock, sample_project: Projects
+    ):
         sample_project.deleted = True
-        project_id = sample_project.id
-        current_user_id = uuid4()
         payload = IProjectDetails(name="Test", description="Test", users=[])
 
-        mock_db_session.get.return_value = sample_project
+        mock_db_session.get.return_value = sample_project if found else None
 
         # As for delete: the service's not-found ValueError surfaces as a generic 500 (logged, not
         # returned); the router 404s a missing or deleted project before calling in.
         with pytest.raises(HTTPException) as exc_info:
-            edit_project_service(project_id, payload, current_user_id, mock_db_session)
+            edit_project_service(sample_project.id, payload, uuid4(), mock_db_session)
 
         assert exc_info.value.status_code == 500
         assert exc_info.value.detail == "Internal server error"
@@ -643,11 +630,32 @@ class TestGetProjectModelsService:
         query_result.all.return_value = []
         mock_db_session.exec.side_effect = [count_result, query_result]
 
-        models, total = get_project_models_service(project_id, mock_db_session)
+        models = get_project_models_service(project_id, mock_db_session)
 
         assert models.data == []
         assert models.total_rows == 0
         assert mock_db_session.exec.call_count == 2
+
+    def test_no_paging_returns_every_model(self, mock_db_session: MagicMock):
+        """delete_project aborts every model's training through this call, so no paging must mean no LIMIT."""
+        mock_db_session.exec.return_value.first.return_value = 0
+        mock_db_session.exec.return_value.all.return_value = []
+
+        get_project_models_service(uuid4(), mock_db_session)
+
+        models_stmt = mock_db_session.exec.call_args_list[1].args[0]
+        assert models_stmt._limit_clause is None
+        assert models_stmt._offset_clause is None
+
+    def test_paging_limits_and_offsets_the_models(self, mock_db_session: MagicMock):
+        mock_db_session.exec.return_value.first.return_value = 0
+        mock_db_session.exec.return_value.all.return_value = []
+
+        get_project_models_service(uuid4(), mock_db_session, paging_params(page_number=2, page_size=5))
+
+        models_stmt = mock_db_session.exec.call_args_list[1].args[0]
+        compiled = models_stmt.compile(compile_kwargs={"literal_binds": True})
+        assert "LIMIT 5 OFFSET 5" in str(compiled)
 
 
 class TestUpdateProjectStatus:
@@ -1110,7 +1118,7 @@ def test_get_trusts_approval_status_for_projects_returns_empty_for_empty_input()
 
 
 class TestGetProjectModelsServiceSearch:
-    """`get_project_models_service` accepts a `search` query-string param and
+    """`get_project_models_service` takes a search string and
     appends a case-insensitive name+description filter to both the model and
     count queries.
     """
@@ -1122,7 +1130,7 @@ class TestGetProjectModelsServiceSearch:
         get_project_models_service(
             project_id=uuid4(),
             session=mock_db_session,
-            query_params={"search": "segmentation"},
+            paging=paging_params(search="segmentation"),
         )
 
         # Two exec() calls: count then models. Both should carry the `like %seg%` predicate.

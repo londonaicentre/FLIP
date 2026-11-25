@@ -300,41 +300,28 @@ class TestListUsers:
         assert len(result) == 1
         assert result[0].email == "fallback@example.com"
 
-    def test_user_without_sub_attribute_raises(self, provider, cognito_client):
-        page = {
-            "Users": [
-                {
-                    "Username": "nosub@example.com",
-                    "Attributes": [{"Name": "email", "Value": "nosub@example.com"}],
-                    "Enabled": True,
-                }
-            ]
-        }
-        _wire_pages(cognito_client, page)
-
-        with pytest.raises(ValueError):  # noqa: PT011
-            provider.list_users()
-
-    def test_user_with_no_attributes_raises(self, provider, cognito_client):
-        _wire_pages(cognito_client, {"Users": [{"Username": "noattrs@example.com", "Enabled": True}]})
-
-        with pytest.raises(ValueError):  # noqa: PT011
-            provider.list_users()
-
-    def test_invalid_uuid_in_sub_attribute_raises(self, provider, cognito_client):
-        page = {
-            "Users": [
-                {
-                    "Username": "invalid@example.com",
-                    "Attributes": [
-                        {"Name": "sub", "Value": "invalid-uuid-format"},
-                        {"Name": "email", "Value": "invalid@example.com"},
-                    ],
-                    "Enabled": True,
-                }
-            ]
-        }
-        _wire_pages(cognito_client, page)
+    @pytest.mark.parametrize(
+        "raw_user",
+        [
+            {
+                "Username": "nosub@example.com",
+                "Attributes": [{"Name": "email", "Value": "nosub@example.com"}],
+                "Enabled": True,
+            },
+            {"Username": "noattrs@example.com", "Enabled": True},
+            {
+                "Username": "invalid@example.com",
+                "Attributes": [
+                    {"Name": "sub", "Value": "invalid-uuid-format"},
+                    {"Name": "email", "Value": "invalid@example.com"},
+                ],
+                "Enabled": True,
+            },
+        ],
+        ids=["no-sub", "no-attributes", "invalid-uuid-sub"],
+    )
+    def test_user_without_a_valid_sub_raises(self, provider, cognito_client, raw_user):
+        _wire_pages(cognito_client, {"Users": [raw_user]})
 
         with pytest.raises(ValueError):  # noqa: PT011
             provider.list_users()
@@ -517,14 +504,6 @@ class TestGetUser:
         assert result.id == user1
         paginate.assert_called_once_with(UserPoolId=USER_POOL_ID, Filter=f'sub = "{user1}"', Limit=1)
 
-    def test_by_uuid_string_is_canonicalised(self, provider, cognito_client):
-        """A string id is normalised through ``UUID()`` before interpolation."""
-        paginate = _wire_pages(cognito_client, {"Users": [_cognito_user(user1, "user@example.com")]})
-
-        provider.get_user(user_id=str(user1).upper())
-
-        paginate.assert_called_once_with(UserPoolId=USER_POOL_ID, Filter=f'sub = "{user1}"', Limit=1)
-
     @pytest.mark.parametrize(
         "bad_email",
         [
@@ -555,22 +534,6 @@ class TestGetUser:
                 provider.get_user(email=unsafe)
 
         assert str(exc_info.value) == "Invalid email address format"
-        cognito_client.get_paginator.return_value.paginate.assert_not_called()
-
-    @pytest.mark.parametrize(
-        "bad_user_id",
-        [
-            'not-a-uuid" or sub = "*',  # filter-injection payload
-            "123",
-            "abc-def",
-        ],
-    )
-    def test_rejects_non_uuid_user_id(self, provider, cognito_client, bad_user_id):
-        """Refuse to interpolate a non-UUID into the Cognito filter."""
-        with pytest.raises(InvalidIdentifierError) as exc_info:
-            provider.get_user(user_id=bad_user_id)
-
-        assert str(exc_info.value) == "Invalid user ID format"
         cognito_client.get_paginator.return_value.paginate.assert_not_called()
 
     def test_no_match_by_email_raises_user_not_found(self, provider, cognito_client):
@@ -605,22 +568,17 @@ class TestGetUser:
 
 
 class TestGetUsername:
-    """``get_username`` runs on the hot path (verify_token turns a sub back into an email)."""
+    """``get_username`` resolves a user id to its email."""
 
     def test_returns_email_for_known_sub(self, provider, cognito_client):
         page = {"Users": [_cognito_user(user1, "u@example.com", email="u@example.com")]}
         paginate = _wire_pages(cognito_client, page)
 
-        assert provider.get_username(str(user1)) == "u@example.com"
+        assert provider.get_username(user1) == "u@example.com"
 
         # The filter expression gates the query; pin it so a refactor cannot silently drop the
         # sub filter and start returning arbitrary users.
         paginate.assert_called_once_with(UserPoolId=USER_POOL_ID, Filter=f'sub = "{user1}"', Limit=1)
-
-    def test_accepts_a_uuid_instance(self, provider, cognito_client):
-        _wire_pages(cognito_client, {"Users": [_cognito_user(user1, "u@example.com", email="u@example.com")]})
-
-        assert provider.get_username(user1) == "u@example.com"
 
     def test_delegates_to_get_user(self, provider):
         with patch.object(provider, "get_user", return_value=CognitoUserFactory(id=user1, email="u@example.com")):
@@ -633,29 +591,10 @@ class TestGetUsername:
         _wire_pages(cognito_client, {"Users": []})
 
         with pytest.raises(UserNotFoundError) as exc_info:
-            provider.get_username(str(user1))
+            provider.get_username(user1)
 
         assert "is not registered" in str(exc_info.value)
         assert str(user1) in str(exc_info.value)
-
-    @pytest.mark.parametrize(
-        "bad_user_id",
-        [
-            'not-a-uuid" or sub = "*',  # filter-injection payload
-            "",
-            "123",
-            "abc-def",
-        ],
-    )
-    def test_rejects_non_uuid_user_id(self, provider, cognito_client, bad_user_id):
-        """Refuse to interpolate a non-UUID into the Cognito filter. The empty string is
-        indistinguishable from "no id given" at the ``get_user`` boundary, so either
-        ``InvalidIdentifierError`` wording is acceptable there."""
-        with pytest.raises(InvalidIdentifierError) as exc_info:
-            provider.get_username(bad_user_id)
-
-        assert str(exc_info.value) in {"Invalid user ID format", "No user email address or ID provided"}
-        cognito_client.get_paginator.return_value.paginate.assert_not_called()
 
 
 class TestSetEnabled:
@@ -753,33 +692,18 @@ class TestCreateUser:
         assert exc_info.value.__cause__ is client_error
         cognito_logger.exception.assert_called_once()
 
-    def test_user_created_but_no_user_id(self, provider, cognito_client):
+    @pytest.mark.parametrize(
+        "sub_attrs",
+        [[], [{"Name": "sub", "Value": ""}]],  # missing 'sub' attribute, or an empty user ID
+        ids=["missing-sub", "empty-sub"],
+    )
+    def test_user_created_without_usable_sub(self, provider, cognito_client, sub_attrs):
         email = "test@example.com"
         cognito_client.admin_create_user.return_value = {
             "User": {
                 "Username": email,
                 "Attributes": [
-                    {"Name": "email", "Value": email},
-                    {"Name": "email_verified", "Value": "true"},
-                    # Missing 'sub' attribute
-                ],
-                "Enabled": True,
-                "UserStatus": "FORCE_CHANGE_PASSWORD",
-            }
-        }
-
-        with pytest.raises(IdentityProviderError) as exc_info:
-            provider.create_user(email)
-
-        assert str(exc_info.value) == "User created but could not get user ID"
-
-    def test_user_created_with_empty_user_id(self, provider, cognito_client):
-        email = "test@example.com"
-        cognito_client.admin_create_user.return_value = {
-            "User": {
-                "Username": email,
-                "Attributes": [
-                    {"Name": "sub", "Value": ""},  # Empty user ID
+                    *sub_attrs,
                     {"Name": "email", "Value": email},
                     {"Name": "email_verified", "Value": "true"},
                 ],

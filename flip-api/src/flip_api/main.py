@@ -32,7 +32,6 @@ from flip_api.file_services import (
     get_model_files_list,
     presigned_url_for_upload,
     retrieve_federated_results,
-    retrieve_model_files_list,
     retrieve_uploaded_file_info,
     uploaded_file,
 )
@@ -58,6 +57,7 @@ from flip_api.private_services import (
     add_log,
     invoke_model_status_update,
     receive_cohort_results,
+    results_upload,
     save_training_metrics,
     trust_tasks,
 )
@@ -89,6 +89,7 @@ from flip_api.trusts_services import (
     admin_create_trust,
     get_trust_decisions,
     get_trusts,
+    trust_kit,
     trusts_health_check,
     update_trust_status,
 )
@@ -151,6 +152,9 @@ app = FastAPI(
     openapi_url=f"{API_PREFIX}/openapi.json" if _docs_enabled else None,
     redoc_url=f"{API_PREFIX}/redoc" if _docs_enabled else None,
     swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect" if _docs_enabled else None,
+    # No route ends in a slash. Behind the edge flip-api does not know the viewer's scheme, so the
+    # default redirect for `/path/` would send the client to `http://`: answer 404 instead.
+    redirect_slashes=False,
 )
 
 # Rate limiter — keyed by a hash of the trust API key (falls back to client IP)
@@ -191,7 +195,6 @@ ROUTERS: tuple[APIRouter, ...] = (
     get_model_files_list.router,
     presigned_url_for_upload.router,
     retrieve_federated_results.router,
-    retrieve_model_files_list.router,
     retrieve_uploaded_file_info.router,
     uploaded_file.router,
     # FL services
@@ -215,6 +218,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     add_log.router,
     invoke_model_status_update.router,
     receive_cohort_results.router,
+    results_upload.router,
     save_training_metrics.router,
     trust_tasks.router,
     # Project services
@@ -244,6 +248,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     admin_create_trust.router,
     get_trust_decisions.router,
     get_trusts.router,
+    trust_kit.router,
     trusts_health_check.router,
     update_trust_status.router,
     # User services

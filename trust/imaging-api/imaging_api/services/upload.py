@@ -12,11 +12,13 @@
 
 import json
 import os
+import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import APIRouter
+from fastapi import APIRouter, UploadFile
 
 from imaging_api.config import get_settings
 from imaging_api.services.image_cache import invalidate_accession
@@ -33,6 +35,26 @@ BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
 
 # Create router
 router = APIRouter(prefix="/upload", tags=["Upload"])
+
+
+def _net_upload_directory(net_id: str) -> str:
+    """The net's own upload directory, ``<images root>/<net>/upload``, as a real path.
+
+    Args:
+        net_id (str): The FL net ID.
+
+    Returns:
+        str: The directory's path, with no symlink in it below the images root.
+
+    Raises:
+        ValueError: If the net ID is not one directory name, or the directory is reached through a link.
+            The FL client can write its net's folder, and a link there would point imaging-api at
+            another net's files.
+    """
+    expected = os.path.join(os.path.realpath(BASE_IMAGES_DOWNLOAD_DIR), net_id, "upload")
+    if net_id in ("", ".", "..") or os.path.basename(net_id) != net_id or os.path.realpath(expected) != expected:
+        raise ValueError(f"Path traversal detected in net ID: {net_id}")
+    return expected
 
 
 async def upload_data_to_xnat(
@@ -68,13 +90,7 @@ async def upload_data_to_xnat(
         ValueError: If the net ID or any file path attempts path traversal outside the upload directory.
         Exception: If the scan does not exist and the session holds no scan to take its type from.
     """
-    # Get base directory from configuration
-    upload_directory = os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id, "upload")
-    base_images_download_dir_abs = os.path.realpath(BASE_IMAGES_DOWNLOAD_DIR)
-    upload_directory_abs = os.path.realpath(upload_directory)
-
-    if not upload_directory_abs.startswith(base_images_download_dir_abs + os.sep):
-        raise ValueError(f"Path traversal detected in net ID: {net_id}")
+    upload_directory_abs = _net_upload_directory(net_id)
 
     # Verify and build full file paths, rejecting any path traversal attempts
     full_file_paths: list[str] = []
@@ -149,6 +165,43 @@ async def upload_data_to_xnat(
         logger.warning(f"Could not invalidate download-cache sentinels for accession {accession_id}: {e}")
 
     return uploaded_files
+
+
+async def stage_uploads(net_id: str, uploads: list[UploadFile]) -> tuple[str, list[str]]:
+    """
+    Writes multipart uploads under ``<net>/upload/<request id>/`` for ``upload_data_to_xnat`` (FLIP#1049).
+
+    Args:
+        net_id (str): The FL net ID.
+        uploads (list[UploadFile]): The files, each named by its path relative to the net's upload directory, as on
+            the mount route, so ``a/seg.nii`` and ``b/seg.nii`` stay two files.
+
+    Returns:
+        tuple[str, list[str]]: The staging directory to remove afterwards, and the files' paths relative to the
+        net's upload directory.
+
+    Raises:
+        ValueError: If the net ID or a file's path attempts path traversal, or a file has no name.
+    """
+    upload_directory_abs = _net_upload_directory(net_id)
+    request_id = uuid.uuid4().hex
+    staging_dir = os.path.join(upload_directory_abs, request_id)
+    relative_paths = [upload.filename or "" for upload in uploads]
+    # Check every path before writing any, so a refused request leaves nothing behind. The checked path is the one
+    # written, so nothing but the check decides where a file lands.
+    staged_paths: list[str] = []
+    for relative_path in relative_paths:
+        if not os.path.basename(relative_path):
+            raise ValueError("every uploaded file needs a name")
+        staged_path = os.path.realpath(os.path.join(staging_dir, relative_path))
+        if not staged_path.startswith(staging_dir + os.sep):
+            raise ValueError(f"Path traversal detected in file path: {relative_path}")
+        staged_paths.append(staged_path)
+    for upload, staged_path in zip(uploads, staged_paths, strict=True):
+        os.makedirs(os.path.dirname(staged_path), exist_ok=True)
+        with open(staged_path, "wb") as staged:
+            shutil.copyfileobj(upload.file, staged)
+    return staging_dir, [f"{request_id}/{relative_path}" for relative_path in relative_paths]
 
 
 def create_xnat_scan(

@@ -26,7 +26,7 @@ TF := terraform
 ANSIBLE_DIR := $(REPO_ROOT)/trust/deploy/ansible
 # Ansible from the AWS tree's locked uv project, which the on-prem play uses too, until FLIP#1438
 # PR 3 gives the trust side its own.
-ANSIBLE := uv run --project $(REPO_ROOT)/deploy/providers/AWS
+ANSIBLE := uv run --project $(REPO_ROOT)/deploy/aws
 
 KIT ?=
 # Checked when parsed: every target derives NAME and the kit file from KIT. A KIT holding spaces is
@@ -48,6 +48,7 @@ REGION ?= eu-west-2
 STATE_BUCKET ?=
 STATE_KEY ?= trust-nodes/$(NAME).tfstate
 SUBNET_ID ?=
+PRIVATE_IP ?=
 INSTANCE_TYPE ?= t3.xlarge
 PUBLIC_KEY_FILE ?= $(HOME)/.ssh/host-aws.pub
 SSH_KEY ?= $(HOME)/.ssh/host-aws
@@ -65,7 +66,7 @@ export AWS_PROFILE
 endif
 
 # The plan's inputs. Destroy needs no real key: the provider parses one, so a discarded public key.
-TF_VARS = -var 'name=$(NAME)' -var 'region=$(REGION)' -var 'subnet_id=$(SUBNET_ID)' \
+TF_VARS = -var 'name=$(NAME)' -var 'region=$(REGION)' -var 'subnet_id=$(SUBNET_ID)' -var 'private_ip=$(PRIVATE_IP)' \
 	-var 'instance_type=$(INSTANCE_TYPE)' -var 'permissions_boundary_arn=$(BOUNDARY_ARN)' \
 	-var 'kit_bucket_name=$(KIT_BUCKET)' $(if $(KIT_BUCKET),-var 'kit_slot=$(KIT_SLOT)') \
 	-var 'kit_kms_key_arn=$(KIT_KMS_KEY_ARN)' -var 'fl_server_ports=[$(FL_PORT)]' \

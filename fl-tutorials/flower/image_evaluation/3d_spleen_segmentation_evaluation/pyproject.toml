@@ -39,13 +39,13 @@ license = "Apache-2.0"
 # does not exist. Pick up flip-utils changes on the compose stacks with
 # `make build-fl FL_BACKEND=flower`.
 dependencies = [
-    "flwr[simulation]>=1.42.0",
+    "flwr[simulation]>=1.43.0",
     "monai>=1.6.0",
     "nibabel>=5.3.3",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
     "pydicom>=3.0.1",
-    "torch>=2.13.0,<2.14",
+    "torch>=2.15.0,<2.16",
 ]
 
 [tool.hatch.build.targets.wheel]

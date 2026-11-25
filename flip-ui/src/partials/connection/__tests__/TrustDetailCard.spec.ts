@@ -12,7 +12,8 @@
  */
 
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { h } from "vue";
 
 import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
@@ -67,8 +68,22 @@ const trust = (xnat: IServiceHealth["status"] = "healthy"): ITrustResponse => ({
     services_updated_at: seconds(5)
 });
 
+// Pin the clock to the fixtures' `now`, so heartbeat ages are exact however long the run
+// takes. Only Date is faked, so promise flushing and timers stay real.
+beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+});
+
+afterEach(() => {
+    vi.useRealTimers();
+});
+
 // The card is the drawer's body without the Dialog, so it mounts plainly — no teleport, no stubs.
 describe("TrustDetailCard", () => {
+    // The card's Trust kit section reads the auth store; with nobody signed in it renders nothing.
+    beforeEach(() => setActivePinia(createPinia()));
+
     it("titles the card with the trust's name in a heading by default", () => {
         const wrapper = mount(TrustDetailCard, { props: { trust: deriveTrust(trust()) } });
 
@@ -77,11 +92,38 @@ describe("TrustDetailCard", () => {
         expect(wrapper.find("[data-test='drawer-heartbeat']").text()).toMatch(/heartbeat \d+s ago/);
     });
 
+    it("hands the trust to its Trust kit section, which decides who sees it", () => {
+        const wrapper = mount(TrustDetailCard, {
+            props: { trust: deriveTrust(trust()) },
+            global: { stubs: { TrustKitSection: true } }
+        });
+
+        expect(wrapper.findComponent({ name: "TrustKitSection" }).props("trust")).toMatchObject({ id: "t1" });
+    });
+
     it("lists one row per container and no banner when every service is healthy", () => {
         const wrapper = mount(TrustDetailCard, { props: { trust: deriveTrust(trust()) } });
 
         expect(wrapper.findAll("[data-test='container-row']")).toHaveLength(6);
         expect(wrapper.find("[data-test='drawer-banner']").exists()).toBe(false);
+    });
+
+    it("shows the FL client's version and job mode under the containers, without a status of its own", () => {
+        // FLIP#1739: trust-api cannot probe the FL client, so it gets a version line, not a seventh container row.
+        const reported = trust();
+        reported.services!["fl-client"] = {
+            status: "unknown",
+            version: "v0.15.0",
+            response_ms: null,
+            job_mode: "pods"
+        };
+        const wrapper = mount(TrustDetailCard, { props: { trust: deriveTrust(reported) } });
+
+        expect(wrapper.find("[data-test='fl-client-version']").text()).toBe("v0.15.0 · a pod per job");
+        expect(wrapper.findAll("[data-test='container-row']")).toHaveLength(6);
+
+        const silent = mount(TrustDetailCard, { props: { trust: deriveTrust(trust()) } });
+        expect(silent.find("[data-test='fl-client-version']").text()).toBe("—");
     });
 
     it("shows the issue banner when a service is down", () => {

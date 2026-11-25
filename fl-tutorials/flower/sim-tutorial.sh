@@ -31,7 +31,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 # Run in flip-utils' env so the app sees the same flip package a SuperNode image carries.
-FLIP_UV=(uv run --project "$REPO_ROOT/flip-utils" --extra full)
+FLIP_UV=(uv run --project "$REPO_ROOT/flip-utils" --extra flower --extra full)
 # flwr resolves the `local` connection to a SuperLink on this port (flwr/cli/constant.py) and
 # reuses whatever already answers its /health there — it does not check who started it. Since
 # flwr 1.37 the Control API is served over HTTP on this one port; the legacy gRPC control address
@@ -248,6 +248,12 @@ case "$TUTORIAL" in
     # partition, exactly as under the compose stack.
     export DEV_DATAFRAME="$DATA_ROOT/synthea/dataframe.csv"
     DATASET_TARGET=download-synthea-data ;;
+  biomarker_causal_discovery)
+    # Tabular-only, like ehr_risk_prediction: one shared CSV, sliced per site by partition_cohort.
+    # Built from the user's own ADNI download (access-controlled: the tutorial README's "Data").
+    export DEV_DATAFRAME="$DATA_ROOT/ad_biomarkers/dataframe.csv"
+    DATASET_TARGET="convert-adni-cohort ADNI_DIR=<your IDA tables>"
+    ACCESS_CONTROLLED=1 ;;
   3d_prostate_segmentation)
     # The XNAT-export-shaped tree prepare_prostate_local_data.py writes from the PI-CAI download
     # (three scans per study, masks beside each), honouring NUM_CASES.
@@ -269,6 +275,12 @@ if [ "$TUTORIAL" = 3d_spleen_segmentation_evaluation ]; then
 fi
 for p in "${REQUIRED[@]}"; do
   if [ ! -e "$p" ]; then
+    # No release host may hold an access-controlled dataset, so the catalogue loop
+    # (run-all-tutorials) reports such a tutorial as skipped rather than failed.
+    if [ -n "${ACCESS_CONTROLLED:-}" ] && [ -n "${TUTORIAL_SKIP_RESTRICTED_IF_ABSENT:-}" ]; then
+      echo "⏭️ tutorial $TUTORIAL skipped: access-controlled dataset absent ($p)"
+      exit 0
+    fi
     echo "❌ Dataset missing: $p"
     echo "   Run: make -C fl-tutorials $DATASET_TARGET"
     exit 1

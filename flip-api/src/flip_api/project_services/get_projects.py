@@ -12,9 +12,10 @@
 
 import json
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, and_, col, desc, func, or_, select
 
 from flip_api.auth.auth_utils import has_permissions
@@ -32,7 +33,7 @@ from flip_api.db.models.main_models import (
 from flip_api.db.models.user_models import PermissionRef, UserProfile
 from flip_api.domain.interfaces.project import IProject, IProjectQuery
 from flip_api.domain.schemas.actions import ProjectAuditAction
-from flip_api.domain.schemas.status import TaskStatus
+from flip_api.domain.schemas.status import ProjectType, TaskStatus
 from flip_api.project_services.services.project_services import (
     _classify_responded_trust_ids,
     get_trusts_approval_status_for_projects,
@@ -43,12 +44,21 @@ from flip_api.utils.paging_utils import (
     IPagedData,
     IPagedResponse,
     PagingInfo,
-    get_filter_details,
-    get_paging_details,
     get_total_pages,
+    paging_params,
 )
+from flip_api.utils.user_roles import profile_display_name
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
+
+
+def _utc_iso(dt: datetime) -> str:
+    """Naive UTC column -> ISO string the browser parses as UTC.
+
+    The columns default to ``datetime.utcnow``, so the value is already UTC, just untagged; the ``Z``
+    suffix stops the browser reading it as local time. See trust.last_heartbeat for the same fix.
+    """
+    return dt.isoformat(timespec="milliseconds") + "Z"
 
 
 def get_projects_paginated_orm(
@@ -109,7 +119,7 @@ def get_projects_paginated_orm(
     # pulls the owner's display name in the same round-trip — same pattern
     # used in _load_latest_query_per_project for Queries.created_by.
     projects_query = (
-        select(Projects, UserProfile.name)  # type: ignore[call-overload]
+        select(Projects, profile_display_name())  # type: ignore[call-overload]
         .outerjoin(
             ProjectUserAccess,
             and_(ProjectUserAccess.project_id == Projects.id, ProjectUserAccess.user_id == user_id),
@@ -149,8 +159,7 @@ def get_projects_paginated_orm(
             owner_id=project.owner_id,
             owner_name=owner_name or None,
             user_count=user_count_by_project.get(project.id, 0),
-            # `Z` suffix so the browser treats the naive UTC value as UTC.
-            creation_timestamp=project.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
+            creation_timestamp=_utc_iso(project.creation_timestamp),
             staged_at=staged_at_by_project.get(project.id),
             status=project.status,
             has_imaging=project.has_imaging,
@@ -195,7 +204,7 @@ def _load_latest_query_per_project(
             Queries.name,
             Queries.query,
             Queries.created,
-            UserProfile.name,
+            profile_display_name(),
             Queries.queried_trust_ids,
         )
         .join(UserProfile, UserProfile.user_id == Queries.created_by, isouter=True)
@@ -282,8 +291,7 @@ def _load_latest_query_per_project(
             errored_trust_ids=errored_trust_ids_by_query.get(qid, []),
             empty_trust_ids=empty_trust_ids_by_query.get(qid, []),
             total_cohort=total_cohort_by_query.get(qid, 0),
-            # `Z` suffix so the browser parses as UTC (naive UTC column).
-            created=(qcreated.isoformat(timespec="milliseconds") + "Z") if qcreated else None,
+            created=_utc_iso(qcreated) if qcreated else None,
             created_by=qcreated_by or None,
         )  # type: ignore[call-arg]
         for pid, (qid, qname, qsql, qcreated, qcreated_by, persisted_queried) in latest_per_project.items()
@@ -317,9 +325,7 @@ def _load_latest_audit_at_per_project(
     for pid, audit_date in rows:
         if pid is None or audit_date is None or pid in latest:
             continue
-        # `Z` suffix so the browser parses the naive UTC value as UTC, matching
-        # creation_timestamp / query.created above (audit_date defaults to datetime.utcnow).
-        latest[pid] = audit_date.isoformat(timespec="milliseconds") + "Z"
+        latest[pid] = _utc_iso(audit_date)
 
     return latest
 
@@ -350,7 +356,9 @@ def _load_user_counts(project_ids: list[UUID], session: Session) -> dict[UUID, i
     status_code=status.HTTP_200_OK,
 )
 def get_projects_endpoint(
-    request: Request,
+    owner: UUID | None = None,
+    project_type: Annotated[ProjectType | None, Query(alias="projectType")] = None,
+    paging_details: PagingInfo = Depends(paging_params),
     session: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ) -> IPagedData[IProject]:
@@ -358,7 +366,9 @@ def get_projects_endpoint(
     Get a paginated and filtered list of projects.
 
     Args:
-        request (Request): The HTTP request object, used to access query parameters.
+        owner (UUID | None): Only projects owned by this user.
+        project_type (ProjectType | None): Only imaging or only tabular projects (FLIP#1071); None = every type.
+        paging_details (PagingInfo): The page and search string.
         session (Session): The database session for querying.
         user_id (UUID): The ID of the user making the request.
 
@@ -370,8 +380,7 @@ def get_projects_endpoint(
     """
     logger.info("Requesting all projects")
 
-    paging_details = get_paging_details(query_string_parameters=dict(request.query_params))
-    filter_details = get_filter_details(query_string_parameters=dict(request.query_params))
+    filter_details = FilterInfo(owner=owner, project_type=project_type)
 
     # If user has manager permissions, remove their user-specific filter (equivalent to `user_id = null`)
     if has_permissions(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], session):

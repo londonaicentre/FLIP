@@ -397,12 +397,6 @@ def test_get_user_rejects_malformed_emails_before_calling_keycloak(keycloak, pro
     assert _admin_calls(keycloak) == []
 
 
-def test_get_user_rejects_a_non_uuid_id(keycloak, provider):
-    with pytest.raises(InvalidIdentifierError):
-        provider.get_user(user_id="not-a-uuid")
-    assert _admin_calls(keycloak) == []
-
-
 def test_get_user_requires_an_identifier(provider):
     with pytest.raises(InvalidIdentifierError):
         provider.get_user()
@@ -506,6 +500,22 @@ def test_create_user_registers_the_email_and_sends_the_set_password_email(keyclo
     assert actions == ["UPDATE_PASSWORD"]
     assert params["client_id"] == "flip-ui"
     assert keycloak.password_resets == []
+
+
+def test_create_user_whose_invite_fails_does_not_leave_the_account_behind(keycloak):
+    """The caller is told the registration failed; a leftover account would turn its retry into a 409."""
+
+    def invite_times_out(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/execute-actions-email"):
+            raise httpx.ReadTimeout("timed out", request=request)
+        return keycloak.handler(request)
+
+    provider = KeycloakIdentityProvider(_settings(), transport=httpx.MockTransport(invite_times_out))
+
+    with pytest.raises(IdentityProviderUnavailable):
+        provider.create_user("new@example.com")
+
+    assert not any(user["email"] == "new@example.com" for user in keycloak.users.values())
 
 
 def test_create_user_with_suppress_invite_sends_nothing(keycloak, provider):

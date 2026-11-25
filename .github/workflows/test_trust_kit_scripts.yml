@@ -42,7 +42,7 @@ on:
       # is where those gates are checked.
       - ".github/workflows/test_*.yml"
       - ".github/workflows/pr_paths_changed.yml"
-      - "deploy/compose*.yml"
+      - "deploy/compose/*.yml"
       - "trust/deploy/compose/*.yml"
       - "fl-services/nvflare/compose.dev.yml"
       # test_flower_runtime_install.py asserts on the Flower composes, the Helm chart and the FL
@@ -51,6 +51,12 @@ on:
       # test_fl_kit_edge_port.py asserts on the FLARE provisioning templates (FLIP#1365).
       - "fl-services/nvflare/provision/net-*_project_*.yml"
       - "fl-services/flower/*/Dockerfile"
+      # test_terraform_image_wait.py holds the apply's image wait to the image builds (FLIP#1811).
+      - "fl-services/nvflare/*/Dockerfile"
+      - "flip-api/Dockerfile"
+      - ".github/workflows/terraform_apply.yml"
+      - "deploy/aws/scripts/image-wait-budgets.sh"
+      - "deploy/aws/scripts/resolve-image-tags.sh"
       - "trust/deploy/helm/templates/**"
       - "trust/deploy/helm/values*.yaml"
       # test_mirror_images.py asserts every third-party image a trust node runs is pinned to the
@@ -70,6 +76,8 @@ on:
       - ".github/workflows/docker_build_*.yml"
       - ".github/workflows/fl-docker-build-*.yml"
       - ".github/workflows/release.yml"
+      # test_install_graphviz.py scans every workflow for a graphviz install outside the action (FLIP#1988).
+      - ".github/workflows/*.yml"
       - ".github/actions/**"
       - ".github/tests/**"
       - "tests/**"
@@ -84,6 +92,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test-trust-kit-lib:
     runs-on: ubuntu-latest
@@ -93,7 +107,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       # test_sync_trust_kit.py drives sync_trust_kit.py through `uv run --no-config` and hard-exits
       # (rather than skipping) when uv is absent, so the runner needs it even though the tests
       # themselves are stdlib-only.

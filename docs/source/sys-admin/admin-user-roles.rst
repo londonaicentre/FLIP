@@ -5,8 +5,8 @@ User roles
 ##########
 
 FLIP has four roles. In the Admin Area each user gets **one role**: choosing a new role replaces the one they hold
-rather than adding to it. There is no need to stack roles, because ``admin`` already includes everything a
-``researcher`` can do.
+rather than adding to it. There is no need to stack roles, because ``admin`` and ``trust admin`` already include
+everything a ``researcher`` can do.
 
 .. note::
 
@@ -36,7 +36,7 @@ Roles
      - Read-only access to the projects they have been added to.
    * - ``trust admin``
      - Everything a ``researcher`` can do, plus approving or declining projects for **one trust**, chosen when the
-       role is assigned (see :ref:`assigning-a-trust-admin`).
+       role is assigned (see :ref:`assigning-a-trust-admin`), and downloading that trust's kit.
 
 Researchers
 ===========
@@ -75,6 +75,9 @@ Trust Admins
 - **Where their authority stops.** The approval right applies at their one trust only. They see nothing of projects
   staged only at other trusts and have no say over them.
 - **Where they decide.** On the **My Trust** page (see :ref:`trust-admin-guide`).
+- **Their trust's kit.** A Trust Admin can download their trust's kit and issue it new keys, from the **Trust kit**
+  section of the same page (see :ref:`onboarding-kit-from-ui`). An ``admin`` can do the same for any trust, from its
+  card on the Connection Status page. Each download and each key change is written to the trust's audit log.
 
 Every change to who is a trust's Trust Admin is written to that trust's audit log.
 
@@ -106,6 +109,11 @@ Permissions
      - No
      - No
      - Yes
+   * - Download a trust's kit and issue it new keys
+     - Yes
+     - No
+     - No
+     - For their own trust
    * - Unstage projects
      - Yes
      - No
@@ -150,15 +158,57 @@ only read. Editing, staging or deleting the project itself stays with the owner 
 
    **A role change does not remove project ownership.** A user who created a project keeps write access to it
    (editing, staging, deleting, submitting cohort queries) even after being demoted to Viewer. Demotion only stops
-   them creating new projects or writing to projects they do not own.
+   them creating new projects, writing to projects they do not own, and adding members to their own projects.
 
    To fully remove a former owner's access, transfer the project to another user or delete it.
+
+.. _disable-or-delete-a-user:
+
+***************************
+Disabling or deleting users
+***************************
+
+Both are in the user's **Danger Zone** in the Admin Area and need the *Manage users* permission.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 39 39
+
+   * -
+     - Disable
+     - Delete
+   * - When
+     - Any time. Use it to suspend access.
+     - Once the account is disabled (the button is greyed out until then). Use it when someone leaves or asks to be
+       erased.
+   * - Sign-in
+     - Refused until the account is re-enabled.
+     - The account is removed from the identity provider.
+   * - Roles and project memberships
+     - Kept.
+     - Removed.
+   * - Name, email, organisation
+     - Kept.
+     - The email and organisation are removed. The name is kept so that history can still say who did what.
+   * - History (projects, models, approvals)
+     - Shows the user's name.
+     - Shows "Former user (*name*)".
+   * - Undo
+     - Re-enable the account.
+     - Not possible. Register the person again as a new user.
+
+The hub refuses a delete while the user still owns a project that is not deleted, or is a Trust Admin. The refusal
+names the projects and trusts. Transfer or delete those projects, or move the Trust Admin to another role, then delete
+the user.
+
+Each delete is written to the users audit trail, with the admin who made it and the user's name at the time.
 
 *************************
 Who can see whose profile
 *************************
 
-Profile visibility follows the *Manage users* permission, not project ownership.
+Full profiles follow the *Manage users* permission. The email lookup follows the *Create projects* permission. Neither
+depends on project ownership.
 
 .. list-table::
    :header-rows: 1
@@ -185,7 +235,7 @@ Researchers need to look up an email address when adding someone to a project. T
 email address and whether the account is enabled, never their name or organisation. Without *Manage users*, nobody
 can list the users.
 
-The lookup follows the *Create projects* permission, not ownership. An owner demoted to Viewer keeps write access to
+An owner demoted to Viewer keeps write access to
 their projects but can no longer add members, because Viewers are not shown the add-member form.
 
 .. warning::

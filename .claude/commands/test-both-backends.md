@@ -38,3 +38,33 @@ pull on the first backend, then reuse the same approved project on the second.
 4. **Summarise**: a clear PASS/FAIL line per backend, and surface any error output from a failed run. If the user passed extra flags in `$ARGUMENTS` (e.g. `--abort-midway`, custom `MODEL_FILES_DIR`/`QUERY_FILE`), thread them into the `EXTRA_ARGS`/make vars of both runs.
 
 Note: if the first run fails before printing a `project_id`, stop and report — don't proceed to the switch.
+
+## Against a deployed hub (staging)
+
+When the user asks for the smoke against staging (or another deployed hub), the steps above do not apply as written:
+the FL backend is the hub's, switched by a Terraform apply rather than `restart-fl`, so one run covers one backend.
+Run the hub's current backend and say the other was not covered. The full reference is "Smoking a REMOTE hub" in
+`flip-api/AGENTS.md`.
+
+1. **Same build everywhere.** Read the hub's version from `/api/health`, then each trust's from trust-api `/health`
+   (`version`, plus `hub_key_match: true`). If a trust is behind, upgrade it first: `make -C trust upgrade-trust` on
+   Compose, `make -C trust/deploy/helm upgrade-trust-k8s` on Kubernetes, each with `TAG=<the hub's sha- tag>`. The
+   upgrade refuses a tag any site image was never built at; dispatch the trust image builds on that commit first when
+   it did not trigger them. On Helm, check the FL client pod afterwards: the upgrade can exit 0 with it down (#1984).
+2. **Tokens.** Remote hubs enforce MFA, so the smoke takes a Cognito access token and refresh token from a signed-in
+   admin's browser. Ask the user to copy each from the DevTools console with
+   `copy(localStorage.getItem(Object.keys(localStorage).find(k => k.endsWith('.accessToken'))))` (then
+   `.refreshToken`) and save it themselves with `! umask 077; pbpaste > <file>`. The refresh token lets the run outlive
+   the access token's hour.
+3. **Run it in the background** from a checkout of the deployed commit, with the hub's env file selected by `HUB`:
+   ```
+   FLIP_E2E_BASE_URL=https://<hub>/api FLIP_E2E_TOKEN="$(cat <access>)" FLIP_E2E_REFRESH_TOKEN="$(cat <refresh>)" \
+     POSTGRES_PASSWORD=x make e2e_smoke HUB=stag FL_BACKEND=<hub's backend> \
+     EXTRA_ARGS="--trusts <CODE>,<CODE> --project-name '<name>' --project-description '<the clinical task>'"
+   ```
+   For a trust without the OMOP vocabulary, pass the tutorial's `query_novocab.sql` as an absolute `QUERY_FILE`.
+4. **Trusts that run NVFLARE jobs as pods** build each project's study entry when its job starts. A job-pod trust
+   older than the hub has none, and the server aborts the job on every site; the other trusts then show only
+   `child worker process finished with RC 1`, which is that abort, not a crash.
+5. **When the model goes to ERROR**, read the FL server's log before the trusts': on AWS, the CloudWatch group
+   `/ecs/fl-server-net-1` names the site and the reason.

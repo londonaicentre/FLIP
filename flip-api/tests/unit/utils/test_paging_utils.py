@@ -11,20 +11,16 @@
 #
 
 import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 
-from flip_api.domain.schemas.status import ProjectType
-from flip_api.utils.paging_utils import get_filter_details, get_total_pages
-
-# Absolute import of function to test
+from flip_api.utils.paging_utils import PagingInfo, get_total_pages, paging_params
 
 
 @pytest.mark.parametrize(
-    ("total_records", "page_size_int", "expected_pages"),
+    ("total_records", "page_size", "expected_pages"),
     [
         (0, 10, 0),  # No records, no pages
-        (100, 0, 0),  # Page size is zero
-        (100, -5, 0),  # Page size is negative
-        (-10, 5, 0),  # Total records is negative
         (10, 20, 1),  # Records less than page size
         (20, 20, 1),  # Records equal to page size
         (100, 20, 5),  # Records are a multiple of page size
@@ -35,36 +31,30 @@ from flip_api.utils.paging_utils import get_filter_details, get_total_pages
         (1000000, 100, 10000),  # Large numbers
     ],
 )
-def test_get_total_pages_various_scenarios(total_records, page_size_int, expected_pages):
-    assert get_total_pages(total_records, page_size_int) == expected_pages
+def test_get_total_pages_various_scenarios(total_records, page_size, expected_pages):
+    assert get_total_pages(total_records, page_size) == expected_pages
 
 
-def test_get_total_pages_page_size_zero_logs_warning(caplog):
-    get_total_pages(100, 0)
-    assert "page_size_int is non-positive, returning 0 total pages." in caplog.text
+app = FastAPI()
 
 
-def test_get_total_pages_page_size_negative_logs_warning(caplog):
-    get_total_pages(100, -10)
-    assert "page_size_int is non-positive, returning 0 total pages." in caplog.text
+@app.get("/paged")
+def paged(paging: PagingInfo = Depends(paging_params)) -> PagingInfo:
+    return paging
 
 
-def test_get_total_pages_total_records_zero():
-    assert get_total_pages(0, 10) == 0
+def test_paging_params_defaults_and_offset():
+    client = TestClient(app)
+
+    assert client.get("/paged").json() == {"offset": 0, "pageNumberInt": 1, "pageSizeInt": 20, "searchStr": ""}
+    assert client.get("/paged", params={"pageNumber": 3, "pageSize": 5, "search": "ct"}).json() == {
+        "offset": 10,
+        "pageNumberInt": 3,
+        "pageSizeInt": 5,
+        "searchStr": "ct",
+    }
 
 
-def test_get_total_pages_total_records_negative():
-    assert get_total_pages(-5, 10) == 0
-
-
-@pytest.mark.parametrize(
-    ("params", "expected"),
-    [
-        ({"projectType": "imaging"}, ProjectType.IMAGING),
-        ({"projectType": "omop_only"}, ProjectType.OMOP_ONLY),
-        ({"projectType": "bogus"}, None),  # a UI convenience: unknown values mean "every type"
-        ({}, None),
-    ],
-)
-def test_get_filter_details_parses_project_type(params, expected):
-    assert get_filter_details(params).project_type == expected
+@pytest.mark.parametrize("params", [{"pageSize": 0}, {"pageNumber": -1}, {"pageSize": "abc"}])
+def test_paging_params_rejects_bad_values(params):
+    assert TestClient(app).get("/paged", params=params).status_code == 422

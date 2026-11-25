@@ -92,6 +92,23 @@ def generate_ca() -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
         .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=VALIDITY_DAYS))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        # Python 3.13's default TLS context verifies strictly (VERIFY_X509_STRICT): a CA needs its
+        # key usage and key identifier, and the certificate it signs an authority key identifier.
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False)
         .sign(private_key, hashes.SHA256())
     )
 
@@ -133,10 +150,45 @@ def generate_server_cert(
             x509.SubjectAlternativeName(alt_names),
             critical=False,
         )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
 
     return private_key, cert
+
+
+def write_supernode_key(number: int) -> None:
+    """Generate one generic ECDSA key pair, ``supernode_credentials_<number>{,.pub}``."""
+    # Generate ECDSA key (P-384 to match -b 384)
+    private_key = ec.generate_private_key(ec.SECP384R1())
+
+    # Both halves in OpenSSH format, as the ssh-keygen this replaced wrote them.
+    private_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    # Serialize Public Key (OpenSSH format)
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.OpenSSH,
+        format=serialization.PublicFormat.OpenSSH,
+    )
+
+    # Write files
+    priv_path = KEY_DIR / f"supernode_credentials_{number}"
+    pub_path = KEY_DIR / f"supernode_credentials_{number}.pub"
+
+    # Created owner-only, so the private key is never readable by anyone else.
+    with open(os.open(priv_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
+        f.write(private_bytes)
+
+    # Write public key
+    with open(pub_path, "wb") as f:
+        f.write(public_bytes)
+
+    print(f"  - SuperNode {number}: {priv_path}, {pub_path}")
 
 
 def generate_supernode_keys(num_supernodes: int) -> None:
@@ -151,41 +203,20 @@ def generate_supernode_keys(num_supernodes: int) -> None:
     print(f"Generating keys for {num_supernodes} supernodes...")
 
     for i in range(1, num_supernodes + 1):
-        # Generate ECDSA key (P-384 to match -b 384)
-        private_key = ec.generate_private_key(ec.SECP384R1())
+        write_supernode_key(i)
 
-        # Serialize Private Key (OpenSSH format)
-        # Note: The original script used ssh-keygen Use OpenSSH format for both
-        private_bytes = private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.OpenSSH,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
 
-        # Serialize Public Key (OpenSSH format)
-        public_bytes = private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.OpenSSH,
-            format=serialization.PublicFormat.OpenSSH,
-        )
+def add_supernode_key(number: int) -> None:
+    """Add one SuperNode key pair beside the existing ones (FLIP#1942).
 
-        # Write files
-        priv_path = KEY_DIR / f"supernode_credentials_{i}"
-        pub_path = KEY_DIR / f"supernode_credentials_{i}.pub"
-
-        # Write private key
-        with open(priv_path, "wb") as f:
-            f.write(private_bytes)
-        # Set permissions for private key (600) - mainly for Unix, but good practice
-        try:
-            os.chmod(priv_path, 0o600)
-        except Exception:
-            pass
-
-        # Write public key
-        with open(pub_path, "wb") as f:
-            f.write(public_bytes)
-
-        print(f"  - SuperNode {i}: {priv_path}, {pub_path}")
+    A SuperNode key is not signed by the CA, so nothing else is regenerated and every
+    credential already handed out stays valid.
+    """
+    KEY_DIR.mkdir(exist_ok=True)
+    # The two exact names: a prefix match would also see supernode_credentials_10 for 1.
+    if any((KEY_DIR / f"supernode_credentials_{number}{half}").exists() for half in ("", ".pub")):
+        raise SystemExit(f"{KEY_DIR}/supernode_credentials_{number} already exists: refusing to overwrite it.")
+    write_supernode_key(number)
 
 
 def main() -> None:
@@ -196,7 +227,19 @@ def main() -> None:
         default=2,
         help="Number of SuperNode key pairs to generate",
     )
+    parser.add_argument(
+        "--add-supernode",
+        type=int,
+        metavar="NUMBER",
+        help="Only add the key pair supernode_credentials_<NUMBER>; certificates and other keys are left alone",
+    )
     args = parser.parse_args()
+
+    if args.add_supernode is not None:
+        if args.add_supernode < 1:
+            parser.error("--add-supernode takes a slot number of 1 or more")
+        add_supernode_key(args.add_supernode)
+        return
 
     # --- TLS Certificates ---
     CERT_DIR.mkdir(exist_ok=True)

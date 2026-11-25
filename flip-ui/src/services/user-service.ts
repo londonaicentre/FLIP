@@ -69,10 +69,10 @@ export interface IProjectUser {
 }
 
 /**
- * What `GET /users/lookup` returns when resolving an email to a prospective project member.
+ * A project member as `GET /users/lookup` and `GET /projects/{id}` return it.
  *
  * Deliberately narrower than IProjectUser: the hub withholds `name` and `organisation` from
- * everyone who lacks CAN_MANAGE_USERS, so the add-member flow never sees them (FLIP#907).
+ * everyone who lacks CAN_MANAGE_USERS, so project members never carry them (FLIP#907, FLIP#996).
  */
 export interface IProjectUserLookup {
     id: string;
@@ -156,6 +156,11 @@ Promise<IUserDisabledStateDto> {
     const response = await _http.put<IUserDisabledStateDto>(`/users/${userId}`, state);
 
     return response.data;
+}
+
+// Only for a disabled user who owns no live project and holds no Trust Admin grant; the hub refuses otherwise (409).
+export async function deleteUser(userId: string): Promise<void> {
+    await _http.delete(`/users/${userId}`);
 }
 
 export async function updateUserProfile(userId: string, profile: IUserProfileDto): Promise<IUserProfileDto> {

@@ -25,6 +25,8 @@ from flip_api.trusts_services.services.register_trust import (
     DuplicateTrustError,
     EmptyTrustCodeError,
     EmptyTrustNameError,
+    InvalidTrustError,
+    KitSlotSourceUnreadableError,
     NoFreeKitSlotError,
     register_trust,
 )
@@ -39,13 +41,11 @@ def admin_create_trust(
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
 ) -> ICreatedTrust:
-    """Create a trust and return its newly-generated plaintext keys (returned once).
+    """Create a trust and assign it an FL kit slot. Its keys are minted when its kit is first downloaded.
 
     Thin HTTP wrapper over ``register_trust`` — translates service errors to
-    400 / 409 / 500 responses. The hub stores only the SHA-256 hash of the trust
-    API key. The trust internal service key is returned to the caller but not
-    stored on the hub — it only lives in the trust-side environment and protects
-    trust-internal services (imaging-api, data-access-api).
+    400 / 409 / 500 / 503 responses. No key is created here (FLIP#1852): the trust cannot
+    authenticate until its Trust Admin, or a hub admin, downloads its kit.
 
     Args:
         body (ICreateTrust): Request body — trust name plus optional code / region.
@@ -53,13 +53,13 @@ def admin_create_trust(
         token_id (UUID): Authenticated user ID, used for the admin permission check.
 
     Returns:
-        ICreatedTrust: The new trust plus plaintext ``trust_api_key`` and
-        ``trust_internal_service_key`` — surface to the admin once, then discard.
+        ICreatedTrust: The new trust and its FL kit slot.
 
     Raises:
         HTTPException: 403 if the caller lacks ``CAN_ACCESS_ADMIN_PANEL``;
-            400 if the name or code is empty; 409 if a trust with the given name
-            exists or no FL kit slot is available; 500 on database error.
+            400 if the name or code is empty or cannot go in a kit file; 409 if a trust with the given name
+            exists or no FL kit slot is available; 503 if the kit-slot source could
+            not be read; 500 on database error.
     """
     if not has_permissions(token_id, [PermissionRef.CAN_ACCESS_ADMIN_PANEL], db):
         logger.error(f"User {token_id} attempted to create a trust without admin permission")
@@ -75,15 +75,19 @@ def admin_create_trust(
             region=body.region,
             session=db,
             audit_user_id=token_id,
+            issue_keys=False,
         )
     # Deliberately user-facing (#906): these are the hub's own domain exceptions, each carrying a
     # message register_trust composes for the admin UI — not wrapped library/driver text.
-    except (EmptyTrustNameError, EmptyTrustCodeError) as e:
+    except (EmptyTrustNameError, EmptyTrustCodeError, InvalidTrustError) as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except (DuplicateTrustError, NoFreeKitSlotError) as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except KitSlotSourceUnreadableError as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
     except SQLAlchemyError as e:
         db.rollback()
         logger.exception("Error creating trust")
@@ -103,8 +107,6 @@ def admin_create_trust(
         code=registered.trust.code,
         region=registered.trust.region,
         created_at=registered.trust.created_at,
-        trust_api_key=registered.trust_api_key,
-        trust_internal_service_key=registered.trust_internal_service_key,
         fl_kit_slot=registered.fl_kit_slot.slot_name,
         fl_kit_slot_number=registered.fl_kit_slot.slot_number,
     )

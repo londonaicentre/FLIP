@@ -57,21 +57,21 @@ def test_has_permissions_returns_false_when_a_required_permission_is_missing():
     assert has_permissions(uuid4(), required, _db_granting(PermissionRef.CAN_CREATE_PROJECTS)) is False
 
 
-def test_has_permissions_returns_false_when_db_raises():
-    """A DB exception is logged and surfaced as a deny, not a 500."""
+def test_has_permissions_lets_a_db_error_surface():
+    """A database error is a 500, not a 403 that reads as "no access"."""
     db = MagicMock()
     db.exec.side_effect = RuntimeError("db down")
 
-    assert has_permissions(uuid4(), [PermissionRef.CAN_CREATE_PROJECTS], db) is False
+    with pytest.raises(RuntimeError):
+        has_permissions(uuid4(), [PermissionRef.CAN_CREATE_PROJECTS], db)
 
 
 def test_has_permissions_denies_on_an_empty_permission_list():
     """An empty list must grant nothing, mirroring has_any_permission.
 
     This is the fail-open direction, so it needs an explicit guard rather than falling out of the
-    implementation: ``all()`` over an empty sequence is True, and the except-and-deny path would
-    not catch it either, since with nothing to check the query succeeds. Asserting the DB is never
-    touched pins that the deny happens up front and cannot depend on the query.
+    implementation: ``all()`` over an empty sequence is True. Asserting the DB is never touched
+    pins that the deny happens up front and cannot depend on the query.
     """
     db = _db_granting(PermissionRef.CAN_CREATE_PROJECTS)
 
@@ -98,14 +98,6 @@ def test_has_any_permission_denies_on_an_empty_permission_list():
     db = _db_granting(PermissionRef.CAN_CREATE_PROJECTS)
 
     assert has_any_permission(uuid4(), [], db) is False
-
-
-def test_has_any_permission_returns_false_when_db_raises():
-    """Fails closed on a DB error, matching has_permissions."""
-    db = MagicMock()
-    db.exec.side_effect = RuntimeError("db down")
-
-    assert has_any_permission(uuid4(), [PermissionRef.CAN_CREATE_PROJECTS], db) is False
 
 
 def test_and_or_helpers_disagree_on_a_partially_privileged_user():
@@ -199,14 +191,6 @@ def test_has_trust_permissions_guard_cannot_be_waived():
         )
 
 
-def test_has_trust_permissions_returns_false_when_db_raises():
-    """Fails closed on a DB error, matching the global helpers."""
-    db = MagicMock()
-    db.exec.side_effect = RuntimeError("db down")
-
-    assert has_trust_permissions(uuid4(), [PermissionRef.CAN_APPROVE_FOR_TRUST], uuid4(), db) is False
-
-
 def test_trust_scoped_permissions_are_not_reachable_through_the_global_check():
     """The two helpers must stay disjoint in what they can authorise.
 
@@ -229,6 +213,7 @@ def test_trust_scoped_permission_set_matches_the_enum():
     expected = {
         PermissionRef.CAN_APPROVE_FOR_TRUST.value,
         PermissionRef.CAN_MANAGE_TRUST_GOVERNANCE.value,
+        PermissionRef.CAN_MANAGE_TRUST_KIT.value,
     }
 
     assert TRUST_SCOPED_PERMISSIONS == expected

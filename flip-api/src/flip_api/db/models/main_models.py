@@ -90,6 +90,9 @@ class FLJob(SQLModel, table=True):
     # The researcher's GPU override for this run, per trust (FLIP#70). NULL = no override: the job's
     # meta.json resource_spec, or the fl-api default, applies.
     num_gpus: int | None = None
+    # SHA-256 of the credential minted when the job is dispatched; its FL server presents the plaintext on
+    # every callback about the model (auth/job_callback.py). NULL until then.
+    credential_hash: str | None = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
     trusts: list["Trust"] = Relationship(link_model=FLJobTrust)
@@ -295,14 +298,22 @@ class Trust(SQLModel, table=True):
     # Added for issue #506 — the `trust` table is the sole trust registry.
     # `code` is the short display label (e.g. "GSTT"); `region` is the NHS
     # region/geography (e.g. "London"). Both stay nullable because they are
-    # optional inputs to register_trust. `api_key_hash` is nullable only so a
-    # row can briefly exist mid-insert; every registered trust has it set —
-    # register_trust mints the key and stores its SHA-256 here.
+    # optional inputs to register_trust. `api_key_hash` is the SHA-256 of the
+    # trust's API key. It is NULL for a trust added from the UI until its kit is
+    # first downloaded, which is when the keys are minted (FLIP#1852); until then
+    # the trust cannot authenticate. The deploy CLI mints at registration.
     #
     # `created_at` is always set (register_trust stamps it).
     code: str | None = Field(default=None)
     region: str | None = Field(default=None)
     api_key_hash: str | None = Field(default=None)
+    # Staged key rotation (FLIP#1714). `rotate_trust_keys` stores the new key's hash here and the
+    # hub accepts either hash, so a site keeps working while its new kit is delivered. The first
+    # request authenticated with the pending key promotes it into `api_key_hash` (the old key is
+    # refused from then on); past `pending_api_key_expires_at` an unused pending key is dropped and
+    # the live key carries on. Both NULL when no rotation is in flight.
+    pending_api_key_hash: str | None = Field(default=None)
+    pending_api_key_expires_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # Latest per-service health snapshot reported by the trust's health collector on
     # the heartbeat (issue #901). Validated at the API boundary (TrustHeartbeatInput)
@@ -342,6 +353,9 @@ class TrustsAudit(SQLModel, table=True):
     # The user an ADMIN_ADDED / ADMIN_REMOVED row is about (the new or former Trust Admin); NULL on registry
     # events. modified_by_user_id stays the admin who made the change.
     subject_user_id: UUID | None = Field(default=None)
+    # What a KIT_DOWNLOADED row handed over (FLIP#1852): its kind and a digest of the hub-shared values, never
+    # a secret. NULL on every other action.
+    detail: dict | None = Field(default=None, sa_column=Column("detail", JSONB, nullable=True))
     audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 
@@ -354,11 +368,11 @@ class FLKitSlot(SQLModel, table=True):
     one global slot row covers all nets, so the assignment doesn't need a net_id column.
 
     Lifecycle: rows are seeded at boot from the resolved slot names (one per
-    pre-provisioned FL kit slot; ``resolve_fl_kit_slot_names`` — the
-    ``/flip/fl_kit_slot_names`` SSM parameter in production, the ``FL_KIT_SLOT_NAMES``
-    env var in dev) and additively reconciled from the same source when a registration
-    finds the pool exhausted. ``POST /admin/trusts`` claims the next
-    ``assigned_to_trust_id IS NULL`` row in the same transaction as the trust insert.
+    pre-provisioned FL kit slot; ``resolve_fl_kit_slot_names`` — the complete kits (NVFLARE)
+    or SuperNode key pairs (Flower) in S3 in production,
+    the ``FL_KIT_SLOT_NAMES`` env var in dev) and added to, never deleted, from the same source
+    at every registration. ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS NULL``
+    row the source still names, in the same transaction as the trust insert.
     """
 
     __tablename__ = "fl_kit_slot"  # type: ignore

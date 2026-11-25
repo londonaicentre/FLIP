@@ -12,39 +12,21 @@
 
 name: Trust - XNAT CI
 
-# The suite covers the anonymization script, the weak-password guards, and the deployment wiring
-# that carries configuration into configure-xnat.sh. Those tests read their inputs from outside
-# trust/xnat/tests/, so every file they assert on has to trigger this workflow — otherwise a change
-# to a guard, to the credential minter, or to either deployment path's environment block lands with
-# the test that pins it unrun. That includes both trust-core compose files: test_deploy_wiring.py
-# asserts each wires XNAT_AETITLE to exactly its two consumers with the same default the XNAT stack
-# substitutes, and the AE titles on the two sides drifting apart is the queries-succeed /
-# retrievals-time-out failure, since DQR matches the C-MOVE destination by exact AE and port.
-# The dcm2niix-pin-sync job below likewise reads three files scattered across the
-# repo, so each of those triggers the workflow too. The same rule covers the
-# bind-mount ownership drift tests (test_data_dir_ownership.py): they assert that
-# the XNAT Dockerfile's uid and both Ansible playbooks' ownership tasks still
-# agree with trust/xnat/Makefile, so all three of those files trigger this
-# workflow — otherwise a change to the uid in the image, or to the ownership task
-# in either playbook, lands with the drift test that exists to catch it unrun.
-# test_dcm2niix_registration.py runs configure-dcm2niix.sh for both Container Service backends and
-# holds its subscription name to imaging-api's (services/projects.py), so that file triggers this
-# workflow too (FLIP#1451).
+# The XNAT image builds (docker_build_xnat_*.yml) publish only after this workflow passes on
+# main/develop (FLIP#880), so it triggers on every input of those images: all of trust/xnat/ and the
+# build workflows themselves. A build input added outside trust/xnat/ belongs here too.
+# The other paths are files outside trust/xnat/ that the suite asserts on, so a change to one never
+# lands with the test that pins it unrun: both trust-core compose files (test_deploy_wiring.py holds
+# XNAT_AETITLE to the default the XNAT stack substitutes; DQR matches the C-MOVE destination by exact
+# AE and port), the Ansible playbooks and roles (test_data_dir_ownership.py holds their ownership
+# tasks to trust/xnat/Makefile), imaging-api's config.py and services/projects.py (the dcm2niix pin
+# and the subscription name test_dcm2niix_registration.py checks, FLIP#1451), and the credential minter.
 on:
   push:
     branches: [main, develop]
     paths:
-      - "trust/xnat/xnat/config/anon_script.das"
-      - "trust/xnat/xnat/config/configure-xnat.sh"
-      - "trust/xnat/xnat/config/configure-dcm2niix.sh"
-      - "trust/xnat/xnat/config/wait-for-xnat-plugins.sh"
-      - "trust/xnat/xnat/config/xnat-lib.sh"
-      - "trust/xnat/scripts/xnat_artifacts.sh"
-      - "trust/xnat/artifacts.manifest"
-      - "trust/xnat/tests/**"
-      - "trust/xnat/Makefile"
+      - "trust/xnat/**"
       - "tests/make_dry_run.py"
-      - "trust/xnat/docker-compose-stack.yml"
       - "trust/deploy/compose/compose_trust.development.yml"
       - "trust/deploy/compose/compose_trust.prod.yml"
       - "trust/deploy/helm/templates/xnat-init-job.yaml"
@@ -55,32 +37,19 @@ on:
       - "deploy/fl_backend.mk"
       - "deploy/instance.mk"
       - "deploy/portable.mk"
-      - "trust/xnat/xnat/wait-for-postgres.sh"
-      - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
       - "trust/imaging-api/imaging_api/services/projects.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
-      - "trust/xnat/dcm2niix/**"
-      - "trust/xnat/xnat/config/dcm2niix_command.json"
-      - "trust/xnat/xnat/Dockerfile"
       - "trust/deploy/ansible/aws-ec2-host.yml"
       - "trust/deploy/ansible/onprem.yml"
       - "trust/deploy/ansible/roles/**"
+      - ".github/workflows/docker_build_xnat_*.yml"
       - ".github/workflows/test_trust_xnat.yml"
   pull_request:
     branches: [main, develop]
     paths:
-      - "trust/xnat/xnat/config/anon_script.das"
-      - "trust/xnat/xnat/config/configure-xnat.sh"
-      - "trust/xnat/xnat/config/configure-dcm2niix.sh"
-      - "trust/xnat/xnat/config/wait-for-xnat-plugins.sh"
-      - "trust/xnat/xnat/config/xnat-lib.sh"
-      - "trust/xnat/scripts/xnat_artifacts.sh"
-      - "trust/xnat/artifacts.manifest"
-      - "trust/xnat/tests/**"
-      - "trust/xnat/Makefile"
+      - "trust/xnat/**"
       - "tests/make_dry_run.py"
-      - "trust/xnat/docker-compose-stack.yml"
       - "trust/deploy/compose/compose_trust.development.yml"
       - "trust/deploy/compose/compose_trust.prod.yml"
       - "trust/deploy/helm/templates/xnat-init-job.yaml"
@@ -91,21 +60,23 @@ on:
       - "deploy/fl_backend.mk"
       - "deploy/instance.mk"
       - "deploy/portable.mk"
-      - "trust/xnat/xnat/wait-for-postgres.sh"
-      - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
       - "trust/imaging-api/imaging_api/services/projects.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
-      - "trust/xnat/dcm2niix/**"
-      - "trust/xnat/xnat/config/dcm2niix_command.json"
-      - "trust/xnat/xnat/Dockerfile"
       - "trust/deploy/ansible/aws-ec2-host.yml"
       - "trust/deploy/ansible/onprem.yml"
       - "trust/deploy/ansible/roles/**"
+      - ".github/workflows/docker_build_xnat_*.yml"
       - ".github/workflows/test_trust_xnat.yml"
 
 permissions:
   contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   xnat-tests:
@@ -121,7 +92,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv

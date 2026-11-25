@@ -1,8 +1,8 @@
 # flip-utils
 
-The NVIDIA FLARE federated learning base library for the FLIP ecosystem. This project
-provides pip-installable Python packages (`flip-utils`), reusable FLARE components,
-Docker services for FL networks, and tutorial applications for medical imaging.
+The federated learning base library for the FLIP ecosystem. This project provides the
+pip-installable `flip-utils` package with reusable FLARE and Flower components; the FL Docker
+services and tutorial applications live in the monorepo's `fl-services/` and `fl-tutorials/`.
 
 ## Language
 
@@ -50,7 +50,7 @@ locally — used for integration tests and development.
 _Avoid_: Direct `nvflare simulator` CLI
 
 **FLIP()**:
-The factory class (`flip.core.flip.FLIP`) that returns a `FLIPBase` implementation (Dev
+The factory function (`flip.core.factory.FLIP`, exported as `flip.FLIP`) that returns a `FLIPBase` implementation (Dev
 or Prod) for accessing project data, the FLIP dataframe, and sending metrics to the
 Central Hub.
 

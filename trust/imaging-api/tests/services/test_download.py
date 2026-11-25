@@ -310,52 +310,48 @@ class TestDownloadAndUnzipImages:
         mock_get_project.assert_called_once_with("hub-proj-1", headers)
 
     @pytest.mark.asyncio
-    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_project_not_found(self, mock_get_project, headers):
-        mock_get_project.side_effect = NotFoundError("Project not found")
-
-        with pytest.raises(NotFoundError, match="Project with ID"):
-            await download_and_unzip_images("bad-id", "ACC1", "net1", "scan", "NIFTI", headers)
-
-    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("project_id", "accession", "project_error", "experiment_error", "error", "match"),
+        [
+            pytest.param(
+                "bad-id", "ACC1", NotFoundError("Project not found"), None, NotFoundError, "Project with ID",
+                id="project_not_found",
+            ),
+            pytest.param(
+                "hub-proj-1", "BAD-ACC", None, NotFoundError("Experiment not found"), NotFoundError,
+                "Experiment with ID or label", id="experiment_not_found",
+            ),
+            pytest.param(
+                "hub-proj-1", "ACC1", Exception("connection refused"), None, Exception, "Failed to fetch project ID",
+                id="project_fetch_generic_error",
+            ),
+            pytest.param(
+                "hub-proj-1", "ACC1", None, Exception("connection refused"), Exception,
+                "Failed to fetch experiment details", id="experiment_fetch_generic_error",
+            ),
+        ],
+    )  # fmt: skip
     @patch("imaging_api.services.download.get_experiment")
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_experiment_not_found(self, mock_get_project, mock_get_exp, headers):
+    async def test_lookup_failure(
+        self,
+        mock_get_project,
+        mock_get_exp,
+        project_id,
+        accession,
+        project_error,
+        experiment_error,
+        error,
+        match,
+        headers,
+    ):
+        # side_effect=None falls back to the return_value, so only the failing lookup raises.
         mock_get_project.return_value = MagicMock(ID="PROJ1")
-        mock_get_exp.side_effect = NotFoundError("Experiment not found")
+        mock_get_project.side_effect = project_error
+        mock_get_exp.side_effect = experiment_error
 
-        with pytest.raises(NotFoundError, match="Experiment with ID or label"):
-            await download_and_unzip_images("hub-proj-1", "BAD-ACC", "net1", "scan", "NIFTI", headers)
-
-    @pytest.mark.asyncio
-    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_project_fetch_generic_error(self, mock_get_project, headers):
-        mock_get_project.side_effect = Exception("connection refused")
-
-        with pytest.raises(Exception, match="Failed to fetch project ID"):
-            await download_and_unzip_images("hub-proj-1", "ACC1", "net1", "scan", "NIFTI", headers)
-
-    @pytest.mark.asyncio
-    @patch("imaging_api.services.download.get_experiment")
-    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_experiment_fetch_generic_error(self, mock_get_project, mock_get_exp, headers):
-        mock_get_project.return_value = MagicMock(ID="PROJ1")
-        mock_get_exp.side_effect = Exception("connection refused")
-
-        with pytest.raises(Exception, match="Failed to fetch experiment details"):
-            await download_and_unzip_images("hub-proj-1", "ACC1", "net1", "scan", "NIFTI", headers)
-
-    @pytest.mark.asyncio
-    @patch("imaging_api.services.download.download_file")
-    @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
-    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_download_failure(self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers):
-        mock_get_project.return_value = MagicMock(ID="PROJ1")
-        mock_download.side_effect = Exception("disk full")
-
-        with pytest.raises(Exception, match="Failed to download file"):
-            await download_and_unzip_images("hub-proj-1", "ACC1", "net1", "scan", "NIFTI", headers)
+        with pytest.raises(error, match=match):
+            await download_and_unzip_images(project_id, accession, "net1", "scan", "NIFTI", headers)
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.download_file")
@@ -664,6 +660,37 @@ class TestDownloadCache:
 
         mock_get_project.assert_not_called()
 
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_cache_hit_refreshes_last_used(self, mock_get_project, headers, tmp_path):
+        """A hit must bump the sentinel's mtime — it is the last-used clock the TTL
+        retention sweeper expires on (FLIP#1050)."""
+        accession_dir = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        sentinel = os.path.join(accession_dir, ".flip_complete-scan-NIFTI")
+        os.utime(sentinel, (1_000_000, 1_000_000))
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            result = await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        assert result == accession_dir
+        assert os.stat(sentinel).st_mtime > 1_000_000
+        mock_get_project.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.touch_sentinel", side_effect=OSError("read-only fs"))
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_cache_hit_survives_a_failing_last_used_touch(self, mock_get_project, mock_touch, headers, tmp_path):
+        """Last-used bookkeeping is best-effort: a failing touch must not turn a hit
+        into an error (worst case the entry just expires early and re-downloads)."""
+        accession_dir = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            result = await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        assert result == accession_dir
+        mock_touch.assert_called_once()
+        mock_get_project.assert_not_called()
+
 
 # ── a hit is checked against XNAT (FLIP#1456 F1) ──
 
@@ -696,6 +723,19 @@ def _file(accession_dir, resource):
 
 
 class TestHitCheckedAgainstXnat:
+    @pytest.mark.parametrize("answer", [{"return_value": STATS}, {"side_effect": XnatFetchError("502")}])
+    def test_a_checked_hit_refreshes_last_used(self, headers, tmp_path, xnat, resource_stats, answer):
+        """Unchanged in XNAT, or XNAT unable to answer: either way the copy is used, so its clock moves (FLIP#1050)."""
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        sentinel = os.path.join(acc, ".flip_complete-scan-NIFTI")
+        os.utime(sentinel, (1_000_000, 1_000_000))
+        resource_stats.configure_mock(**answer)
+
+        assert _fetch(headers) == acc
+
+        xnat.download.assert_not_called()
+        assert os.stat(sentinel).st_mtime > 1_000_000
+
     def test_a_change_replaces_only_that_resource(self, headers, tmp_path, xnat, resource_stats):
         """flip.get_by_accession_number([DICOM, NIFTI]) fetches each type into one folder: a stale NIFTI
         must not take the DICOM copy with it."""

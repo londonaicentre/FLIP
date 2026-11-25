@@ -22,12 +22,12 @@
 # ---------------------------------------------------------------------------------------
 #
 # 1. Log group names are static Terraform literals, not derivable from model/project IDs:
-#      /ecs/flip-api          (deploy/providers/AWS/ecs.tf)
+#      /ecs/flip-api          (deploy/aws/ecs.tf)
 #      /ecs/fl-api-net-1      (one per FL network; today only net-1 exists)
 #      /ecs/fl-server-net-1   (one per FL network; today only net-1 exists)
 #    A future second network would add /ecs/fl-api-net-2 / /ecs/fl-server-net-2 by the same
 #    literal-string convention (there is no Terraform for_each to generalise from yet — see
-#    deploy/providers/AWS/ecs.tf). This script auto-discovers whatever exists via
+#    deploy/aws/ecs.tf). This script auto-discovers whatever exists via
 #    `describe-log-groups --log-group-name-prefix`, so it does not need updating when a
 #    second net is added.
 #
@@ -475,7 +475,7 @@ if [[ -n "$USER_START" ]]; then
 else
     SEARCH_END_MS="$(now_ms)"
     SEARCH_START_MS=$(( SEARCH_END_MS - SEARCH_DAYS * 24 * 60 * 60 * 1000 ))
-    log "Searching flip-api logs for model_id over the last ${SEARCH_DAYS} day(s) (retention is 7 days per deploy/providers/AWS/ecs.tf)"
+    log "Searching flip-api logs for model_id over the last ${SEARCH_DAYS} day(s) (retention is 7 days per deploy/aws/ecs.tf)"
 fi
 
 COARSE_HITS_FILE="${WORK_DIR}/flip_api_coarse_hits.jsonl"
@@ -723,17 +723,16 @@ if [[ "$BACKEND" == "nvflare" ]]; then
     ACCEPTED_TOTAL="$(grep -c $'^ACCEPTED\t' "$CONTRIB_FILE" || true)"
     REJECTED_TOTAL="$(grep -c $'^REJECTED\t' "$CONTRIB_FILE" || true)"
 
-    n_rounds="$(wc -l < "$ROUND_STARTS" | tr -d ' ')"
-    for i in $(seq 1 "$n_rounds"); do
-        round_num="$(awk -v i="$i" 'NR==i{print $1}' "$ROUND_STARTS")"
-        start_ms="$(awk -v i="$i" 'NR==i{print $2}' "$ROUND_STARTS")"
+    i=0
+    while IFS=$'\t' read -r round_num start_ms; do
+        i=$((i + 1))
         end_ms="$(awk -v r="$round_num" '$1==r{print $2; exit}' "$ROUND_ENDS")"
         agg_start="$(awk -v i="$i" 'NR==i{print}' "$AGG_STARTS")"
         agg_end="$(awk -v i="$i" 'NR==i{print}' "$AGG_ENDS")"
         acc_r="$(awk -F'\t' -v r="$round_num" '$1=="ACCEPTED" && $2==r{n++} END{print n+0}' "$CONTRIB_FILE")"
         rej_r="$(awk -F'\t' -v r="$round_num" '$1=="REJECTED" && $2==r{n++} END{print n+0}' "$CONTRIB_FILE")"
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$round_num" "$start_ms" "${end_ms:-}" "${agg_start:-}" "${agg_end:-}" "$acc_r" "$rej_r" >> "$ROUND_TABLE_FILE"
-    done
+    done < "$ROUND_STARTS"
 elif [[ "$BACKEND" == "flower" ]]; then
     # Flower: no round-boundary or aggregation-timing log lines exist in the platform code
     # (see flip-utils/flip/flower/metrics.py) — approximate each round's window from the
@@ -881,7 +880,7 @@ FAILURES_FILE="${MODEL_OUT_DIR}/failures.tsv"
     while IFS=$'\t' read -r start_ms end_ms _status; do
         [[ -z "$start_ms" ]] && continue
         awk -v s="$start_ms" -v e="$end_ms" '($1+0)>=s && ($1+0)<=e' "$FLIP_API_RECONSTRUCTED" \
-            | grep -E "Failed to start training:|Unsupported FL backend:|Database error|Failed to resolve|could not be resolved to a trust" \
+            | grep -E "Unsupported FL backend:|Database error|Failed to resolve|could not be resolved to a trust" \
             | sed 's/^/flip-api\t/' || true
     done < "$ATTEMPTS_FILE"
 

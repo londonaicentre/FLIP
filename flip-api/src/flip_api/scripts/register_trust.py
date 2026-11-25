@@ -13,7 +13,7 @@
 """Register a single trust on the hub and emit its kit (deploy-time CLI).
 
 Invoked once per trust by the root Makefile's ``register-trust KIT=<CODE>`` target
-(dev: ``docker compose exec``) and by ``deploy/providers/AWS/scripts/register-trusts.sh``
+(dev: ``docker compose exec``) and by ``deploy/aws/scripts/register-trusts.sh``
 (stag/prod: a one-off ECS task). The trust's
 name / code / region are passed as arguments — the hub carries no trust list
 of its own; the deploy tooling decides what to register.
@@ -22,9 +22,12 @@ Idempotent: if a trust with ``--name`` already exists it is skipped.
 
 ``--rotate`` switches the CLI to reissuing an already-registered trust's keys in place
 (``make rotate-trust-keys KIT=<CODE>`` in dev, ``register-trusts.sh`` with ``ROTATE_KEYS=1`` on
-stag / prod). The trust keeps its id, code and FL kit slot; only its api key hash changes. The
-hub refuses the old key from the moment the rotation commits, so the trust is offline until its
-containers are recreated from the new kit: deliver the kit promptly.
+stag / prod). The trust keeps its id, code and FL kit slot; only its api key changes. The new key
+is staged (FLIP#1714): the hub accepts both keys until the trust first uses the new one, so the site
+stays online while the kit travels, and an unused new key is dropped after
+``TRUST_KEY_ROTATION_GRACE_DAYS``. ``--revoke-old`` (``REVOKE_OLD=1``) is the immediate cutover for
+a leaked key: the hub refuses the old key from the moment it commits, and the trust is offline
+until its containers are recreated from the new kit.
 
 Output transports — two contracts depending on ``--out-ssm-parameter``:
 
@@ -135,15 +138,18 @@ def _kit_dict(kit: RegisteredTrust) -> dict[str, Any]:
         "fl_kit_slot": kit.fl_kit_slot.slot_name,
         "fl_kit_slot_number": kit.fl_kit_slot.slot_number,
         "hub_shared": _hub_shared_from_env(),
+        # Set when the rotation was staged (FLIP#1714); the deploy scripts print which mode ran from it.
+        "staged_until": kit.staged_until.isoformat() if kit.staged_until else None,
     }
 
 
-def rotate_one_trust(name: str, session: Session) -> list[dict[str, Any]]:
+def rotate_one_trust(name: str, session: Session, revoke_old: bool = False) -> list[dict[str, Any]]:
     """Reissue one registered trust's keys and return its full kit as a single-element list.
 
     Args:
         name (str): Trust display name.
         session (Session): SQLModel session.
+        revoke_old (bool): Refuse the old key at once instead of staging the new one (FLIP#1714).
 
     Returns:
         list[dict[str, Any]]: ``[kit]``, always carrying the new credentials.
@@ -151,9 +157,10 @@ def rotate_one_trust(name: str, session: Session) -> list[dict[str, Any]]:
     Raises:
         TrustRegistrationError: No trust of that name is registered, or it has no FL kit slot.
     """
-    kit = rotate_trust_keys(session, name=name.strip())
+    kit = rotate_trust_keys(session, name=name.strip(), revoke_old=revoke_old)
     logger.info(
-        "Rotated keys for trust %r (id=%s), FL kit slot %r.",
+        "%s keys for trust %r (id=%s), FL kit slot %r.",
+        "Rotated" if revoke_old else "Staged new",
         kit.trust.name,
         kit.trust.id,
         kit.fl_kit_slot.slot_name,
@@ -293,8 +300,18 @@ def main() -> None:
         default=False,
         help=(
             "Reissue the named trust's api and internal-service keys in place instead of registering "
-            "it. Same id, code and FL kit slot. The hub refuses the old key from the moment this "
-            "commits, so the trust is offline until its containers are recreated from the new kit."
+            "it. Same id, code and FL kit slot. The new key is staged: the hub accepts both keys until "
+            "the trust first uses the new one (FLIP#1714), so the site stays online while its kit is "
+            "delivered. Add --revoke-old to refuse the old key at once."
+        ),
+    )
+    parser.add_argument(
+        "--revoke-old",
+        action="store_true",
+        default=False,
+        help=(
+            "With --rotate: refuse the old key from the moment this commits, for a key known to be "
+            "leaked. The trust is offline until its containers are recreated from the new kit."
         ),
     )
     parser.add_argument(
@@ -311,11 +328,13 @@ def main() -> None:
     args = parser.parse_args()
     if args.rotate and (args.code or args.region or args.require_existing):
         parser.error("--rotate identifies the trust by --name only; drop --code, --region and --require-existing")
+    if args.revoke_old and not args.rotate:
+        parser.error("--revoke-old only applies to --rotate")
 
     with Session(get_engine()) as session:
         try:
             if args.rotate:
-                kits = rotate_one_trust(args.name, session)
+                kits = rotate_one_trust(args.name, session, revoke_old=args.revoke_old)
             else:
                 kits = register_one_trust(
                     args.name, args.code, args.region, session, require_existing=args.require_existing

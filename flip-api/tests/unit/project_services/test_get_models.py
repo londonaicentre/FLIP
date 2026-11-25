@@ -24,7 +24,7 @@ from flip_api.domain.interfaces.project import (
     ModelStatus,
 )
 from flip_api.project_services.get_models import router as get_models_router
-from flip_api.utils.paging_utils import IPagedResponse
+from flip_api.utils.paging_utils import IPagedResponse, paging_params
 
 
 @pytest.fixture
@@ -66,24 +66,21 @@ expected_response_list = [
     expected_model_2_response.model_dump(mode="json"),
 ]
 mock_db_models_list = [expected_model_1_response, expected_model_2_response]
-mock_get_models_service_response: tuple[IPagedResponse, MagicMock] = (
-    IPagedResponse(
-        data=mock_db_models_list,
-        total_rows=1,
-    ),
-    MagicMock(page_size=10),
+mock_get_models_service_response = IPagedResponse(data=mock_db_models_list, total_rows=1)
+
+mock_get_models_service_empty_response: IPagedResponse = IPagedResponse(data=[], total_rows=0)
+
+
+@pytest.mark.parametrize(
+    ("service_response", "expected_data"),
+    [
+        pytest.param(mock_get_models_service_response, expected_response_list, id="models"),
+        pytest.param(mock_get_models_service_empty_response, [], id="no-models"),
+    ],
 )
-
-mock_get_models_service_empty_response: tuple[IPagedResponse, MagicMock] = (
-    IPagedResponse(
-        data=[],
-        total_rows=0,
-    ),
-    MagicMock(page_size=10),
-)
-
-
-def test_get_models_success(client: TestClient, app_fixture: FastAPI):
+def test_get_models_returns_service_page(
+    client: TestClient, app_fixture: FastAPI, service_response: IPagedResponse, expected_data: list
+):
     mock_db_session = MagicMock()
     mock_project_instance = MagicMock(id=MOCK_PROJECT_ID)
 
@@ -97,18 +94,17 @@ def test_get_models_success(client: TestClient, app_fixture: FastAPI):
         ) as mock_get_project,
         patch(
             "flip_api.project_services.get_models.get_project_models_service",
-            return_value=mock_get_models_service_response,
+            return_value=service_response,
         ) as mock_get_project_models,
     ):
         response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/models")
 
     assert response.status_code == status.HTTP_200_OK
-    # Ensure response JSON matches the corrected expected list
-    assert response.json()["data"] == expected_response_list
+    assert response.json()["data"] == expected_data
 
     mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, mock_db_session)
     mock_get_project.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
-    mock_get_project_models.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session, {})
+    mock_get_project_models.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session, paging_params())
 
     app_fixture.dependency_overrides.clear()
 
@@ -151,31 +147,5 @@ def test_get_models_project_not_found(client: TestClient, app_fixture: FastAPI):
     mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, mock_db_session)
     mock_get_project.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
     mock_get_project_models.assert_not_called()
-
-    app_fixture.dependency_overrides.clear()
-
-
-def test_get_models_no_models_found_for_project(client: TestClient, app_fixture: FastAPI):
-    mock_db_session = MagicMock()
-    mock_project_instance = MagicMock(id=MOCK_PROJECT_ID)
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
-
-    with (
-        patch("flip_api.project_services.get_models.can_access_project", return_value=True) as mock_can_access,
-        patch(
-            "flip_api.project_services.get_models.get_project", return_value=mock_project_instance
-        ) as mock_get_project,
-        patch(
-            "flip_api.project_services.get_models.get_project_models_service",
-            return_value=mock_get_models_service_empty_response,
-        ) as mock_get_project_models,
-    ):
-        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/models")
-
-    assert response.status_code == status.HTTP_200_OK
-    mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, mock_db_session)
-    mock_get_project.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
-    mock_get_project_models.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session, {})
 
     app_fixture.dependency_overrides.clear()

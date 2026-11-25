@@ -62,7 +62,8 @@ from flip_api.domain.schemas.status import (
 from flip_api.model_services.services.model_service import delete_models
 from flip_api.project_services.utils.audit_helper import audit_project_action
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
+from flip_api.utils.paging_utils import IPagedResponse, PagingInfo
+from flip_api.utils.user_roles import profile_display_name
 
 
 def _classify_responded_trust_ids(
@@ -157,20 +158,9 @@ def _load_task_status_trust_ids(
             col(TrustTask.status).in_([TaskStatus.PENDING, TaskStatus.CANCELLED]),
         )
     ).all()
-    pending: list[UUID] = []
-    cancelled: list[UUID] = []
-    seen_pending: set[UUID] = set()
-    seen_cancelled: set[UUID] = set()
-    for tid, status in rows:
-        if tid is None:
-            continue
-        if status == TaskStatus.PENDING and tid not in seen_pending:
-            seen_pending.add(tid)
-            pending.append(tid)
-        elif status == TaskStatus.CANCELLED and tid not in seen_cancelled:
-            seen_cancelled.add(tid)
-            cancelled.append(tid)
-
+    # dict.fromkeys dedupes while keeping first-seen order
+    pending = list(dict.fromkeys(tid for tid, s in rows if tid is not None and s == TaskStatus.PENDING))
+    cancelled = list(dict.fromkeys(tid for tid, s in rows if tid is not None and s == TaskStatus.CANCELLED))
     return pending, cancelled
 
 
@@ -186,24 +176,8 @@ def update_project_user_access(project_id: UUID, user_ids: list[UUID], session: 
     Returns:
         None
     """
-    # Convert EmailStr to UUID
-    # user_pool_id = get_settings().AWS_COGNITO_USER_POOL_ID
-    # users = [get_user_by_email_or_id(user_pool_id=user_pool_id, email=uid) for uid in user_emails]
-    access_entries = []
-    for user_id in user_ids:
-        # if not user.id:
-        #     logger.warning(f"User {user.email} does not have a valid ID, skipping access update.")
-        #     continue
-
-        # Create ProjectUserAccess entries
-        access_entry = ProjectUserAccess(
-            project_id=project_id,
-            user_id=user_id,
-        )
-        access_entries.append(access_entry)
-    session.add_all(access_entries)
-    session.commit()  # Commit the changes to the database
-    session.flush()
+    session.add_all([ProjectUserAccess(project_id=project_id, user_id=user_id) for user_id in user_ids])
+    session.commit()
     logger.info(f"Updated user access for project {project_id} with {len(user_ids)} users.")
 
 
@@ -244,17 +218,12 @@ def create_project(
             user_id=current_user_id,  # Add the creator as the first user
         )
         session.add(access_entry)
-        session.flush()  # Ensures new_project.id is available
-        session.commit()  # Commit to finalize the project creation
+        session.commit()
         project_id = new_project.id
-        if not project_id:  # Should not happen if flush is successful
-            raise ValueError("Failed to retrieve ID for newly created project.")
 
-        payload.users = payload.users
         if payload.users:
             update_project_user_access(project_id, payload.users, session)
 
-        # Commit is typically handled by the calling endpoint or a 'with session.begin():' block
         logger.info(f"Project {project_id} created successfully by user {current_user_id}.")
         return project_id
 
@@ -437,10 +406,7 @@ def get_approved_trusts_for_project(project_id: UUID, session: Session) -> list[
     )
     results = session.exec(stmt).all()
     if not results:
-        # Original TS code throws an error if no response.
-        # Consider if returning empty list is more Pythonic for "not found" scenarios.
         logger.warn(f"No approved trusts found for project {project_id}, or project has no approved trusts.")
-        # raise ValueError(f"No approved trusts found for project {project_id}") # If error is desired
     return [Trust(id=trust_id, name=trust_name) for trust_id, trust_name in results]
 
 
@@ -488,7 +454,7 @@ def get_trusts_approval_status_for_projects(
             Trust.code,
             ProjectTrustIntersect.status,
             ProjectTrustIntersect.decided_by,
-            UserProfile.name,
+            profile_display_name(),
             ProjectTrustIntersect.decided_at,
             ProjectTrustIntersect.decided_as,
         )
@@ -525,44 +491,32 @@ def get_trusts_approval_status_for_projects(
 def get_project_models_service(
     project_id: UUID,
     session: Session,
-    query_params: dict = {},
-    all_results: bool = False,
-) -> tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]:
+    paging: PagingInfo | None = None,
+) -> IPagedResponse[IModelsInfoResponse]:
     """
     Retrieves models for a project with pagination and optional search.
 
     Args:
         project_id (UUID): The ID of the project to retrieve models for.
         session (Session): The SQLModel session to use for database operations.
-        query_params (dict, optional): Query parameters for pagination and search. Defaults to {}.
-        all_results (bool, optional): Whether to retrieve all results without pagination. Defaults to False.
+        paging (PagingInfo | None): The page and search string; None returns every model.
 
     Returns:
-        tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]: A tuple containing the paged response with model info
-        and paging details.
+        IPagedResponse[IModelsInfoResponse]: The page of models and the total count.
     """
-    paging_details = get_paging_details(query_string_parameters=query_params)
-    logger.debug(f"Paging details: {paging_details}")
-
     # NOTE Do NOT use "not Model.deleted" below — This expression is evaluated immediately in Python, not translated
     # into SQL. Use "Model.deleted == False" or the below to create a proper SQL condition.
-    query_stmt = (
-        select(Model)
-        .join(Projects, col(Model.project_id) == Projects.id)
-        .where(col(Model.project_id) == project_id)
-        .where(col(Model.deleted).is_(False))
-        .where(col(Projects.deleted).is_(False))
+    filters = (
+        col(Model.project_id) == project_id,
+        col(Model.deleted).is_(False),
+        col(Projects.deleted).is_(False),
     )
-    count_stmt = (
-        select(func.count(col(Model.id)))
-        .join(Projects, col(Model.project_id) == Projects.id)
-        .where(col(Model.project_id) == project_id)
-        .where(col(Model.deleted).is_(False))
-        .where(col(Projects.deleted).is_(False))
-    )
+    join_on = col(Model.project_id) == Projects.id
+    query_stmt = select(Model).join(Projects, join_on).where(*filters)
+    count_stmt = select(func.count(col(Model.id))).join(Projects, join_on).where(*filters)
 
-    if paging_details.search_str:
-        search_pattern = f"%{paging_details.search_str.lower()}%"
+    if paging is not None and paging.search_str:
+        search_pattern = f"%{paging.search_str.lower()}%"
         search_filter = or_(
             func.lower(Model.name).like(search_pattern),
             func.lower(Model.description).like(search_pattern),
@@ -574,8 +528,8 @@ def get_project_models_service(
 
     # Order and paginate
     query_stmt = query_stmt.order_by(desc(col(Model.creation_timestamp)))
-    if not all_results and paging_details.page_size is not None:
-        query_stmt = query_stmt.limit(paging_details.page_size).offset(paging_details.offset)
+    if paging is not None:
+        query_stmt = query_stmt.limit(paging.page_size).offset(paging.offset)
 
     db_models = session.exec(query_stmt).all()
     logger.debug(f"Models retrieved for project {project_id}: {db_models}")
@@ -592,7 +546,7 @@ def get_project_models_service(
     ]
     logger.debug(f"{models_response=}")
 
-    return IPagedResponse[IModelsInfoResponse](data=models_response, total_rows=total_rows), paging_details
+    return IPagedResponse[IModelsInfoResponse](data=models_response, total_rows=total_rows)
 
 
 def update_project_status(
@@ -621,7 +575,6 @@ def update_project_status(
 
     # Try to update the status value of the project in the database
     try:
-        project.name = project.name
         project.status = new_status
         session.flush()
         logger.info(f"Project {project_id} status updated to {new_status.value}.")
@@ -1026,7 +979,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
     # (same UserProfile LEFT JOIN pattern used in the list endpoint's batch
     # loader). created_by_name is null when the runner has no UserProfile row.
     query_row = session.exec(
-        select(Queries, UserProfile.name)  # type: ignore[call-overload]
+        select(Queries, profile_display_name())  # type: ignore[call-overload]
         .outerjoin(UserProfile, UserProfile.user_id == Queries.created_by)  # type: ignore[arg-type]
         .where(Queries.project_id == project.id)
         .order_by(col(Queries.created).desc())

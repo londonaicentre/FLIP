@@ -16,15 +16,23 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - "deploy/providers/AWS/**"
+      - "deploy/aws/**"
+      # test_providers_forwarding.py runs the old path's forwarding stub (FLIP#1438).
+      - "deploy/providers/AWS/GNUmakefile"
       # The Makefile and test_env_mode.py read the HUB table.
       - "deploy/env_mode.mk"
-      - "trust/deploy/terraform/azure/**"
-      - "trust/deploy/terraform/aws/**"
+      # The trust roots (azure/, aws/, the Snowflake roots) have their own workflows,
+      # validate_terraform_{azure,aws_node,snowflake}.yml, each on its own paths (FLIP#2021).
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
+      # test_flare_kit_required_files.py reads it: add_fl_kits.sh uploads the same files last.
+      - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
+      # test_flower_kit_slots.py and the add_fl_kits.sh harness read or stand in for these (FLIP#1942).
+      - "fl-services/flower/register-supernode-keys.sh"
+      - "fl-services/flower/provision/scripts/generate_creds.py"
+      - "fl-services/flower/Makefile"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
-      # site.yml imports and the shared roles they compose.
+      # aws-ec2.yml imports and the shared roles they compose.
       - "trust/deploy/ansible/aws-ec2-host.yml"
       - "trust/deploy/ansible/roles/**"
       # test_site_roles.py reads it: galaxy roles installed beside the shared roles stay untracked.
@@ -36,15 +44,23 @@ on:
   pull_request:
     branches: [main, develop]
     paths:
-      - "deploy/providers/AWS/**"
+      - "deploy/aws/**"
+      # test_providers_forwarding.py runs the old path's forwarding stub (FLIP#1438).
+      - "deploy/providers/AWS/GNUmakefile"
       # The Makefile and test_env_mode.py read the HUB table.
       - "deploy/env_mode.mk"
-      - "trust/deploy/terraform/azure/**"
-      - "trust/deploy/terraform/aws/**"
+      # The trust roots (azure/, aws/, the Snowflake roots) have their own workflows,
+      # validate_terraform_{azure,aws_node,snowflake}.yml, each on its own paths (FLIP#2021).
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
+      # test_flare_kit_required_files.py reads it: add_fl_kits.sh uploads the same files last.
+      - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
+      # test_flower_kit_slots.py and the add_fl_kits.sh harness read or stand in for these (FLIP#1942).
+      - "fl-services/flower/register-supernode-keys.sh"
+      - "fl-services/flower/provision/scripts/generate_creds.py"
+      - "fl-services/flower/Makefile"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
-      # site.yml imports and the shared roles they compose.
+      # aws-ec2.yml imports and the shared roles they compose.
       - "trust/deploy/ansible/aws-ec2-host.yml"
       - "trust/deploy/ansible/roles/**"
       # test_site_roles.py reads it: galaxy roles installed beside the shared roles stay untracked.
@@ -57,6 +73,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   terraform-validate:
     runs-on: ubuntu-latest
@@ -64,14 +86,14 @@ jobs:
       fail-fast: false
       matrix:
         # Validating each root exercises the shared modules under
-        # deploy/providers/AWS/modules from the caller's side.
+        # deploy/aws/modules from the caller's side.
         root:
-          - ./deploy/providers/AWS
+          - ./deploy/aws
           # The adopters' wrapper around modules/terraform_ci_bootstrap, the
           # Terraform-CI bootstrap the platform repositories pin by commit.
           # Never applied by CI, but validating it exercises the module — so a
           # broken trust policy is caught before any caller picks it up.
-          - ./deploy/providers/AWS/ci
+          - ./deploy/aws/ci
     defaults:
       run:
         working-directory: ${{ matrix.root }}
@@ -103,7 +125,7 @@ jobs:
   # stubbed). test_compose_ci_env.sh additionally cross-checks the Makefile and
   # the Terraform CI workflows against the env manifest, so adding a TF_VAR
   # export without wiring it through fails here rather than at apply time.
-  # Shares this workflow's deploy/providers/AWS/** path filter, so it runs
+  # Shares this workflow's deploy/aws/** path filter, so it runs
   # whenever a script or its tests change.
   script-tests:
     name: Deploy script tests
@@ -118,6 +140,7 @@ jobs:
           - test_staging_power.sh
           - test_tflint_lint.sh
           - test_compose_ci_env.sh
+          - test_image_wait_budgets.sh
           - test_publish_ui.sh
           - test_reset_fl_server_local.sh
           - test_resolve_image_tags.sh
@@ -127,7 +150,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Run ${{ matrix.harness }}
-        run: bash deploy/providers/AWS/scripts/tests/${{ matrix.harness }}
+        run: bash deploy/aws/scripts/tests/${{ matrix.harness }}
 
   # setup-github-environments.sh and add_fl_kits.sh are run by a repo admin on
   # their own machine, often a Mac, whose /bin/bash is 3.2: no `declare -A`, no
@@ -154,22 +177,20 @@ jobs:
       - name: Run ${{ matrix.harness }} under /bin/bash
         run: |
           /bin/bash --version | head -1
-          /bin/bash deploy/providers/AWS/scripts/tests/${{ matrix.harness }}
+          /bin/bash deploy/aws/scripts/tests/${{ matrix.harness }}
 
   # Credential-free pytest checks over the stack's static artefacts: rendered
   # Jinja templates, the deploy helper scripts, and Terraform source itself
   # (e.g. the Cognito callback_urls / CORS allowlist invariants, which no runtime
   # suite can see — flip-api reads that list from live Cognito, not from this
   # tree; and reconcile_ci_env.py's state mining, which decides what a CI plan is
-  # handed). No AWS calls, no init, no plan. Deps are named explicitly rather than
-  # synced from the lockfile: the tests need only pytest, jinja2 and click,
-  # while the project's dev group pulls ansible-core and pyqt5.
+  # handed). No AWS calls, no init, no plan. Deps are named explicitly rather
+  # than synced from the lockfile: the project's dev group pulls ansible-core
+  # and pyqt5, which this suite does not need.
   #
   # This is the only place the suite runs: the root `make unit_test` does not
-  # reach here — deploy/providers/AWS is not one of the service directories it
-  # walks — and `make -C deploy/providers/AWS test` cannot be used either, since
-  # that Makefile errors at parse time unless AWS_PROFILE matches the target
-  # environment.
+  # reach deploy/aws, and that directory's Makefile has no `test`
+  # target.
   python-tests:
     name: AWS deploy tests
     runs-on: ubuntu-latest
@@ -180,17 +201,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv
 
       # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
       - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+        uses: ./.github/actions/install-graphviz
 
       - name: Run AWS deploy test suite
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         run: uv run --no-project --with pytest --with jinja2 --with click --with diagrams --with pyyaml pytest tests/ -v
 
   # Static checkov security lint (FLIP#1052 + the FLIP#1058 triage): a curated
@@ -211,17 +232,17 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install checkov
         # Keep in sync with CHECKOV_VERSION in scripts/checkov_lint.sh.
         run: pip install checkov==3.3.14
 
       - name: Run checkov lint
-        run: bash deploy/providers/AWS/scripts/checkov_lint.sh
+        run: bash deploy/aws/scripts/checkov_lint.sh
 
   # Static tflint lint: the bundled terraform ruleset (recommended preset) plus
-  # the AWS ruleset, configured in deploy/providers/AWS/.tflint.hcl. Catches what
+  # the AWS ruleset, configured in deploy/aws/.tflint.hcl. Catches what
   # validate accepts — a variable nothing reads, a module with no provider
   # version constraint, an AWS argument value the API would reject. Every
   # directory with .tf files is linted on its own, so a module is checked even
@@ -244,108 +265,4 @@ jobs:
       - name: Run tflint lint
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: bash deploy/providers/AWS/scripts/tflint_lint.sh
-
-  # Azure trust node (FLIP#1390): fmt, validate and `terraform test` with a mocked azurerm
-  # provider in every root and module, the static pytest guards (no auto-approve, every
-  # provider and az call names its subscription, no real IDs, no inbound rules), tflint with
-  # the azurerm ruleset, and checkov with in-code, reasoned skips. Credential-free: nothing
-  # here talks to Azure.
-  azure:
-    name: Azure node checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "~> 1.13"
-
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v6
-        with:
-          tflint_version: v0.64.0
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        run: pip install uv
-
-      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
-      - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
-
-      - name: Terraform tests and static guards
-        working-directory: trust/deploy/terraform/azure
-        run: make test
-
-      - name: Lint
-        working-directory: trust/deploy/terraform/azure
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: make lint
-
-      - name: Checkov
-        run: |
-          pip install checkov==3.3.14
-          checkov -d trust/deploy/terraform/azure --framework terraform --skip-download --compact --quiet
-
-  # AWS EC2 trust node (FLIP#1528): fmt, validate and `terraform test` with a mocked aws provider in
-  # the root and its network module, the Makefile and ssh-config pytest, tflint with the aws
-  # ruleset, and checkov with in-code, reasoned skips. Credential-free: nothing here talks to AWS.
-  aws-ec2:
-    name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - root: aws/ec2
-            name: AWS EC2 node checks
-          - root: aws/eks
-            name: AWS EKS node checks
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "~> 1.13"
-
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v6
-        with:
-          tflint_version: v0.64.0
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        run: pip install uv
-
-      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
-      - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
-
-      - name: Terraform tests and Makefile checks
-        working-directory: trust/deploy/terraform/${{ matrix.root }}
-        run: make test
-
-      - name: Lint
-        working-directory: trust/deploy/terraform/${{ matrix.root }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: make lint
-
-      - name: Checkov
-        run: |
-          pip install checkov==3.3.14
-          checkov -d trust/deploy/terraform/${{ matrix.root }} --framework terraform --skip-download --compact --quiet
+        run: bash deploy/aws/scripts/tflint_lint.sh

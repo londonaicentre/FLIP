@@ -39,6 +39,9 @@ Central Hub on AWS
 What holds state
 ================
 
+**Production-grade** means ``HUB=prod``. Staging (``HUB=stag``) keeps the 7-day backups and deletion protection
+but takes no final snapshot.
+
 .. list-table::
    :header-rows: 1
    :widths: 18 30 30 22
@@ -73,9 +76,9 @@ What holds state
    * - UI bucket
      - The built web UI.
      - Versioning. Terraform refuses to destroy the bucket.
-     - Yes: ``make -C deploy/providers/AWS deploy-ui`` rebuilds and uploads it.
+     - Yes: ``make -C deploy/aws deploy-ui`` rebuilds and uploads it.
    * - Secrets Manager secret ``FLIP_API``
-     - The AES key shared with every trust, and the FL server's internal service key and its hash.
+     - The AES key shared with every trust, and the FL API key.
      - A deleted secret can be restored for 30 days.
      - Its values also live in the admin's env file and, for CI, in the GitHub environment (see
        `Restoring the hub`_).
@@ -92,9 +95,6 @@ What holds state
      - None. Both are gitignored.
      - Partly: Terraform inputs can be recovered from AWS (see `Restoring the hub`_). Trust kit credentials cannot.
 
-**Production-grade** means ``HUB=prod``. Staging (``HUB=stag``) keeps the 7-day backups and deletion protection
-but takes no final snapshot.
-
 .. note::
 
    CloudWatch logs are kept for 365 days on production-grade estates and 90 days elsewhere. They are not backed up.
@@ -104,13 +104,19 @@ What ``make destroy`` keeps
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS destroy HUB=<env>
+   make -C deploy/aws destroy HUB=<env>
 
-It lists what it will remove and asks you to type ``yes``. It **keeps** the Cognito user pool, the ``FLIP_API``
-secret, every S3 bucket, the ACM certificates and Route 53 records, and the platform's VPC, which is never this
-stack's. It removes only what it targets: the database (once you have lifted its deletion protection) with its parameter and
-subnet groups, the bastion, the security groups, the EC2 IAM role, the key pairs and the SES email templates, plus any resources Terraform
-finds depend on them. Everything else, including the CloudWatch logs, stays.
+It lists what it will remove and asks you to type ``yes``.
+
+It **removes**:
+
+- the database (once you have lifted its deletion protection), with its parameter and subnet groups;
+- the bastion, the security groups, the EC2 IAM role and the key pairs;
+- the SES email templates;
+- any resources Terraform finds depend on these.
+
+It **keeps** everything else, including the Cognito user pool, the ``FLIP_API`` secret, every S3 bucket, the ACM
+certificates and Route 53 records, the CloudWatch logs, and the platform's VPC (which this stack does not own).
 
 .. warning::
 
@@ -147,8 +153,9 @@ The hub database
    wrote the backup or a later one: flip-api upgrades the schema when it starts, but cannot move it backward.
 
    A trust registered after the restore point is unknown to the restored database, so the hub rejects its
-   credentials. Register it again (``make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>``), which
-   issues new credentials, and send the site its new kit.
+   credentials. Register it again (``make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>``), which
+   issues new credentials, and send the site its new kit. Or add it again with **Add Trust** and have the site
+   download its kit (:ref:`onboarding-kit-from-ui`).
 
 A deleted or overwritten S3 object
    Restore the previous version with S3's versioning. In the model files bucket, previous versions last only 30 days.
@@ -159,9 +166,10 @@ The ``FLIP_API`` secret
    a refreshed kit: see :ref:`admin-upgrading-sites`, "Refreshing site kits".
 
 A lost hub env file
-   Rebuild the Terraform inputs from the deployed environment with ``scripts/reconcile_ci_env.py`` (see the
-   :gh:`AWS deployment README <deploy/providers/AWS/README.md>`, "Recovering an environment's true values"). It
-   recovers Terraform inputs only, not trust, XNAT, Orthanc or OMOP settings.
+   Rebuild the Terraform inputs from the deployed environment with
+   ``deploy/aws/scripts/reconcile_ci_env.py`` (see the :gh:`AWS deployment README
+   <deploy/aws/README.md>`, "Recovering an environment's true values"). It recovers Terraform inputs only, not
+   trust, XNAT, Orthanc or OMOP settings.
 
 The Cognito user pool
    FLIP has no way to restore it.
@@ -233,8 +241,9 @@ containers on the trust host:
 
 .. code-block:: shell
 
+   N=1   # FL_KIT_SLOT_NUMBER from your kit file
    for c in omop-db orthanc data-access-api imaging-api; do
-     docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' trust<N>-$c-1
+     docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' trust${N}-$c-1
    done
 
 **Mock data is re-seedable; site data is not.** The mock OMOP rows and Orthanc studies come from the published trust
@@ -252,7 +261,8 @@ Recommended backups
 
 *Who: site operator, on the trust host*
 
-FLIP schedules none of these. Take them with the site running (see the warning under `Restoring a trust node`_).
+FLIP schedules none of these. Take them with the site running: starting a stopped site with a first-install command
+wipes XNAT (see the warning under `Restoring a trust node`_).
 
 #. **Copy the kit file and the governance document** to a secure store. The kit file holds secrets.
 
@@ -263,7 +273,9 @@ FLIP schedules none of these. Take them with the site running (see the warning u
       make -C trust/xnat xnat-backup KIT=<CODE> HUB=prod
 
    It writes ``$XNAT_DATA_DIR/backups/xnat-db-<timestamp>.sql.gz`` and keeps it only if the dump is complete. Copy it
-   off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included.
+   off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included. The dump holds XNAT's
+   password hashes and token secrets, so it and ``backups/`` are readable only by the user that wrote them (the kit's
+   ``FLIP_UID``, or XNAT's own uid when the kit sets none): copy it as that user or as root.
 
 #. **Copy the XNAT archive** (``$XNAT_DATA_DIR/xnat-data/archive/``) with your backup tooling, at the same time as the
    dump. A database restored without its archive files, or the other way round, points at images that do not exist.
@@ -286,13 +298,14 @@ Restoring a trust node
 
 *Who: site operator*
 
-FLIP has no restore command for a trust. What it does tell you:
+FLIP has no restore command for a trust. When you restore one with your own tooling, these points apply:
 
 .. warning::
 
    **Never run a first-install command on a restored site.** ``make up-onprem-trust``, ``make -C trust up-trust``,
-   ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` delete the whole ``XNAT_DATA_DIR`` (archive,
-   database and dumps) and may re-seed OMOP and Orthanc. Starting a stopped site with them has the same effect.
+   ``make -C trust restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` delete the whole
+   ``XNAT_DATA_DIR`` (archive, database and dumps) and may re-seed OMOP and Orthanc. Starting a stopped site with them
+   has the same effect.
 
 - **The upgrade command touches no data.** It recreates the trust containers on their existing directories (see
   :ref:`admin-upgrading-sites`). It does not start a stopped XNAT stack, though: its XNAT step dumps the running XNAT
@@ -306,13 +319,14 @@ FLIP has no restore command for a trust. What it does tell you:
   ``POST /api/projects/{project_id}/cohort-snapshots?include_frozen=true``. Sites that still hold their cohort keep it;
   yours freezes afresh from its live database. Until then your site refuses the project's training and imaging pulls.
 - **Lost OMOP core vocabulary.** Load it again from your own export: :ref:`onprem-core-vocabulary`.
-- **Lost kit file.** The admin can rebuild the hub-shared settings (``make sync-trust-kit KIT=<CODE> HUB=<env>`` from
-  the repo root on the admin workstation), but not the credentials.
+- **Lost kit file.** The hub cannot show a trust's keys again, so the trust is issued new ones, from its card in the
+  FLIP UI or by the admin from the command line: "Later — issue new keys" on :doc:`/deploy-flip/onboarding-a-trust`.
+  The trust-local passwords were only ever in the kit file; the databases on the host still expect them.
 
 .. warning::
 
-   **The only way FLIP gives a trust new credentials is to delete it on the hub and register it again**
-   (``make -C deploy/providers/AWS delete-trust NAME=<trust-name> HUB=<env>``, then ``register-trusts``). Deleting a
+   **Do not delete a trust on the hub and register it again to give it new credentials**
+   (``make -C deploy/aws delete-trust NAME=<trust-name> HUB=<env>``). Deleting a
    trust also deletes its records on the hub: its task queue, project and model links, FL job participation, metrics
    and logs, cohort results, cohort snapshot and imaging status, and user roles scoped to it.
 
@@ -360,8 +374,9 @@ The Helm chart keeps each store on a PersistentVolumeClaim. Whether it survives
      - Grafana state.
      - **Deleted.**
 
-Outside the cluster's volumes, the FL kit stays on the node where ``stage-kit`` put it (``flClient.kitHostPath``),
-and the kit file stays on your workstation; the chart's Secret is generated from it.
+Outside the cluster's volumes, the FL kit stays on the node where ``stage-kit`` put it (``flClient.kitHostPath``) or,
+with ``flClient.kit.source=secret`` (the default on AKS), in a Kubernetes Secret created by ``kit-secret``. The kit
+file stays on your workstation; the chart's Secret is generated from it.
 
 .. warning::
 
@@ -383,7 +398,7 @@ Restoring a Kubernetes node
   re-applied at every pod start, but the ``postgres`` superuser's is set only when the database is first created. See
   the :gh:`Helm chart README <trust/deploy/helm/README.md>` for rotating it by hand.
 - **Mock-data seeding runs on every upgrade** while ``trustData.seed.enabled`` is on, replacing the listed mock
-  projects' rows. A site whose stores hold real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit.
+  projects' rows. If your stores hold real data, turn seeding off by setting ``TRUST_DATA_SEED=false`` in the kit file.
 
 ***********************
 Local development stack

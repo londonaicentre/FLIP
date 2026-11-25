@@ -2,7 +2,7 @@
 name = "synthea-dataset-tools"
 version = "0.1.0"
 description = "Local uv environment for the Synthea-in-OMOP EHR dataframe build (ehr_risk_prediction)."
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 # The narrowest of the dataset projects: build_synthea_dataframe.py needs only pandas (the download
 # is urllib, the tables are three small CSVs). The project exists so that tests/datasets/synthea/
 # runs in an environment declaring exactly what the script imports, like spleen's and cxr's do

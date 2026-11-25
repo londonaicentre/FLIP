@@ -16,6 +16,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { IProject, ITrustDecisions } from "@/services/project-service";
+import { useErrorStore } from "@/store/error";
 
 import ProjectPage from "../index.vue";
 
@@ -124,6 +125,19 @@ const baseProject = (): IProject => ({
     users: [],
     approvedTrusts: []
 });
+
+const twoUsers = (): IProject["users"] => [
+    {
+        id: "u1",
+        email: "a@x",
+        isDisabled: false
+    },
+    {
+        id: "u2",
+        email: "b@x",
+        isDisabled: false
+    }
+];
 
 function mountProjectPage({
     project = baseProject(),
@@ -273,6 +287,19 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(staging.attributes("data-stageable")).toBe("t1");
     });
 
+    test("still stages after a staging attempt with no trusts (#1926)", async () => {
+        const wrapper = mountProjectPage();
+        const staging = wrapper.findComponent(stubs.ProjectStaging);
+
+        await staging.vm.$emit("staged", []);
+        await flushPromises();
+        expect(stageProjectWithTrusts).not.toHaveBeenCalled();
+
+        await staging.vm.$emit("staged", ["t1"]);
+        await flushPromises();
+        expect(stageProjectWithTrusts).toHaveBeenCalledWith("/projects/p-123/stage", ["t1"]);
+    });
+
     test("marks Project Staged when status moves off UNSTAGED, and Project Approved when status is APPROVED", () => {
         const stagedProject = baseProject();
         stagedProject.status = "STAGED";
@@ -342,11 +369,17 @@ describe("Project page (/project/[id]/index.vue)", () => {
             ]
         });
 
-        test("posts the approved and declined trusts and announces the approval", async () => {
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
+        // Mounts the page and clicks the decision panel's save.
+        async function saveDecisions(project: IProject = stagedProject()) {
+            const wrapper = mountProjectPage({ project });
             await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
             await flushPromises();
+
+            return wrapper;
+        }
+
+        test("posts the approved and declined trusts and announces the approval", async () => {
+            const wrapper = await saveDecisions();
 
             expect(approveProject).toHaveBeenCalledWith(
                 "/step/project/p-123/approve",
@@ -365,10 +398,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 declined: ["t1", "t2"]
             };
             approveProject.mockResolvedValue({ projectStatus: "STAGED" });
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            const wrapper = await saveDecisions();
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "All trusts declined" }));
             expect(snackbarSuccess.mock.calls[0][0].text).toContain("stays staged");
@@ -382,10 +412,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 declined: ["t1"]
             };
             approveProject.mockResolvedValue({ projectStatus: "STAGED" });
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            await saveDecisions();
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
             expect(snackbarSuccess.mock.calls[0][0].text).toContain("until a trust approves it");
@@ -397,15 +424,10 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 declined: ["t2"]
             };
             approveProject.mockResolvedValue({ projectStatus: "APPROVED" });
-            const wrapper = mountProjectPage({
-                project: {
-                    ...stagedProject(),
-                    status: "APPROVED"
-                }
+            await saveDecisions({
+                ...stagedProject(),
+                status: "APPROVED"
             });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
         });
@@ -420,15 +442,10 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 successful: true,
                 details: []
             });
-            const wrapper = mountProjectPage({
-                project: {
-                    ...stagedProject(),
-                    status: "APPROVED"
-                }
+            await saveDecisions({
+                ...stagedProject(),
+                status: "APPROVED"
             });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust approved" }));
         });
@@ -450,10 +467,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
                     }
                 ]
             });
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            const wrapper = await saveDecisions();
 
             expect(snackbarSuccess).not.toHaveBeenCalled();
             expect(snackbarWarning).toHaveBeenCalledTimes(1);
@@ -465,10 +479,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
 
         test("treats a response without a known project status as a failure", async () => {
             approveProject.mockResolvedValue({});
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            await saveDecisions();
 
             expect(snackbarSuccess).not.toHaveBeenCalled();
             expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to save trust decisions" }));
@@ -481,20 +492,14 @@ describe("Project page (/project/[id]/index.vue)", () => {
                     data: { detail: "Unable to approve the project as it has not been staged" }
                 }
             });
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            await saveDecisions();
 
             expect(snackbarError.mock.calls[0][0].text).toBe("Unable to approve the project as it has not been staged");
         });
 
         test("reports a failed save without claiming anything was decided", async () => {
             approveProject.mockRejectedValue(new Error("boom"));
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            await saveDecisions();
 
             expect(snackbarSuccess).not.toHaveBeenCalled();
             expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to save trust decisions" }));
@@ -542,30 +547,33 @@ describe("Project page (/project/[id]/index.vue)", () => {
 
     test("user-count pill pluralises: 1 'User' when no extra users, 'Users' when one or more", () => {
         const wrapper = mountProjectPage();
-        // owner counts as +1 → "1 User"
+        // the owner alone → "1 User"
         expect(wrapper.text()).toContain("1 User");
         expect(wrapper.text()).not.toContain("1 Users");
 
         const project = baseProject();
-        project.users = [
-            {
-                id: "u1",
-                email: "a@x",
-                name: "User A",
-                organisation: "Org",
-                isDisabled: false
-            },
-            {
-                id: "u2",
-                email: "b@x",
-                name: "User B",
-                organisation: "Org",
-                isDisabled: false
-            }
-        ];
+        project.users = twoUsers();
         const wrapper2 = mountProjectPage({ project });
         // owner + 2 = 3 Users
         expect(wrapper2.text()).toContain("3 Users");
+    });
+
+    test("user-count pill counts the owner once when the hub lists them in users", () => {
+        // GET /projects/{id} includes the owner in `users` (FLIP#2066): an owner-only
+        // project read "2 Users" while the old count added 1 on top.
+        const ownerOnly = baseProject();
+        ownerOnly.users = [{
+            id: "owner-1",
+            email: "owner@example.com",
+            isDisabled: false
+        }];
+        expect(mountProjectPage({ project: ownerOnly }).find("[data-test=user-count-pill]").attributes("title"))
+            .toBe("1 User");
+
+        const ownerAndTwo = baseProject();
+        ownerAndTwo.users = [...ownerOnly.users, ...twoUsers()];
+        expect(mountProjectPage({ project: ownerAndTwo }).find("[data-test=user-count-pill]").attributes("title"))
+            .toBe("3 Users");
     });
 
     describe("header actions align with the title and collapse to icons on narrow screens", () => {
@@ -635,22 +643,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
 
         test("hides the word 'Users' below lg but keeps the count visible with a full-title tooltip", () => {
             const project = baseProject();
-            project.users = [
-                {
-                    id: "u1",
-                    email: "a@x",
-                    name: "User A",
-                    organisation: "Org",
-                    isDisabled: false
-                },
-                {
-                    id: "u2",
-                    email: "b@x",
-                    name: "User B",
-                    organisation: "Org",
-                    isDisabled: false
-                }
-            ];
+            project.users = twoUsers();
             const wrapper = mountProjectPage({ project });
 
             const pill = wrapper.find("[data-test=user-count-pill]");
@@ -738,5 +731,124 @@ describe("Project page (/project/[id]/index.vue)", () => {
             .toBe("false");
         // baseProject() carries no has_imaging at all — a hub predating the flag.
         expect(mountProjectPage().find("[data-test=stub-edit-drawer]").attributes("data-has-imaging")).toBe("true");
+    });
+});
+
+describe("Project page actions", () => {
+    const update = {
+        name: "Renamed",
+        description: "New",
+        users: ["u1"]
+    };
+    type Page = ReturnType<typeof mountProjectPage>;
+    const drawer = (wrapper: Page) => wrapper.findComponent(stubs.EditProjectDrawer);
+    const staging = (wrapper: Page) => wrapper.findComponent(stubs.ProjectStaging);
+    const stagedProject = (): IProject => ({
+        ...baseProject(),
+        status: "STAGED"
+    });
+
+    test("opens the edit drawer from the header button and closes it on the drawer's close", async () => {
+        const wrapper = mountProjectPage();
+        expect(drawer(wrapper).attributes("show")).toBe("false");
+
+        await wrapper.find("[data-test=edit-project-btn]").trigger("click");
+        expect(drawer(wrapper).attributes("show")).toBe("true");
+
+        await drawer(wrapper).vm.$emit("close");
+        expect(drawer(wrapper).attributes("show")).toBe("false");
+    });
+
+    test("saves an edit to this project, announces it and asks the parent to reload", async () => {
+        const wrapper = mountProjectPage();
+        await wrapper.find("[data-test=edit-project-btn]").trigger("click");
+
+        drawer(wrapper).vm.$emit("save", update);
+        await flushPromises();
+
+        expect(editProject).toHaveBeenCalledWith("/projects/p-123", update);
+        expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Project Updated" }));
+        expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        expect(drawer(wrapper).attributes("show")).toBe("false");
+    });
+
+    test("reports a failed edit by project name and raises the error state", async () => {
+        editProject.mockRejectedValueOnce(new Error("boom"));
+        const wrapper = mountProjectPage();
+
+        drawer(wrapper).vm.$emit("save", update);
+        await flushPromises();
+
+        expect(snackbarError).toHaveBeenCalledWith({
+            title: "Unable to update project",
+            text: "Stroke triage has not been updated."
+        });
+        expect(useErrorStore().hasError).toBe(true);
+        expect(wrapper.emitted("UpdateProject")).toBeUndefined();
+    });
+
+    test("stages the project with the chosen trusts and asks the parent to reload", async () => {
+        const wrapper = mountProjectPage();
+
+        staging(wrapper).vm.$emit("staged", ["t1", "t2"]);
+        await flushPromises();
+
+        expect(stageProjectWithTrusts).toHaveBeenCalledWith("/projects/p-123/stage", ["t1", "t2"]);
+        expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        expect(snackbarError).not.toHaveBeenCalled();
+    });
+
+    test("does not call the hub when no trust was chosen", async () => {
+        const wrapper = mountProjectPage();
+
+        staging(wrapper).vm.$emit("staged", []);
+        await flushPromises();
+
+        expect(stageProjectWithTrusts).not.toHaveBeenCalled();
+    });
+
+    test("reports a failed staging without asking for a reload", async () => {
+        stageProjectWithTrusts.mockRejectedValueOnce(new Error("boom"));
+        const wrapper = mountProjectPage();
+
+        staging(wrapper).vm.$emit("staged", ["t1"]);
+        await flushPromises();
+
+        expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to stage project" }));
+        expect(wrapper.emitted("UpdateProject")).toBeUndefined();
+    });
+
+    test("reports a failed unstage and closes the confirmation", async () => {
+        unstageProject.mockRejectedValueOnce(new Error("boom"));
+        const wrapper = mountProjectPage({ project: stagedProject() });
+
+        await wrapper.find("[data-test=unstage-project-btn]").trigger("click");
+        await wrapper.find("[data-test=stubbed-confirm-continue]").trigger("click");
+        await flushPromises();
+
+        expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to unstage project" }));
+        expect(snackbarSuccess).not.toHaveBeenCalled();
+        expect(wrapper.find("[data-test=stubbed-confirm-modal]").exists()).toBe(false);
+    });
+
+    test("sends one unstage request when the confirmation is clicked twice", async () => {
+        unstageProject.mockReturnValueOnce(new Promise(() => {}));
+        const wrapper = mountProjectPage({ project: stagedProject() });
+
+        await wrapper.find("[data-test=unstage-project-btn]").trigger("click");
+        await wrapper.find("[data-test=stubbed-confirm-continue]").trigger("click");
+        await wrapper.find("[data-test=stubbed-confirm-continue]").trigger("click");
+
+        expect(unstageProject).toHaveBeenCalledTimes(1);
+    });
+
+    test("closes the unstage confirmation when the modal asks to close", async () => {
+        const wrapper = mountProjectPage({ project: stagedProject() });
+        await wrapper.find("[data-test=unstage-project-btn]").trigger("click");
+
+        await wrapper.findComponent(stubs.AiConfirmModal).vm.$emit("closeModal");
+
+        expect(wrapper.find("[data-test=stubbed-confirm-modal]").exists()).toBe(false);
+        expect(unstageProject).not.toHaveBeenCalled();
     });
 });

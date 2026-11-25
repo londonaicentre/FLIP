@@ -18,16 +18,19 @@ thin CLI wrapper — the idempotent skip and the kit-dict shaping.
 """
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import ANY, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from flip_api.db.models.main_models import FLKitSlot, Trust
+from flip_api.scripts import register_trust as cli
 from flip_api.scripts.register_trust import _write_kit_to_ssm, register_one_trust
 from flip_api.trusts_services.services.register_trust import (
     NoFreeKitSlotError,
     RegisteredTrust,
+    TrustRegistrationError,
 )
 
 
@@ -79,7 +82,9 @@ def test_registers_new_trust_and_returns_one_kit(monkeypatch, session):
         "fl_kit_slot",
         "fl_kit_slot_number",
         "hub_shared",
+        "staged_until",
     }
+    assert kit["staged_until"] is None
 
 
 def test_skip_path_emits_metadata_without_credentials(monkeypatch, session):
@@ -164,7 +169,7 @@ def test_propagates_registration_error(monkeypatch, session):
 # ---------------------------------------------------------------------------
 # CLI entry point — `main()` parses argv, calls `register_one_trust`, writes
 # the kit JSON to stdout, and exits 1 on TrustRegistrationError. The body
-# below is what `deploy/providers/AWS/scripts/register-trusts.sh` (and the
+# below is what `deploy/aws/scripts/register-trusts.sh` (and the
 # root Makefile's `register-trust` target) drive, so it is worth its own
 # coverage.
 # ---------------------------------------------------------------------------
@@ -182,8 +187,6 @@ def _patch_session(monkeypatch):
 
 def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
     """Happy path: CLI emits a JSON-array of one kit object on stdout."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     monkeypatch.setattr(
         cli,
@@ -204,9 +207,7 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
     cli.main()
 
     out = capsys.readouterr().out
-    import json as _json
-
-    payload = _json.loads(out)
+    payload = json.loads(out)
     assert isinstance(payload, list)
     assert len(payload) == 1
     assert payload[0]["trust_name"] == "Open Trust"
@@ -215,8 +216,6 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
 
 def test_main_skip_prints_metadata_only_kit(monkeypatch, capsys):
     """Idempotent skip: an already-registered trust → stdout is a one-element JSON array without credentials."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     monkeypatch.setattr(
         cli,
@@ -235,9 +234,7 @@ def test_main_skip_prints_metadata_only_kit(monkeypatch, capsys):
 
     cli.main()
 
-    import json as _json
-
-    payload = _json.loads(capsys.readouterr().out)
+    payload = json.loads(capsys.readouterr().out)
     assert isinstance(payload, list)
     assert len(payload) == 1
     kit = payload[0]
@@ -250,8 +247,6 @@ def test_main_skip_prints_metadata_only_kit(monkeypatch, capsys):
 
 def test_main_exits_1_on_registration_error(monkeypatch, capsys):
     """Service failure: rollback, print `[]`, sys.exit(1)."""
-    from flip_api.scripts import register_trust as cli
-
     session = _patch_session(monkeypatch)
 
     def boom(*_a, **_kw):
@@ -270,33 +265,73 @@ def test_main_exits_1_on_registration_error(monkeypatch, capsys):
 
 def test_main_rotate_emits_a_full_kit(monkeypatch, capsys):
     """`--rotate` takes the rotation path and always returns credentials: no skip shape."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     rotated = RegisteredTrust(
         trust=Trust(id=uuid4(), name="Rotating Trust", code="ROT"),
         fl_kit_slot=FLKitSlot(slot_name="Trust_003", slot_number=3),
         trust_api_key="new-api",  # pragma: allowlist secret
         trust_internal_service_key="new-internal",  # pragma: allowlist secret
+        staged_until=datetime(2026, 12, 7, 10, 0, tzinfo=timezone.utc),
     )
-    monkeypatch.setattr(cli, "rotate_trust_keys", lambda _session, name: rotated)
+    seen = {}
+
+    def rotate(_session, name, revoke_old):
+        seen["revoke_old"] = revoke_old
+        return rotated
+
+    monkeypatch.setattr(cli, "rotate_trust_keys", rotate)
     monkeypatch.setattr(cli, "register_one_trust", _never_called)
     monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Rotating Trust", "--rotate"])
 
     cli.main()
 
+    assert seen["revoke_old"] is False  # staged by default (FLIP#1714)
     kit = json.loads(capsys.readouterr().out)[0]
     assert kit["trust_name"] == "Rotating Trust"
     assert kit["trust_api_key"] == "new-api"  # pragma: allowlist secret
     assert kit["trust_internal_service_key"] == "new-internal"  # pragma: allowlist secret
     assert kit["fl_kit_slot_number"] == 3
     assert "hub_shared" in kit
+    # The deploy scripts print which mode ran from this (FLIP#1714).
+    assert kit["staged_until"] == "2026-12-07T10:00:00+00:00"
+
+
+def test_main_rotate_revoke_old_reaches_the_service(monkeypatch, capsys):
+    """`--rotate --revoke-old` is the immediate cutover, for a leaked key."""
+    _patch_session(monkeypatch)
+    seen = {}
+
+    def rotate(_session, name, revoke_old):
+        seen["revoke_old"] = revoke_old
+        return RegisteredTrust(
+            trust=Trust(id=uuid4(), name=name, code="ROT"),
+            fl_kit_slot=FLKitSlot(slot_name="Trust_003", slot_number=3),
+            trust_api_key="k",  # pragma: allowlist secret
+            trust_internal_service_key="i",  # pragma: allowlist secret
+        )
+
+    monkeypatch.setattr(cli, "rotate_trust_keys", rotate)
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Rotating Trust", "--rotate", "--revoke-old"])
+
+    cli.main()
+
+    assert seen["revoke_old"] is True
+
+
+def test_main_revoke_old_without_rotate_is_an_error(monkeypatch, capsys):
+    _patch_session(monkeypatch)
+    monkeypatch.setattr(cli, "register_one_trust", _never_called)
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "X", "--revoke-old"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 2
+    assert "--revoke-old" in capsys.readouterr().err
 
 
 def test_main_exits_1_on_rotation_error(monkeypatch, capsys):
     """Rotation failure takes the same contract as registration: rollback, `[]`, exit 1."""
-    from flip_api.scripts import register_trust as cli
-
     session = _patch_session(monkeypatch)
 
     def boom(*_a, **_kw):
@@ -317,8 +352,6 @@ def test_main_exits_1_on_rotation_error(monkeypatch, capsys):
 @pytest.mark.parametrize("flag", [["--code", "ROT"], ["--region", "London"], ["--require-existing"]])
 def test_main_rotate_rejects_registration_flags(monkeypatch, capsys, flag):
     """`--rotate` identifies the trust by name only; a registration flag is an error, not ignored."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     monkeypatch.setattr(cli, "rotate_one_trust", _never_called)
     monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Rotating Trust", "--rotate", *flag])
@@ -332,8 +365,6 @@ def test_main_rotate_rejects_registration_flags(monkeypatch, capsys, flag):
 
 def test_main_requires_name(monkeypatch, capsys):
     """argparse rejects a call with no --name and exits 2 (the argparse convention)."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     monkeypatch.setattr("sys.argv", ["register_trust"])
 
@@ -344,9 +375,6 @@ def test_main_requires_name(monkeypatch, capsys):
     # argparse writes the "the following arguments are required" message to stderr.
     assert "--name" in capsys.readouterr().err
 
-
-# TrustRegistrationError needs to be importable at the module level (used by main).
-from flip_api.trusts_services.services.register_trust import TrustRegistrationError  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # hub_shared block

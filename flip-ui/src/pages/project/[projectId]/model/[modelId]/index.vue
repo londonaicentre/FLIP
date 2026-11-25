@@ -25,15 +25,15 @@
             <header class="shrink-0 px-8 pt-4">
                 <router-link
                     to="/projects"
-                    class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
+                    class="text-xs font-semibold text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
                 >
                     Projects
                 </router-link>
                 <template v-if="project">
-                    <span class="mx-1 text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300">/</span>
+                    <span class="mx-1 text-xs font-semibold text-gray-500 dark:text-gray-300">/</span>
                     <router-link
                         :to="`/project/${project.id}`"
-                        class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
+                        class="text-xs font-semibold text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
                     >
                         {{ project.name }}
                     </router-link>
@@ -398,15 +398,17 @@ const onFileDeleted = () => {
 };
 
 // Nothing is worth watching until the model is dispatched, so a pending model opens
-// on Prepare and anything else on Run. Seeded from the first payload only — after
-// that the tab is the user's to choose, and a 5s poll must not yank them back.
+// on Prepare and anything else on Run. The tab follows the model once more when it
+// leaves PENDING — dispatched elsewhere (another user, the API) or first painted from
+// a cached PENDING payload. Otherwise it is the user's to choose, and a 5s poll must
+// not yank them back.
 const activeTab = ref<ModelTab>("prepare");
-const tabSeeded = ref(false);
 
-watch(modelData, (model) => {
-    if (!model || tabSeeded.value) return;
-    activeTab.value = model.status === "PENDING" ? "prepare" : "run";
-    tabSeeded.value = true;
+watch(() => modelData.value?.status, (status, previous) => {
+    if (!status) return;
+    if (previous === undefined || (previous === "PENDING" && status !== "PENDING")) {
+        activeTab.value = status === "PENDING" ? "prepare" : "run";
+    }
 }, { immediate: true });
 
 const trainingInitialised = () => {

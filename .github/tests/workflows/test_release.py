@@ -39,6 +39,8 @@ RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
 # re-pinned to the release.
 WAIT_SCRIPT = WORKFLOWS.parent / "scripts" / "wait-for-release-builds.sh"
 CONFIRM_SCRIPT = WORKFLOWS.parent / "scripts" / "confirm-release-apply.sh"
+# The chart publisher lives with the chart, not in .github — it is also runnable by hand.
+PACKAGE_CHART = WORKFLOWS.parents[1] / "trust" / "deploy" / "helm" / "scripts" / "package_chart.py"
 
 
 class ReleaseDispatchesTheBuilds(unittest.TestCase):
@@ -178,6 +180,7 @@ class ReleaseWaitsThenDispatchesTheApply(unittest.TestCase):
         """Same re-run contract as the builds: keyed on the release, not the tag."""
         for step in (
             "Wait for the release builds to go green",
+            "Publish the versioned trust Helm chart",
             "Dispatch the production Terraform apply at the release tag",
         ):
             with self.subTest(step=step):
@@ -553,15 +556,53 @@ class TheReleaseTagValidationRuns(unittest.TestCase):
                 assert "stable release tag" in result.stdout
 
 
+class ReleasePublishesTheTrustChart(unittest.TestCase):
+    """The trust Helm chart is published from the release, versioned with it (FLIP#1646).
+
+    #1644's in-cluster upgrade CronJob pulls `oci://ghcr.io/.../flip-trust` at a version; until
+    this step existed there was no such artefact, and `Chart.yaml` sat frozen at 0.1.0.
+    """
+
+    def setUp(self) -> None:
+        self.text = code_text(RELEASE_WORKFLOW)
+        self.step = step_block(self.text, "Publish the versioned trust Helm chart")
+
+    def test_the_chart_is_stamped_from_the_release_tag(self) -> None:
+        assert "TAG: ${{ steps.version.outputs.tag }}" in self.step
+        assert 'package_chart.py --version "$TAG"' in self.step
+
+    def test_the_publisher_script_exists_and_is_the_one_invoked(self) -> None:
+        assert PACKAGE_CHART.is_file(), f"{PACKAGE_CHART} is missing"
+        assert "trust/deploy/helm/scripts/package_chart.py" in self.step
+
+    def test_it_authenticates_to_the_registry_before_pushing(self) -> None:
+        """`helm push` to GHCR is anonymous otherwise and fails with a 403 at the very end of a
+        release, after the images are built and the tag is pushed."""
+        assert "helm registry login ghcr.io" in self.step
+        assert "--password-stdin" in self.step, "the token must not be passed as an argv"
+
+    def test_the_chart_is_published_after_the_builds_and_before_the_apply(self) -> None:
+        """Ordering is the contract: a chart pointing at images that never built is worse than
+        no chart, and publishing after the apply would leave a green release without one."""
+        order = [
+            self.text.index("- name: Wait for the release builds to go green"),
+            self.text.index("- name: Publish the versioned trust Helm chart"),
+            self.text.index("- name: Dispatch the production Terraform apply at the release tag"),
+            self.text.index("- name: Create GitHub Release"),
+        ]
+        assert order == sorted(order), order
+
+
 class ReleaseKeepsMinimalPermissions(unittest.TestCase):
-    """Dispatching a production apply needs `actions: write` and nothing more."""
+    """Dispatching a production apply needs `actions: write`; pushing the chart adds
+    `packages: write` (FLIP#1646). Nothing more."""
 
     def test_the_workflow_default_is_read_only(self) -> None:
         text = code_text(RELEASE_WORKFLOW)
         top = text[text.index("permissions:") :].split("jobs:")[0]
         assert top.strip() == "permissions:\n  contents: read", top
 
-    def test_the_job_grants_only_contents_write_and_actions_write(self) -> None:
+    def test_the_job_grants_only_contents_actions_and_packages_write(self) -> None:
         text = code_text(RELEASE_WORKFLOW)
         job = text[text.index("\n    release:\n") :]
         block = re.search(r"^        permissions:[^\n]*\n(?P<body>(?:            [^\n]*\n)+)", job, re.MULTILINE)
@@ -571,7 +612,7 @@ class ReleaseKeepsMinimalPermissions(unittest.TestCase):
             for line in block["body"].splitlines()
             if line.strip()
         }
-        assert granted == {"contents": "write", "actions": "write"}, granted
+        assert granted == {"contents": "write", "actions": "write", "packages": "write"}, granted
 
 
 class TerraformApplyTakesTheReleaseTag(unittest.TestCase):
@@ -604,7 +645,7 @@ class TerraformApplyTakesTheReleaseTag(unittest.TestCase):
     def test_the_release_tag_is_forwarded_to_the_resolver(self) -> None:
         step = step_block(self.text, "Resolve the image tags to pin")
         assert "RELEASE_TAG: ${{ inputs.release_tag }}" in step
-        assert "deploy/providers/AWS/scripts/resolve-image-tags.sh" in step
+        assert "deploy/aws/scripts/resolve-image-tags.sh" in step
 
     def test_the_sha_path_is_still_what_a_push_resolves(self) -> None:
         """GIT_SHA stays the resolver's input; release_tag is additive, not a replacement."""
@@ -627,8 +668,85 @@ class TerraformApplyTakesTheReleaseTag(unittest.TestCase):
             for line in block["body"].splitlines()
             if line.strip()
         }
-        assert granted == {"contents": "read", "id-token": "write", "packages": "read"}, granted
+        # actions: read lets the wait step read this commit's image build runs (FLIP#1811).
+        assert granted == {"contents": "read", "id-token": "write", "packages": "read", "actions": "read"}, granted
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FlipUtilsReleaseNotesCoverThePackageOnly(unittest.TestCase):
+    """The flip-utils release lists the PRs that changed flip-utils/, not the platform's notes."""
+
+    SCRIPT = WORKFLOWS.parent / "scripts" / "flip-utils-release-notes.sh"
+    GENERATED = "\n".join(f"* PR {n} by @someone in https://github.com/o/r/pull/{n}" for n in (11, 12, 13, 113))
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "main")
+        self.commit("README.md", "start")
+        self.git("tag", "flip-utils-v1.0.0")
+        self.merge_pr(11, "flip-utils/flip/a.py")
+        self.merge_pr(12, "flip-api/b.py")
+        self.commit("flip-utils/flip/c.py", "squashed change (#13)")
+
+    def git(self, *args: str) -> str:
+        identity = ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+        return subprocess.run(
+            ["git", *identity, *args], cwd=self.repo, check=True, capture_output=True, text=True
+        ).stdout
+
+    def commit(self, path: str, message: str) -> None:
+        target = self.repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(message)
+        self.git("add", path)
+        self.git("commit", "-q", "-m", message)
+
+    def merge_pr(self, number: int, path: str) -> None:
+        self.git("checkout", "-q", "-b", f"pr-{number}")
+        self.commit(path, f"work for {number}")
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "-m", f"Merge pull request #{number} from o/pr-{number}", f"pr-{number}")
+
+    def notes(self, gh: str) -> str:
+        stub = self.bin / "gh"
+        stub.write_text(f"#!/usr/bin/env bash\n{gh}\n")
+        stub.chmod(0o755)
+        env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "GITHUB_REPOSITORY": "o/r"}
+        head = self.git("rev-parse", "HEAD").strip()
+        result = subprocess.run(
+            ["bash", str(self.SCRIPT), "1.1.0", "flip-utils-v1.1.0", "flip-utils-v1.0.0", head],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    def test_only_prs_that_changed_the_package_are_listed(self) -> None:
+        notes = self.notes(f"cat <<'NOTES'\n{self.GENERATED}\nNOTES")
+        assert "/pull/11\n" in notes, notes
+        assert "/pull/13\n" in notes, notes
+        assert "/pull/12" not in notes, notes
+        assert "/pull/113" not in notes, notes
+
+    def test_an_api_failure_after_the_pypi_publish_still_yields_notes(self) -> None:
+        notes = self.notes("exit 1")
+        assert "* #11\n" in notes, notes
+        assert "* #13\n" in notes, notes
+        assert "#12" not in notes, notes
+
+    def test_the_workflow_publishes_those_notes_and_never_takes_latest(self) -> None:
+        text = code_text(WORKFLOWS / "release-pypi.yml")
+        assert "flip-utils-release-notes.sh" in step_block(text, "Prepare release notes")
+        assert "RELEASE_NOTES_TEMPLATE" not in text
+        assert "--latest=false" in step_block(text, "Create GitHub Release")

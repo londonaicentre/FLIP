@@ -67,7 +67,7 @@ build:
 # FLARE writes every private key 0600. The FL server and clients run as the host uid in
 # dev and read theirs as owner, but the FL API runs as the image's user, so its admin key
 # is opened to the provisioning user's group and the container joins that group (group_add
-# in deploy/compose.development.nvflare.yml) — the 640 + group_add Flower's dev SuperNodes
+# in deploy/compose/compose.development.nvflare.yml) — the 640 + group_add Flower's dev SuperNodes
 # use (FLIP#1384). The root `make up` checks the key still matches.
 FL_API_ADMIN_KEY = $(DEV_WORKSPACE_DIR)/net-$(NET_NUMBER)/services/flip-fl-api-net-$(NET_NUMBER)/startup/client.key
 provision:
@@ -116,18 +116,23 @@ provision-add-client-prod:
 	$(SCRIPTS)/add-client.sh $(NET_NUMBER) $(CLIENT_NAME) $(PROVISION)/net-$(NET_NUMBER)_project_prod.yml $(PROD_WORKSPACE_DIR)
 
 # Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
-# the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
+# the deploy flow pulls from (deploy/aws Makefile `provision-local-trust`,
 # which reads s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/
 # net-N/services/<slot>/). Run with HUB=stag|prod so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
 # load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real. The
 # workspace follows ENV_CLASS whatever the network mode (same FQDN + CA by design, FLIP#749).
+# state/ holds the root CA's private key, so it goes to its own prefix, which no ECS task
+# role can read, never among the kits.
 FL_KIT_WORKSPACE := $(if $(filter prod,$(ENV_CLASS)),$(PROD_WORKSPACE_DIR),$(STAG_WORKSPACE_DIR))
+FL_KIT_S3 = s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER)
+FL_CA_STATE_S3 = s3://$(AICENTRE_BUCKET_NAME)/fl-flare-ca-state/$(FLARE_KIT_DATE)/net-$(NET_NUMBER)
 DRYRUN ?= --dryrun
 upload-kits-to-s3:
 	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with HUB=stag|prod"; exit 1; }
 	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with HUB=stag|prod"; exit 1; }
-	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
-	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) --delete $(DRYRUN)
+	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → $(FL_KIT_S3), CA state → $(FL_CA_STATE_S3) $(DRYRUN)"
+	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) $(FL_KIT_S3) --delete --exclude "state/*" $(DRYRUN)
+	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER)/state $(FL_CA_STATE_S3) --delete $(DRYRUN)
 
 # Standalone FL services for one net (fl-server + fl-api + 2 clients), no hub/trusts.
 # Needs `make fl-provision` first; runs on the local :$(FL_BUILD_TAG) images.

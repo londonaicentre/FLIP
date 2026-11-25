@@ -18,27 +18,13 @@ import { format } from "date-fns";
 
 import { ILog } from "@/services/model-service";
 
-export const stringArrayEquals = (a: string[], b: string[]): boolean => {
-    // Both inputs are Arrays
-    return Array.isArray(a) && Array.isArray(b) &&
-        // Both have the same length
-        a.length === b.length &&
-        // Everything in a is in b
-        a.every((val) => b.includes(val));
-};
-
 /**
  * Everything in B is in A
  * @param a array of strings. Must contain everything in B.
  * @param b array of string. All must be contained in A.
  * @returns boolean
  */
-export const stringArrayContainsAll = (a: string[], b: string[]): boolean => {
-    // Both inputs are Arrays
-    return Array.isArray(a) && Array.isArray(b) &&
-        // Everything in b is in a
-        b.every((val) => a.includes(val));
-};
+export const stringArrayContainsAll = (a: string[], b: string[]): boolean => b.every((val) => a.includes(val));
 
 export const formatBytes = (bytes: number, decimals = 2): string => {
     if (bytes === 0) return "0 Bytes";
@@ -90,12 +76,12 @@ export const relativeAgeLabel = (sec: number): string => {
 /**
  * "created 2h ago"-style meta label for a list row, from an API timestamp.
  *
- * Shared by the Projects and Models lists (owner · created … ago). Falls back
- * to an em-dash when the timestamp is missing or unparseable.
+ * Shared by the Projects and Models lists (owner · created … ago). Returns `fallback` when the
+ * timestamp is missing or unparseable.
  */
-export const relativeCreatedLabel = (timestamp?: string | null): string => {
+export const relativeCreatedLabel = (timestamp?: string | null, fallback = "—"): string => {
     const created = apiTimestampMs(timestamp);
-    if (created === null) return "—";
+    if (created === null) return fallback;
 
     return `created ${relativeAgeLabel((Date.now() - created) / 1000)}`;
 };
@@ -119,14 +105,8 @@ export const getOrderedLogs = (logs: ILog[] | undefined, reverse = false): ILog[
     return orderedLogs;
 };
 
-export const capatilizeString = (value: string): string => {
-    return value.replace(/\w\S*/g,
-        (w) => (
-            w.replace(/^\w/,
-                (c) => c.toUpperCase())
-        )
-    );
-};
+export const capatilizeString = (value: string): string =>
+    value.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1));
 
 /**
  * Get a cryptographically random identifier (UUID v4)

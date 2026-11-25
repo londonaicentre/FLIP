@@ -27,7 +27,7 @@
 #   * Declaring an environment also changes the OIDC `sub` claim to
 #     `repo:ORG/REPO:environment:aws-stag`, which carries no ref. What keeps a PR
 #     from assuming the *apply* role is the `job_workflow_ref` condition in
-#     deploy/providers/AWS/modules/terraform_ci_bootstrap, not the ref in `sub`.
+#     deploy/aws/modules/terraform_ci_bootstrap, not the ref in `sub`.
 #
 # The image tags are resolved, not read from configuration. `vars.DOCKER_TAG` is
 # the mutable `:stag`, while an apply writes the immutable `sha-<short7>` pin
@@ -51,7 +51,7 @@ on:
   pull_request:
     branches: [main, develop]
     paths:
-      - "deploy/providers/AWS/**"
+      - "deploy/aws/**"
       - ".github/workflows/terraform_plan.yml"
 
 permissions:
@@ -104,7 +104,7 @@ jobs:
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
           RESOLVE_SHA_TAG: "false"
-        run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
+        run: deploy/aws/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
 
       # The Makefile reads its inputs from ../../../.env.stag. Composing that file
       # rather than exporting TF_VAR_* directly keeps the Makefile as the single
@@ -128,20 +128,22 @@ jobs:
           FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
           FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+          FLIP_DEMO_BUCKET_NAME: ${{ vars.FLIP_DEMO_BUCKET_NAME }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
-          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
           SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+          SES_SENDER_EMAIL: ${{ vars.SES_SENDER_EMAIL }}
+          COGNITO_EMAIL_VIA_SES: ${{ vars.COGNITO_EMAIL_VIA_SES }}
           ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
           NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
-          FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+          FL_EDGE_PORT: ${{ vars.FL_EDGE_PORT }}
           # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into
           # the env file as raw exports. The two web-edge values are optional on
@@ -154,13 +156,13 @@ jobs:
           NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
           LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
+          LZA_WEB_DEMO_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_DEMO_DISTRIBUTION_ARN }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
-          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
-          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          FL_API_KEY: ${{ secrets.FL_API_KEY }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
-        run: deploy/providers/AWS/scripts/compose-ci-env.sh
+        run: deploy/aws/scripts/compose-ci-env.sh
 
       # aws_key_pair.public_key is ForceNew and the keypair is not behind a
       # `count`, so a runner without this file plans a replacement of
@@ -175,7 +177,7 @@ jobs:
             --name /flip/ci/host_aws_public_key \
             --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
             echo "::error::/flip/ci/host_aws_public_key is missing. It is declared in" \
-                 "deploy/providers/AWS/parameter_store.tf and created by the first" \
+                 "deploy/aws/parameter_store.tf and created by the first" \
                  "laptop apply of that root in this account."
             exit 1
           fi
@@ -192,7 +194,7 @@ jobs:
       # selection). tf-via-pr calls terraform directly, so hand it those values
       # rather than re-deriving them here and drifting from a laptop plan.
       - name: Export the Terraform variables
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           # The compose step's HUB, so `make` reads the env file it wrote and maps
           # it onto TF_VAR_* exactly as a laptop plan would.
@@ -203,7 +205,7 @@ jobs:
         uses: op5dev/tf-via-pr@39ed2635c056ca408ed24cc5c2baf0ef4381a7a5 # v13.7.4
         with:
           command: plan
-          working-directory: deploy/providers/AWS
+          working-directory: deploy/aws
           arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
           # Never take the state lock for a PR plan: an operator mid-`make apply`
           # must not be blocked by someone else opening a pull request.
@@ -216,7 +218,7 @@ jobs:
           preserve-plan: true
           # MUST stay false. tf-via-pr defaults this to true, and the plan file
           # it uploads is a zip containing the full tfstate — which holds
-          # AES_KEY_BASE64, INTERNAL_SERVICE_KEY and ADMIN_USER_PASSWORD in
+          # AES_KEY_BASE64, FL_API_KEY and ADMIN_USER_PASSWORD in
           # plaintext. This repository is public, so that artifact is a public
           # download. Nothing downstream needs it: this job only comments the
           # diff, and terraform_apply.yml re-plans from scratch rather than
@@ -237,7 +239,7 @@ jobs:
       # the detail goes to the job summary.
       - name: Advisory — LZA FL ingress and FL impact
         continue-on-error: true
-        working-directory: deploy/providers/AWS
+        working-directory: deploy/aws
         env:
           ADVISORY_ONLY: "true"
         run: |

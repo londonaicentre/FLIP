@@ -64,6 +64,18 @@ Create chart name and version as used by the chart label.
 {{- end }}
 
 {{/*
+Labels for a StatefulSet's volumeClaimTemplates. Kubernetes never lets that field change, so they must not
+carry the chart's version: they stay what every StatefulSet installed before the chart was versioned (FLIP#1752)
+was created with, chart 0.1.0 and app 1.0, or every upgrade to a new release is refused.
+*/}}
+{{- define "flip-trust.claimTemplateLabels" -}}
+helm.sh/chart: flip-trust-0.1.0
+{{ include "flip-trust.selectorLabels" . }}
+app.kubernetes.io/version: "1.0"
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
 Common labels
 */}}
 {{- define "flip-trust.labels" -}}
@@ -81,17 +93,6 @@ Selector labels
 {{- define "flip-trust.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "flip-trust.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "flip-trust.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "flip-trust.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
 {{- end }}
 
 {{/*
@@ -115,10 +116,9 @@ Namespace name
 {{- end }}
 
 {{/*
-OMOP database connection environment, shared by the vocab-load Job's probe and
-loader containers. Both talk to the same database with the same credentials —
-keeping one definition means a rename here cannot leave the probe reading a
-different database than the loader writes to.
+OMOP database connection environment, shared by the vocab-load and trust-seed Jobs. Both
+talk to the same database with the same credentials — keeping one definition means a
+rename here cannot leave one Job reading a different database than the other writes to.
 */}}
 {{- define "flip-trust.omopVocabDbEnv" -}}
 - name: OMOP_DB_HOST
@@ -249,4 +249,47 @@ carry it, so whichever restarts follows the one still running; at install the fi
 {{- $_ := set $affinity "podAffinity" $podAffinity }}
 {{- end }}
 {{- with $affinity }}{{ toYaml . }}{{ end }}
+{{- end }}
+
+{{/*
+How the trust runs an FL job, reported by trust-api in its heartbeat (FLIP#1739):
+"pods" when NVFLARE starts each job in its own pod, "process" otherwise.
+*/}}
+{{- define "flip-trust.flClientJobMode" -}}
+{{- if and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}pods{{ else }}process{{ end }}
+{{- end }}
+
+{{/*
+trust-api's ConfigMap data, a helper so the pod template can hash it (checksum/config in trust-api.yaml).
+*/}}
+{{- define "flip-trust.trustApiConfigData" -}}
+CENTRAL_HUB_API_URL: {{ .Values.trustApi.env.CENTRAL_HUB_API_URL | quote }}
+DATA_ACCESS_API_URL: {{ .Values.trustApi.env.dataAccessApiUrl | default "http://data-access-api:8000" | quote }}
+IMAGING_API_URL: {{ .Values.trustApi.env.imagingApiUrl | default "http://imaging-api:8000" | quote }}
+POLL_INTERVAL_SECONDS: {{ .Values.trustApi.env.POLL_INTERVAL_SECONDS | quote }}
+TRUST_API_KEY_HEADER: {{ .Values.trustApi.env.TRUST_API_KEY_HEADER | quote }}
+TRUST_NAME: {{ .Values.trustName | quote }}
+ENV: {{ .Values.environment | quote }}
+LOG_LEVEL: {{ .Values.logLevel | quote }}
+TRUST_NUMBER: {{ .Values.trustNumber | quote }}
+# The fl-client has no health endpoint; the health collector reports the image tag this
+# release pins for it, so the hub's Connection Status names the FL build (FLIP#1204).
+# Must stay in step with the tag flip-trust.flClientImage renders.
+FL_CLIENT_IMAGE_TAG: {{ include "flip-trust.imageTag" (dict "pin" .Values.flClient.image.pin "global" .Values.global.image.tag "own" .Values.flClient.image.tag) | quote }}
+# Reported beside the tag: whether each FL job runs in a pod of its own (FLIP#1739).
+FL_CLIENT_JOB_MODE: {{ include "flip-trust.flClientJobMode" . | quote }}
+{{- end }}
+
+{{/*
+The NVFLARE site privacy policy (FLIP#851): fl-client-init renders it and the fl-client checks that render
+at start (FLIP#1570). In the pod template rather than only the ConfigMap, so a Helm value change rolls the
+Deployment.
+*/}}
+{{- define "flip-trust.flSitePrivacyEnv" -}}
+- name: FL_SITE_PRIVACY_POLICY
+  value: {{ .Values.flClient.nvflare.sitePrivacy.policy | quote }}
+- name: FL_SITE_PRIVACY_PERCENTILE
+  value: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
+- name: FL_SITE_PRIVACY_GAMMA
+  value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
 {{- end }}

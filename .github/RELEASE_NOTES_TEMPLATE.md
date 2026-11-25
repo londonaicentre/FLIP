@@ -15,32 +15,47 @@
 
 ## :sparkles: Highlights
 
-- **A trust inside a TRE** (#1732, #1724). An on-prem trust installs and runs without sudo, behind a proxy, as the operator's own uid (`FLIP_UID`/`FLIP_GID`), and pulls every image, third-party ones included, from one registry: GHCR, with Grafana, Loki, Alloy and the socket proxy mirrored there and pinned by digest. This is what the KCL CREATE TRE runs on.
-- **AWS trusts in their own account** (#1632, #1636, #1717; issues #1438, #1439). A trust deploys on AWS from its own Terraform root, as one EC2 node (an existing subnet by default, no trust-owned Elastic IP, SSM only) or on EKS through the `flip-trust` chart. The hub's Terraform no longer creates a trust.
-- **Flower 1.42 behind a Fleet-only proxy** (#1531; issue #1517). Trusts reach the hub's SuperLink only through a new proxy that passes the Fleet API alone, so Flower's unauthenticated Control and Runtime APIs are never exposed to a trust. The Flower images now install flip-utils from its lock file, hash-checked, as the NVFLARE ones do (#1802).
-- **Hardening from the security review** (#1744, #1803, #1804, #1805, #1809; tracker #1743). Kits get minted passwords instead of template ones, trust and hub ports bind to loopback by default, the hub's containers run as a non-root user on a read-only root filesystem, its AWS resources pass Security Hub's FSBP baseline, and its web listener is on TLS. Two published advisories are fixed (GHSA-ghjq, GHSA-9fx9).
-- **A real trust needs no sample data** (#1689, #1686). A new kit setting, `TRUST_DATA_SEED=false`, makes a first install fetch nothing from Hugging Face or PyPI; one outbound-traffic table now covers every node shape.
+- **Security fixes reach production** (#1874, #1879; GHSA-cc6x-7f92-8g7v, GHSA-mmmg-jvf9-v9qp). The FL server no longer holds a hub-wide key: each FL job carries its own credential, valid only for its own model while it reports, and the hub's shared internal service key is retired. The FL API requires a key on every route but `/health`. Further fixes from the November security review are in this release too; their advisories follow.
+- **XNAT upgrade** (#1819–#1823, #1882). PostgreSQL 12 → 16, Tomcat 9 on JDK 21, DQR 3.1.0 and Container Service 3.9.0, upgraded in place on Compose and Helm with a dump and restore that keeps the old cluster for a rollback. This is the main thing a site does on upgrade.
+- **FL jobs as Kubernetes job pods** (#1750, #1751, #1742, #1856, #1858, #1755, #1672, #2001). Each NVFLARE job runs in its own pod with reserved CPU and memory and is removed when it ends. A job pod sees only its own project's studies, read-only, through the project's NVFLARE study, and can read them from XNAT's archive in place. A job can be submitted while a trust is offline.
+- **Imaging follows the approved cohort** (#1861). A study that leaves a project's approved cohort stops being served at once and leaves XNAT after a grace period (24 hours by default). imaging-api refuses downloads outside the approved list.
+- **More places to run a trust** (#1944, #1785, #1959, #1752). A FLIP node in Snowflake (Snowpark Container Services), an EC2 trust inside the hub's own account, and single-node k3s as a supported cluster. Each release publishes the trust Helm chart to GHCR as a versioned chart.
+- **Easier for Trust Admins** (#1853, #2010, #1838, #1998, #2014, #2040). A Trust Admin downloads their trust kit from the UI. A trust's keys rotate without taking it offline: the hub accepts the old and the new key until the trust first uses the new one. Connection Status shows each trust's job mode and FL client version. A hub admin can delete a disabled user. Upgrading an on-prem site from an old release no longer hits the problems BDMS met going from v0.8.0 to v0.15.0, and a Helm upgrade no longer reports success with the FL client down.
+- **Framework and platform updates** (#1994, #2002, #1961, #1917, #1859, #2032). Python 3.13 and torch 2.15 across the platform; NVFLARE 2.9.1 (mixes with 2.9.0, so sites upgrade in any order) and Flower 1.43. Hub emails go through SES from the hub's own domain. The hub's deploy files are grouped by component. A causal discovery tutorial on real ADNI data (#1484) and a more accessible UI (#1929, #1933, #1936).
 
 ## :warning: Breaking Changes
 
-- **Flower hub and Flower sites move to 1.42 together** (#1531). SuperNodes older than 1.40 cannot connect to the new proxy, so a Flower estate upgrades in one Deployment-Mode window. Trust kits are unchanged. NVFLARE estates are not affected.
-- **The hub's web listener is on TLS** (#1805). For hub operators: the edge's origin must be HTTPS before, or straight after, this applies. On a Landing Zone Accelerator estate that is the platform repo's origin change (aicentre-lza-iac #127 and #128 for staging).
-- **The hub's Terraform creates no trust** (#1717). `deploy/providers/AWS` drops `module.trust_ec2` and the `deploy-trust`, `seed-trust-data`, `stage-fl-kit`, `upgrade-trust-ec2`, `forward-trust` and `check-trust-ec2-enabled` targets; an AWS trust deploys from `trust/deploy/terraform/aws/ec2` or `…/eks`. The apply removes the hub's unused trust security group, role, profile, log group and key pair; `DEPLOY_TRUST_EC2` is no longer read.
-- **Trust deployment files moved under `trust/deploy/`** (#1629): composes in `trust/deploy/compose/`, kit and node scripts in `trust/deploy/scripts/`, Azure in `trust/deploy/terraform/azure/`. Make targets are unchanged. An existing Azure bootstrap's local state has to be moved (see the Azure README).
-- **Compose ports bind to `127.0.0.1` by default** (#1744), except the FL server's port. Anyone who reached Grafana, Orthanc or a database by the host's LAN address uses an SSH tunnel, or sets `TRUST_BIND_ADDRESS=0.0.0.0` in the kit (`HUB_BIND_ADDRESS` in the hub env file).
+- **The FL API requires a key** (GHSA-mmmg-jvf9-v9qp). flip-api sends `FL_API_KEY` to every FL API; an old flip-api against a new FL API gets 401 on every FL call. On the hub, the images and the Terraform apply go out together, in one quiet FL window. A local stack gets the key from `make up`; a stack started by hand needs `make generate-fl-api-key` first.
+- **The hub's shared internal service key is retired** (#1874). fl-server callbacks authenticate with the per-job credential alone. Hub operators: `INTERNAL_SERVICE_KEY`, `INTERNAL_SERVICE_KEY_HASH` and `INTERNAL_SERVICE_KEY_HEADER` are no longer read.
+- **Hub deploy tree by component** (#2032, #2035). `deploy/providers/AWS` is now `deploy/aws` and the hub compose files are in `deploy/compose/`. `make -C deploy/providers/AWS …` still forwards for this one release. Hub operators: move the gitignored `build/` (packaged trust kits) and `.backups/` across and re-run `terraform init` in `deploy/aws` (the state key is unchanged). A raw `docker compose` against the hub files needs `--project-directory deploy`. `site.yml` is now `bastion.yml`.
+- **Flower hub and Flower sites move to 1.43 together** (#1917). The SuperLink's health check is HTTP; its gRPC health server is gone. A Flower estate upgrades in one Deployment-Mode window.
+- **Flower kits are re-issued** (#2044). Python 3.13 rejects the certificates the old `generate_creds.py` issued (no key identifiers), so a hub on this release starts no Flower run until its Flower kits are re-issued and sent to the sites. NVFLARE kits are not affected.
+- **flip-utils backends are extras** (#1905). A plain `pip install flip-utils` no longer installs an FL backend: name `flip-utils[nvflare]` or `flip-utils[flower]`. `flip.utils.Utils.is_string_empty` is removed (#2038).
 
 ## :arrows_counterclockwise: Site upgrade
 
 <!-- The prompt to trust operators (FLIP#1204). Sites upgrade on their own schedule and to the
      release their hub runs; this section is how they learn what this release asks of them. -->
 
-- **Required:** recommended. The release carries the security review's hardening and dependency fixes (#1744, #1747, #1800). A Flower site must upgrade in the same window as its hub (see *Breaking Changes*).
-- **Ordering:** NVFLARE sites, any order: NVFLARE and the hub–site protocol are unchanged. Flower sites, with the hub, in one Deployment-Mode window. Upgrading after the hub reports {{TAG}} lets the upgrade verb pick it by default; before that, pass `TAG={{TAG}}`.
-- **Refreshed kit needed:** no. Before upgrading, check three kit settings:
-  - A `.prod` / `.stag` kit that still carries a template password (`ORTHANC_PASSWORD`, `OMOP_POSTGRES_PASSWORD`, `DATA_ACCESS_POSTGRES_PASSWORD`, `XNAT_ADMIN_PASSWORD`, `XNAT_SERVICE_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`) now fails the readiness checklist, which names the keys to rotate (#1744).
-  - Ports move to loopback on the upgrade: set `TRUST_BIND_ADDRESS=0.0.0.0` only on a host whose own firewall decides who gets in (#1744).
-  - Optional: `TRUST_DATA_SEED=false` on a real trust, so it never loads the sample data (#1689); `FLIP_UID` / `FLIP_GID` to run the containers as the operator (#1732).
-- **Outbound access:** every image now comes from GHCR (`ghcr.io`, `pkg-containers.githubusercontent.com`); Docker Hub is no longer needed (#1724).
+- **Required:** yes. The release carries the security fixes above, the XNAT database upgrade and the cohort controls (#1861, #1886).
+- **Ordering:**
+  - NVFLARE sites: any order. A v0.15.0 NVFLARE trust keeps working against a {{TAG}} hub, and NVFLARE 2.9.0 and 2.9.1 mix.
+  - Kubernetes trusts that run NVFLARE jobs as pods: upgrade **before** the hub, so the site has its project studies when the hub starts submitting jobs into them (#1856).
+  - Flower sites: with the hub, in one Deployment-Mode window, on a re-issued Flower kit (*Breaking Changes*).
+  - Upgrading after the hub reports {{TAG}} lets the upgrade verb pick it by default; before that, pass `TAG={{TAG}}`.
+- **Refreshed kit needed:** not for the upgrade itself (Flower aside). After the cut the hub's FLARE CA is rotated (GHSA-cc6x-7f92-8g7v), which cuts every NVFLARE site off until it installs the new FL kit its hub admin sends.
+- **Before upgrading, check the kit:**
+  - The readiness checklist now refuses `TRUST_LOG_LEVEL=DEBUG`. Set `INFO`, recreate the trust APIs, and rotate both trust keys (`make rotate-trust-keys KIT=<CODE>` on the hub) if the trust ever ran at `DEBUG`. It still refuses a template password, as in v0.15.0.
+  - A site with a real PACS whose kit never set XNAT's AE title is renamed to `FLIP_XNAT` on upgrade (#1863). Set the title the PACS sends to in the kit first.
+  - `COHORT_QUERY_THRESHOLD` below 10 is raised to 10 (#1886).
+  - New, optional: `COHORT_RECONCILE_MINUTES` and `COHORT_REMOVAL_GRACE_HOURS` (default 24) set how fast imaging follows a cohort change (#1861). A long OMOP reload can make studies look removed: raise the grace period before one.
+- **What the upgrade does:**
+  - XNAT's database moves from PostgreSQL 12 to 16 by a dump and restore, and the old cluster is kept for a rollback. Once the site is confirmed: `make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> YES=1` (Helm: `make -C trust/deploy/helm xnat-db-remove-old-cluster YES=1`).
+  - NVFLARE: the fl-client mounts its kit's `local/` and `startup/` read-only through a new `fl-client-init` step (#1906), so the FL client image must be this release's too.
+- **Kubernetes sites:**
+  - The OMOP vocabulary is staged onto the node, never fetched in the cluster (#1902): `make -C trust/deploy/helm download-vocab` or an Athena export, then `stage-vocab`.
+  - An account limited to the trust's namespace (#1986): the built-in `admin` role is not enough. `make preflight` reports `Cluster unreachable` on a healthy cluster, and a first deploy stops at `resourcequotas … is forbidden`. Have a cluster administrator create the namespace and grant the three extra rights listed under "Deploying with an account limited to one namespace" on the Kubernetes troubleshooting page: write ResourceQuotas and LimitRanges in the namespace, read Services in `kube-system`, read nodes and StorageClasses. A trust already running with those rights is not affected.
+- **Snowflake trusts:** pass `HUB_EGRESS=true` on every `make up` and `make render`, not only at join. Without it the services lose their hub and FL access.
 - **Operator command**, on the trust host, from your FLIP checkout:
   ```bash
   git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
@@ -50,29 +65,32 @@
 
 ## :seedling: New Features
 
-- On-prem trusts without sudo: operator access, proxy setup, containers as the operator's uid, and every image from one GHCR registry, mirrored and pinned by digest (#1732, #1724).
-- AWS trust nodes in their own account: an EC2 root (existing subnet or its own VPC, no trust-owned Elastic IP) and an EKS root for the chart (#1632, #1636); the deployment tree split by component, with the hub's Terraform hub-only (#1629, #1717).
-- Flower 1.42, with a Fleet-only proxy in front of the SuperLink (#1531).
-- Trust keys rotate in place: `make rotate-trust-keys KIT=<CODE>` reissues a trust's API and internal service keys without changing its identity or kit slot (#1601).
-- `TRUST_DATA_SEED=false` skips the sample data on every node shape (#1689). The readiness checklist probes the hub, the FL endpoint and the image registries from the trust host (#1727).
-- Hub hardening: minted kit passwords and loopback ports (#1744), read-only root filesystems on ECS (#1803), every hub container as a non-root user (#1809), Security Hub FSBP controls (#1804), the web listener on TLS (#1805).
-- FLARE job processes start faster: the images ship their Python bytecode (#1783).
-- MONAI bundle on-ramp in flip-utils: an overlay schema and a skeleton generator (#1389).
-- A browse-only public demo at `/demo/` with five example projects (#1748, #1759). Staging stops after its end-to-end check and a hold window (#1621, #1728).
+- FL jobs on Kubernetes: job pods with reserved resources, removed when they end (#1750); submit despite an offline trust (#1751); studies streamed into the job's own directory (#1742); job pods see only their project's studies (#1856) and read them from XNAT's archive (#1858); the trust reports its job mode (#1755); the image cache drops studies unused for a week (#1672).
+- A project's imaging follows its approved cohort (#1861).
+- XNAT: PostgreSQL 16 (#1819), Tomcat 9 / JDK 21 (#1820), DQR 3.1.0 (#1822), Container Service 3.9.0 (#1823), nginx 1.30.6 and xnat-db tuning on Helm, Europe/London time zone (#1882), AE title `FLIP_XNAT` by default (#1863).
+- Trust kits: download from the UI (#1853); staged key rotation with a grace period (#2010); NVFLARE kit mounted read-only (#1906); kit slots derived from S3 on both backends (#1722, #1943).
+- New node shapes: Snowflake (#1944), an EC2 trust in the hub's account (#1785), k3s (#1959); the trust Helm chart on GHCR on every release (#1752); the OMOP vocabulary from a folder on the node (#1902).
+- UI: Connection Status shows each trust's job mode and FL client version, and hub admins its jobs (#1838), with a pulse on every online trust (#1981); delete a disabled user (#1998); simpler typography, project type icons and a graphite dark mode (#1936); the public demo served from its own host, checked in CI (#2013).
+- Hub: email through SES from the hub's own domain (#1859); the RDS Proxy log group in Terraform with retention (#1884); a develop apply catches up to the newest build (#1952); the Helm upgrade's exit code is deterministic (#1719); onboarding asks for the site's egress address when the FL endpoint times out (#1832).
+- Platform: Python 3.13 (#1994), torch 2.15 on CUDA 13.2 (#2002), NVFLARE 2.9.1 (#1961), Flower 1.43 (#1917), flip-utils backend extras (#1905).
+- Tutorials: biomarker causal discovery, federated bootstrapped FCI on ADNI, on both backends (#1484).
 
 ## :bug: Bug Fixes
 
-- Flower tutorials learn again: the default differential-privacy clipping of 1.0 had stopped the spleen tutorial learning (#1758).
-- The NVFLARE fl-api waits for a slow-starting FL server again: NVFLARE 2.9 reports "not up yet" as `NoConnection`, which the startup retry did not catch, so a server that took longer than 20 s left the API up but unable to reach it until restarted.
-- One outbound-traffic table for every node, and the EC2 CloudWatch agent from the regional bucket (#1686).
-- FL kit changes roll the hub's FL services before the Flower key registration, and a stale kit fails with a named fix (#1741). The Helm fl-client requests its GPU from the device plugin (#1767).
-- Security: dependency upgrades for the open Dependabot alerts (#1747, #1800); the Flower images built from flip-utils' lock (#1802).
-- `update-env` no longer writes `DB_HOST` (#1781); flip-ui typechecks in CI (#1772); the EC2 trust's ssh_config example names the right profile (#1730).
+- Trust upgrades: a Helm upgrade keeps the FL kit path and waits for a serving FL client, and the on-prem readiness gate passes a running site (#2040); the on-prem upgrade gaps a v0.8.0 site hit (#2014); on-prem kit tarballs ship private (#1965).
+- Flower certificates pass Python 3.13's strict TLS check (#2044). A run picked up while the FL API restarts waits in the queue (#1963). The start-of-job image wipe keeps the job's own project (#1830, #2001).
+- Cohort queries: the threshold is floored at 10 (#1886); the cache keys on the exact validated SQL (#1883); `make_date` is allowed (#1909).
+- XNAT: Compose persists the prearchive (#1821); a failed admin ContainerManager grant is judged by the roles admin holds (#1955).
+- Helm: `make status` runs its smoke tests against `KUBE_CONTEXT` (#1808); no stale `fl-server-net-1` host alias (#1922); imaging-api's Recreate strategy (#1951).
+- Training: the NVFLARE EHR tutorial restarts its learning-rate decay every round (#1835); the NVFLARE results zip carries the whole app (#1907); Flower evaluation metrics plot per round (#1903); internal training errors stay out of the activity feed (#1662).
+- UI: WCAG 2.2 AA contrast and focus fixes (#1929, #1933); a staging call with no trusts no longer blocks later staging (#1928); untouched fields show no validation error (#1939, #1855); the demo's Models list honours its filters (#1935).
+- Hub and trust tooling: SES template permissions (#1841); EFS provisioning retries while its new role propagates (#1879); `register-trust` / `register-trusts` on a deployed hub (#1844, #1904); `up-trust-ec2` creates its slot network (#1846); FL client lists from the compose config (#1885); Flower composes require the host group (#1665); the trust Makefiles' throwaway containers pull from GHCR (#2036).
+- Security: open Dependabot alerts resolved (#1868, #1979); unused Cognito actions dropped from the flip-api role (#1887); the dev fl-api debug port on loopback (#1876); redundant checks and silent fallbacks removed (#2038).
 
 ## :books: Documentation
 
-- "Is your trust ready for FLIP?" for non-technical readers (#1735); what to ask a trust's network team about the FL port (#1794); trust platform pages with AKS and AWS (#1786).
-- Tutorial READMEs: at-a-glance blocks, flow diagrams and six wrong commands fixed (#1693). Docs GIFs pinned by sha256 (#1776); weekly drift sweeps (#1734, #1799).
+- Troubleshooting entries for trust node problems met on upgrade and install (#1983); SES's 72-hour verification window and an end-to-end email check (#1956); the FL connection is WebSocket over HTTPS, with mutual TLS only on NVFLARE (#2058).
+- Docs tidied across the hub, FL, trust and Read the Docs pages (#1873, #1916, #1918–#1921, #2039); current ADNI download steps (#2004).
 
 ## :white_check_mark: Release checks
 
@@ -82,17 +100,17 @@ Tutorial suite, on a GPU host:
 
 - [x] FLARE — `make -C fl-tutorials run-all-tutorials`
 - [x] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
-- [x] Host and date recorded: NVIDIA GeForce RTX 5090 workstation, 9 November 2026
+- [x] Host and date recorded: NVIDIA GeForce RTX 5090 workstation, 25 November 2026
 
-FLARE: all 10 tutorials passed in 24 min 38 s — arkplus_fine_tuning 1 min 42 s, xray_classification 40 s, 3d_spleen_segmentation_evaluation 1 min 2 s, arkplus_baseline_classification_evaluation 33 s, arkplus_multimodel_classification_evaluation 51 s, brain_mri_ldm_stage1_autoencoder 7 min 6 s, brain_mri_ldm_stage2_diffusion 2 min 38 s, xray_diffusion 3 min 33 s, 3d_spleen_segmentation 5 min 59 s, ehr_risk_prediction 34 s.
-Flower: all 5 tutorials passed in 4 min 27 s — xray_classification 29 s, 3d_spleen_segmentation_evaluation 51 s, 3d_prostate_segmentation 44 s, 3d_spleen_segmentation 2 min 2 s, ehr_risk_prediction 21 s.
+FLARE: all 11 tutorials passed in 24 min 43 s — arkplus_fine_tuning 1 min 42 s, xray_classification 42 s, 3d_spleen_segmentation_evaluation 1 min 1 s, arkplus_baseline_classification_evaluation 32 s, arkplus_multimodel_classification_evaluation 44 s, brain_mri_ldm_stage1_autoencoder 6 min 30 s, brain_mri_ldm_stage2_diffusion 2 min 48 s, xray_diffusion 3 min 48 s, 3d_spleen_segmentation 5 min 59 s, biomarker_causal_discovery 28 s, ehr_risk_prediction 31 s.
+Flower: all 6 tutorials passed in 5 min 3 s — xray_classification 33 s, 3d_spleen_segmentation_evaluation 52 s, 3d_prostate_segmentation 45 s, 3d_spleen_segmentation 2 min 5 s, biomarker_causal_discovery 21 s, ehr_risk_prediction 28 s.
 
 Full-platform smoke test, against a running deployment:
 
 - [x] FLARE — `make e2e_smoke`
 - [x] Flower — `make e2e_smoke FL_BACKEND=flower`
 
-Run at `c84351bd3` on an isolated instance (`rel0150`) built from that commit — every repo-built image at `:rel0150`, checked by `make release-verify` — started from empty state: FLARE reached RESULTS_UPLOADED in 10 min 19 s; Flower reached RESULTS_UPLOADED in 5 min 40 s.
+Run at `047b0e545` on an isolated instance (`rel0160`) built from that commit — every repo-built image at `:rel0160`, checked by `make release-verify` — started from empty state: FLARE reached RESULTS_UPLOADED in 9 min 20 s; Flower reached RESULTS_UPLOADED in 5 min 9 s.
 
 At the same commit: `make unit_test` passed, `make integration_test` passed.
 

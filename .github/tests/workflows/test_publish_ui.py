@@ -29,7 +29,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO / ".github" / "workflows"
-MODULE_VARIABLES = REPO / "deploy" / "providers" / "AWS" / "modules" / "terraform_ci_bootstrap" / "variables.tf"
+MODULE_VARIABLES = REPO / "deploy" / "aws" / "modules" / "terraform_ci_bootstrap" / "variables.tf"
 
 
 def code(workflow: str) -> str:
@@ -81,7 +81,7 @@ class PublishUi(unittest.TestCase):
         assert "needs: build" in publish
         assert "role-to-assume: ${{ vars.TF_UI_PUBLISH_ROLE_ARN }}" in publish
         assert "npm" not in publish
-        assert "deploy/providers/AWS/scripts/publish-ui.sh dist" in publish
+        assert "deploy/aws/scripts/publish-ui.sh dist" in publish
         assert '"${FLIP_UI_BUCKET_NAME}"' in publish
         others = [path.name for path in WORKFLOWS.glob("*.yml") if path.name != "publish_ui.yml"]
         assert not [name for name in others if "TF_UI_PUBLISH_ROLE_ARN" in code(name)]
@@ -140,11 +140,15 @@ class PublishUi(unittest.TestCase):
 
 class ApplyPublishesTheUi(unittest.TestCase):
     def test_the_ui_follows_a_successful_apply(self) -> None:
-        """needs: apply, so a held or failed apply publishes no UI."""
+        """A held or failed apply publishes no UI, and a production apply does publish one.
+
+        start-staging is skipped on main, so the implicit success() of a bare ``needs: apply``
+        skipped every production publish (v0.15.0); ``always()`` lifts it, the result check holds the gate.
+        """
         ui = job("terraform_apply.yml", "ui")
         assert "needs: apply" in ui
         assert "uses: ./.github/workflows/publish_ui.yml" in ui
-        assert not re.search(r"^    if:", ui, re.MULTILINE), "the ui job must not override needs: apply"
+        assert re.search(r"^    if: always\(\) && needs\.apply\.result == 'success'$", ui, re.MULTILINE), ui
         assert permissions(ui) == {"contents": "read", "id-token": "write"}
 
     def test_the_ui_publishes_into_the_applys_environment(self) -> None:

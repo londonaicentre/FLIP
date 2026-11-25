@@ -12,7 +12,7 @@
 
 # Build-only smoke test for the flip-ui local-dev Dockerfile.
 #
-# Stag/prod serve the UI from S3 + CloudFront (see deploy/providers/AWS/), so
+# Stag/prod serve the UI from S3 + CloudFront (see deploy/aws/), so
 # nothing pulls a flip-ui image from GHCR. This workflow just proves the
 # Dockerfile still builds on the current branch — no push, no tagging.
 
@@ -22,16 +22,28 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - "flip-ui/**"
+      # Everything the Dockerfile copies: the entrypoint and the npm manifests (FLIP#2021).
+      - "flip-ui/Dockerfile"
+      - "flip-ui/docker/**"
+      - "flip-ui/package*.json"
       - ".github/workflows/docker_build_flip_ui.yml"
   push:
     branches: [main, develop]
     paths:
-      - "flip-ui/**"
+      # Everything the Dockerfile copies: the entrypoint and the npm manifests (FLIP#2021).
+      - "flip-ui/Dockerfile"
+      - "flip-ui/docker/**"
+      - "flip-ui/package*.json"
       - ".github/workflows/docker_build_flip_ui.yml"
 
 permissions:
   contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build:

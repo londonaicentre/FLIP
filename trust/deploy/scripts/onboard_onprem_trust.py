@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import shlex
@@ -70,23 +71,13 @@ def quote_make_assignment(key: str, value: str | Path) -> str:
     return shlex.quote(f"{key}={value}".replace("$", "$$"))
 
 
-# Hub-shared keys — MUST stay in lockstep with HUB_SHARED_KEYS in
-# trust/deploy/scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
-# flip-api/src/flip_api/scripts/register_trust.py, except FL_EDGE_PORT: a kit synced before
-# FLIP#1365 lacks it and every reader falls back to FL_SERVER_PORT, so requiring it would fail
-# every existing site's upgrade checklist.
-HUB_SHARED_KEYS: tuple[str, ...] = (
-    "AES_KEY_BASE64",
-    "CENTRAL_HUB_API_URL",
-    "TRUST_API_KEY_HEADER",
-    "FL_BACKEND",
-    "FLOWER_KIT_DATE",
-    "FLARE_KIT_DATE",
-    "DOCKER_TAG",
-    "DOCKER_FL_TAG",
-    "NLB_SUBDOMAIN",
-    "FL_SERVER_PORT",
-)
+# Keys a kit may lack because every reader falls back: FL_EDGE_PORT (kits synced before FLIP#1365 lack it;
+# readers fall back to FL_SERVER_PORT). Requiring such a key would FAIL every existing site's upgrade checklist.
+_HUB_SHARED_OPTIONAL: frozenset[str] = frozenset({"FL_EDGE_PORT"})
+# Derived from trust_kit_lib (the one list, held to register_trust.HUB_SHARED_ENV_KEYS by flip-api's lockstep
+# test). A key added there becomes REQUIRED here for every existing kit; if older kits can lack it and readers
+# fall back, add it to _HUB_SHARED_OPTIONAL in the same change.
+HUB_SHARED_KEYS: tuple[str, ...] = tuple(k for k in trust_kit_lib.HUB_SHARED_KEYS if k not in _HUB_SHARED_OPTIONAL)
 KIT_CRED_KEYS: tuple[str, ...] = (
     "TRUST_API_KEY",
     "TRUST_INTERNAL_SERVICE_KEY",
@@ -195,6 +186,15 @@ def is_filled(value: str | None) -> bool:
     return bool(value) and "<run-make-" not in value
 
 
+def is_deployed_kit(kit_path: str) -> bool:
+    """Whether a kit path names a deployed site (``.stag`` / ``.prod``) rather than a dev kit.
+
+    A deployed kit publishes real services and holds real credentials, so some checks escalate
+    from WARN to FAIL for it.
+    """
+    return kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Environment probes (independent of kit file)
 # ─────────────────────────────────────────────────────────────────────
@@ -301,7 +301,7 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
         kit_path,
         hints=[
             "Ask the FLIP admin to package + send your kit (`make package-onprem-trust-kit",
-            f"  KIT={kit} HUB={os.environ.get('HUB') or 'prod'}` from deploy/providers/AWS),",
+            f"  KIT={kit} HUB={os.environ.get('HUB') or 'prod'}` from deploy/aws),",
             "  extract the tarball, then:",
             f"    cp <extracted-dir>/<kit-file> {kit_path}",
         ],
@@ -309,19 +309,26 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
 
 
 def check_hub_shared(kit_vars: dict[str, str], kit_present: bool) -> Check:
+    label = f"Hub-shared block ({len(HUB_SHARED_KEYS)} keys)"
     if not kit_present:
-        return Check("Hub-shared block (10 keys)", Status.PENDING, "pending — needs kit file")
-    missing = [k for k in HUB_SHARED_KEYS if not is_filled(kit_vars.get(k))]
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    # The other backend's kit date may be empty (FLIP#1476): an NVFLARE hub has no FLOWER_KIT_DATE.
+    other_kit_date = {"nvflare": "FLOWER_KIT_DATE", "flower": "FLARE_KIT_DATE"}.get(kit_vars.get("FL_BACKEND", ""))
+    missing = [
+        k
+        for k in HUB_SHARED_KEYS
+        if not is_filled(kit_vars.get(k)) and not (k == other_kit_date and not kit_vars.get(k))
+    ]
     if not missing:
         hub_url = kit_vars.get("CENTRAL_HUB_API_URL", "").removesuffix("/api")
         return Check(
-            "Hub-shared block (10 keys)",
+            label,
             Status.PASS,
             "populated",
             hints=[f"UI URL: {hub_url or '<unset>'}"],
         )
     return Check(
-        "Hub-shared block (10 keys)",
+        label,
         Status.FAIL,
         f"{len(missing)} unfilled: {', '.join(missing)}",
         hints=["Ask the FLIP admin to run 'make sync-trust-kit KIT=<CODE>' and re-send the kit."],
@@ -349,15 +356,14 @@ def fetch_local_trust_health(port: str, timeout: float = 3.0) -> dict:
 # ─────────────────────────────────────────────────────────────────────
 
 PROBE_TIMEOUT_SECONDS = 4.0
-# Both hosts of each registry: ghcr.io alone passes while every pull fails on the layer host.
+# Both hosts of the one registry a trust pulls from (FLIP#1721): ghcr.io alone passes while every
+# pull fails on the layer host.
 REGISTRY_HOSTS: tuple[str, ...] = (
     "ghcr.io",
     "pkg-containers.githubusercontent.com",
-    "registry-1.docker.io",
-    "auth.docker.io",
-    "production.cloudfront.docker.com",
 )
 EGRESS_DOC = "the egress list on docs → Deploy a trust node → Network requirements"
+EGRESS_IP_URL = "https://checkip.amazonaws.com"
 
 
 def _failure_reason(error: BaseException) -> str:
@@ -384,6 +390,15 @@ def probe_tcp(host: str, port: int, timeout: float = PROBE_TIMEOUT_SECONDS) -> s
             return None
     except OSError as error:
         return _failure_reason(error)
+
+
+def lookup_egress_ip(timeout: float = PROBE_TIMEOUT_SECONDS) -> str | None:
+    """The public address this host leaves from, or None when it cannot be looked up."""
+    try:
+        with urllib.request.urlopen(EGRESS_IP_URL, timeout=timeout) as response:
+            return str(ipaddress.ip_address(response.read(64).decode("ascii").strip()))
+    except Exception:  # only feeds a hint: a blocked or intercepted lookup must not fail the checklist
+        return None
 
 
 def probe_hub_health(hub_url: str, timeout: float = PROBE_TIMEOUT_SECONDS) -> tuple[str | None, str | None]:
@@ -456,16 +471,20 @@ def check_fl_endpoint_reachable(kit_vars: dict[str, str], kit_present: bool) -> 
     failure = probe_tcp(host, port)
     if failure is None:
         return Check(label, Status.PASS, f"tcp {host}:{port} connects (from {source})")
-    return Check(
-        label,
-        Status.FAIL,
-        f"tcp {host}:{port}: {failure} (from {source})",
-        hints=[
-            "The FL client connects out to this host:port over mutual TLS; a connection that opens"
-            " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
-            f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
-        ],
-    )
+    hints = [
+        "The FL client connects out to this host:port over TLS; a connection that opens"
+        " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
+        f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
+    ]
+    if "timed out" in failure:
+        # A hub that filters by source address drops an unlisted site without an answer.
+        egress_ip = lookup_egress_ip()
+        leaves_from = f": {egress_ip}" if egress_ip else " (not found from here; your network team knows it)"
+        hints.append(
+            "If outbound is already allowed, the hub may admit FL connections only from registered site"
+            f" addresses — send the FLIP hub team the public address this host leaves from{leaves_from}."
+        )
+    return Check(label, Status.FAIL, f"tcp {host}:{port}: {failure} (from {source})", hints=hints)
 
 
 def check_registries_reachable() -> Check:
@@ -481,9 +500,8 @@ def check_registries_reachable() -> Check:
         Status.WARN,
         "; ".join(f"{host}: {why}" for host, why in unreachable.items()),
         hints=[
-            "ghcr.io + pkg-containers.githubusercontent.com serve FLIP's images; the docker.io hosts the"
-            " logging stack, XNAT's socket proxy and the alpine image xnat-backup runs. Pulls need both hosts"
-            " of a registry.",
+            "ghcr.io + pkg-containers.githubusercontent.com serve every image a trust runs: FLIP's own and"
+            " its mirrors of the third-party ones (FLIP#1721). Pulls need both hosts.",
             f"Allow them outbound ({EGRESS_DOC}), or agree an image mirror with the FLIP team (FLIP#1721).",
         ],
     )
@@ -538,7 +556,7 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
         "The Hub-shared block is stale. Ask the FLIP admin for a refreshed kit:",
         (
             "  make sync-trust-kit KIT=<CODE> HUB=<env>  →  "
-            "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>"
+            "make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<env>"
         ),
         "then replace ONLY the Hub-shared block in your kit file and re-run the upgrade.",
     ]
@@ -693,6 +711,34 @@ def _client_cannot_read(path: Path, kit_vars: dict[str, str], image_uid: int) ->
     return f"{path} is owned by uid {st.st_uid} mode {st.st_mode & 0o777:o}, and the client runs as uid {uid}"
 
 
+_KIT_AS_ROOT_HINT = (
+    "That is how it should be when the FL client runs as that uid. To check inside it, run the checklist as root:"
+    " sudo -E make onboard-onprem-trust KIT=<CODE>."
+)
+
+
+def _sealed_from_me(root: Path, target: Path) -> str:
+    """Why this user cannot look inside the kit on the way from ``root`` to ``target``, or "" when it can (FLIP#1964).
+
+    The kit is private to the FL client's uid, so an operator who is another uid, without sudo, cannot list it, and
+    everything inside would look missing. That is the kit as it should be, not a missing one. Each folder is asked
+    of os.access from the top down, never of pathlib: below a closed folder, is_dir() raises before Python 3.14 and
+    answers False from 3.14 on.
+    """
+    relative = target.relative_to(root)
+    for folder in (root / p for p in (*reversed(relative.parents), relative)):
+        try:
+            if not os.path.lexists(folder):  # missing, which the contents check reports
+                return ""
+            if not os.access(folder, os.R_OK | os.X_OK):
+                st = folder.stat()
+                mode = st.st_mode & 0o777
+                return f"{folder} belongs to uid {st.st_uid} (mode {mode:o}), so uid {os.getuid()} cannot look in"
+        except OSError:
+            return ""
+    return ""
+
+
 def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     if not kit_present:
         return Check("FL kit contents", Status.PENDING, "pending — needs kit file")
@@ -715,6 +761,8 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     root = Path(fl_kit_dir)
     if backend == "nvflare":
         target = root / "net-1" / "services" / slot
+        if sealed := _sealed_from_me(root, target):
+            return Check("FL kit contents (nvflare)", Status.WARN, f"not checked: {sealed}", hints=[_KIT_AS_ROOT_HINT])
         sub = {p: (target / p).is_dir() for p in ("local", "startup", "transfer")}
         if all(sub.values()):
             if why := _client_cannot_read(target / "startup" / "client.key", kit_vars, 1000):
@@ -739,6 +787,8 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     # flower
     certs = root / "net-1" / "certificates"
     creds = root / "net-1" / "keys" / f"supernode_credentials_{slot_number}"
+    if sealed := _sealed_from_me(root, creds.parent):
+        return Check("FL kit contents (flower)", Status.WARN, f"not checked: {sealed}", hints=[_KIT_AS_ROOT_HINT])
     if certs.is_dir() and creds.is_file():
         if why := _client_cannot_read(creds, kit_vars, 49999):
             return Check(
@@ -995,20 +1045,56 @@ def check_unrotated_passwords(
     if not template.is_file():
         return Check("Trust-local passwords", Status.WARN, "not checked — trust/.env.example is missing")
     template_vars = read_kit_vars(template)
+    # A key set to nothing was not rotated either; one the kit does not carry at all is not this check's.
     unchanged = [
-        key for key in TRUST_LOCAL_PASSWORD_KEYS if kit_vars.get(key) and kit_vars[key] == template_vars.get(key)
+        key
+        for key in TRUST_LOCAL_PASSWORD_KEYS
+        if key in kit_vars and (not kit_vars[key] or kit_vars[key] == template_vars.get(key))
     ]
     if not unchanged:
         return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
-    deployed = kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+    deployed = is_deployed_kit(kit_path)
     return Check(
         "Trust-local passwords",
         Status.FAIL if deployed else Status.WARN,
-        f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} still match {template.name} defaults",
+        f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} are empty or still match {template.name} defaults",
         hints=[
-            f"Unchanged: {', '.join(unchanged)}",
+            f"Unchanged or empty: {', '.join(unchanged)}",
             f"Edit {kit_path} → Trust-local credentials section and replace each with a",
             "  random secret (`make new-trust` mints them for a fresh kit).",
+        ],
+    )
+
+
+def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+    """Refuse a deployed kit left at ``TRUST_LOG_LEVEL=DEBUG`` (FLIP-SR-050).
+
+    At DEBUG the trust APIs log request headers and bodies into Loki, which runs with auth
+    disabled, shares the trust network with the FL client, and keeps 30 days of history — so the
+    trust's hub API key, internal key and cohort-admin proof land where researcher FL code can read
+    them. On a `.stag` / `.prod` kit that is a FAIL; on a development kit it is a WARN (mock data,
+    throwaway credentials).
+    """
+    label = "Trust log level"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    level = (kit_vars.get("TRUST_LOG_LEVEL") or "").strip().upper()
+    # Named, not "anything but DEBUG": NOTSET and a numeric level below 20 log everything too.
+    if level in ("INFO", "WARNING", "ERROR", "CRITICAL"):
+        return Check(label, Status.PASS, f"TRUST_LOG_LEVEL={level}")
+    if not level:
+        # Unset falls back to each service's own default; name it rather than assume.
+        return Check(label, Status.WARN, "TRUST_LOG_LEVEL unset — set it to INFO explicitly")
+    deployed = is_deployed_kit(kit_path)
+    return Check(
+        label,
+        Status.FAIL if deployed else Status.WARN,
+        f"TRUST_LOG_LEVEL={level} logs trust credentials into Loki (FLIP-SR-050)"
+        if level == "DEBUG"
+        else f"TRUST_LOG_LEVEL={level} is not INFO, WARNING, ERROR or CRITICAL, and may log as DEBUG does",
+        hints=[
+            f"Edit {kit_path} → set TRUST_LOG_LEVEL=INFO, then recreate the trust APIs.",
+            "A site that already ran at DEBUG should rotate both trust keys.",
         ],
     )
 
@@ -1045,8 +1131,12 @@ def check_data_dir(
     kit_vars: dict[str, str],
     kit_present: bool,
     repo_root: Path,
+    image_uid: int | None = None,
 ) -> Check:
     """Validate a per-trust data dir (OMOP, Orthanc) — set; exists and non-empty if real data.
+
+    `image_uid` is the uid the dir's container runs as when the kit sets no FLIP_UID, where
+    the image fixes one (deploy/portable.mk).
 
     A missing or empty dir is a WARN, not a FAIL: `make -C trust up-trust` creates
     the dir and seeds it from the canonical mock dataset at bring-up (FLIP#1187),
@@ -1087,18 +1177,30 @@ def check_data_dir(
     except PermissionError:
         # Dir exists but isn't readable by us — almost always because a
         # container took ownership on a previous `up` (the omop-db postgres
-        # image forces PGDATA to 0700 owned by its own uid). It's therefore
-        # in use and populated; we just can't introspect it, so don't block
-        # a re-run of onboarding after the stack has come up.
+        # image forces PGDATA to 0700 owned by its own uid). That is the
+        # normal state of a running site, so it passes when the owner is the
+        # uid its container runs as: FLIP_UID, else the image's (FLIP#1731).
+        # Postgres's is not fixed, so without FLIP_UID only root is wrong there
+        # (a mount source Docker created, which no container can use).
         try:
-            owner = f"uid {resolved.stat().st_uid}"
-        except OSError:
-            owner = "another user"
+            owner = resolved.stat().st_uid
+        except OSError as error:
+            return Check(label, Status.WARN, f"{resolved} (not readable as uid {os.getuid()}: {error.strerror})")
+        flip_uid = kit_vars.get("FLIP_UID", "").strip()
+        writer_uid = int(flip_uid) if flip_uid.isdigit() else image_uid
+        if owner == 0:
+            return Check(label, Status.WARN, f"{resolved} (owned by root, so no container can write it)")
+        if writer_uid is not None and owner != writer_uid:
+            return Check(
+                label,
+                Status.WARN,
+                f"{resolved} (owned by uid {owner}, but its container runs as uid {writer_uid} and cannot write it)",
+            )
         return Check(
             label,
-            Status.WARN,
-            f"{resolved} (owned by {owner}, not readable as uid {os.getuid()} "
-            f"— assumed populated; expected after the stack has run once)",
+            Status.PASS,
+            f"{resolved} (in use by uid {owner}; "
+            f"not readable as uid {os.getuid()}, as expected once the stack has run)",
         )
     if is_empty:
         return Check(
@@ -1137,19 +1239,32 @@ def invoking_ids() -> tuple[int, int]:
         return os.getuid(), os.getgid()
 
 
-def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+def prepare_host_dirs_command(kit: str) -> str:
+    """The root step in full: without KIT and HUB, `make -C trust` would prepare the development paths."""
+    hub = os.environ.get("HUB", "prod")
+    command = f"sudo -E make -C trust prepare-host-dirs {quote_make_assignment('KIT', kit)}"
+    return f"{command} {quote_make_assignment('HUB', hub)}" if hub else command
+
+
+def check_data_dir_paths(
+    kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>", upgrade: bool = False
+) -> Check:
     """Every data dir is absolute, and the bring-up can create it as this user (FLIP#1723).
 
     The kit template carries the development paths, which are relative: on a deployed trust they
     resolve inside this checkout, on whatever disk it sits on. An unset one falls back to its
-    /opt/flip default, which a non-root operator usually cannot create.
+    /opt/flip default, which a non-root operator usually cannot create — a site installed before
+    the membership store (FLIP#857) has no COHORT_SNAPSHOT_STORAGE_DIR, so its upgrade meets this.
+
+    An upgrade never seeds, so it writes no seed marker beside the OMOP and Orthanc dirs: a site
+    that root installed is not refused for that folder (FLIP#1985).
     """
     label = "Data dir paths"
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
     slot = kit_vars.get("FL_KIT_SLOT_NUMBER", "").strip() or "<N>"
     relative: list[str] = []
-    blocked: list[str] = []
+    blocked: dict[str, str] = {}
     for var, default in DATA_DIR_DEFAULTS.items():
         raw = kit_vars.get(var, "").strip()
         if raw and not raw.startswith("/"):
@@ -1158,32 +1273,50 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
         if not raw and default is None:
             continue
         path = Path(raw or default.format(slot=slot))  # type: ignore[union-attr]
+        unset = "" if raw else f"unset, so {path}; "
         try:
             nearest = next(p for p in (path, *path.parents) if p.exists())
         except OSError as error:  # Path.exists re-raises EACCES: a parent this user cannot traverse
-            blocked.append(f"{var} ({error.filename} is not traversable: {error.strerror})")
+            blocked[var] = f"{unset}{error.filename} is not traversable: {error.strerror}"
             continue
         if nearest != path and not os.access(nearest, os.W_OK):
-            blocked.append(f"{var} ({nearest} is not writable)")
+            blocked[var] = f"{unset}{nearest} is not writable"
         elif (
             var in SEED_MARKER_DIR_VARS
+            and not upgrade
             and not sample_data_off(kit_vars)
             and path.parent.exists()
             and not os.access(path.parent, os.W_OK)
         ):
-            blocked.append(f"{var} ({path.parent} is not writable, and the seed marker is written there)")
+            blocked[var] = f"{path.parent} is not writable, and the seed marker is written there"
     if kit_vars.get("FLIP_UID", "").strip() == str(invoking_ids()[0]):
-        then = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
+        create = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
     else:
-        then = (
-            "have the host owner run `make -C trust prepare-host-dirs` once, as root:"
-            " it creates them with their owners."
+        create = (
+            "have the host owner run, once, as root (it creates them with their owners): "
+            + prepare_host_dirs_command(kit)
         )
-    hints = [f"Set {', '.join(DATA_DIR_VARS)} in {kit_path} to absolute paths on the data disk, then {then}"]
     if blocked:
-        return Check(label, Status.FAIL, f"cannot create: {'; '.join(blocked)}", hints=hints)
+        return Check(
+            label,
+            Status.FAIL,
+            "cannot create: " + "; ".join(f"{var} ({why})" for var, why in blocked.items()),
+            hints=[
+                f"Either {create}",
+                f"or set {', '.join(blocked)} in {kit_path} to absolute paths this user can create.",
+            ],
+        )
     if relative:
-        return Check(label, Status.WARN, f"relative, so inside this checkout: {', '.join(relative)}", hints=hints)
+        return Check(
+            label,
+            Status.WARN,
+            f"relative, so inside this checkout: {', '.join(relative)}",
+            hints=[
+                f"Set {', '.join(relative)} in {kit_path} to absolute paths on the data disk, then {create}",
+                "On a site that already holds data this moves the data too: a planned step with the stack stopped,",
+                "never part of an upgrade.",
+            ],
+        )
     return Check(label, Status.PASS, "absolute")
 
 
@@ -1192,7 +1325,7 @@ IMAGE_USERS = (
 )
 
 
-def check_container_uid(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+def check_container_uid(kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>") -> Check:
     """Who the bind-mount writers run as, and whether that is this user (FLIP#1731).
 
     FLIP_UID/FLIP_GID set to the operator's own ids means the directories they create need no
@@ -1207,7 +1340,7 @@ def check_container_uid(kit_vars: dict[str, str], kit_present: bool, kit_path: s
     root_step = (
         "running as root: the bring-up sets the owners itself"
         if os.getuid() == 0
-        else "the bind-mount dirs need `make -C trust prepare-host-dirs`, as root"
+        else f"the bind-mount dirs need `{prepare_host_dirs_command(kit)}`"
     )
     if not uid and not gid:
         return Check(label, Status.PASS, f"unset: each image's own user ({IMAGE_USERS}); {root_step}")
@@ -1238,7 +1371,7 @@ def kit_file_label(kit_file: Path, repo_root: Path) -> str:
         return str(kit_file)
 
 
-def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[Check]:
+def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None, upgrade: bool = False) -> list[Check]:
     kit_file = kit_file or repo_root / "trust" / f".env.{kit}"
     kit_path = kit_file_label(kit_file, repo_root)
     kit_vars = read_kit_vars(kit_file)
@@ -1262,11 +1395,12 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_site_privacy_policy(kit_vars, kit_present, kit, repo_root, kit_path),
         check_governance_document(kit_vars, kit_present, kit, repo_root, kit_file),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit, kit_path),
+        check_log_level(kit_vars, kit_present, kit_path),
         check_sample_data(kit_vars, kit_present, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
-        check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
-        check_data_dir_paths(kit_vars, kit_present, kit_path),
-        check_container_uid(kit_vars, kit_present, kit_path),
+        check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root, image_uid=999),
+        check_data_dir_paths(kit_vars, kit_present, kit_path, kit, upgrade),
+        check_container_uid(kit_vars, kit_present, kit_path, kit),
     ]
 
 
@@ -1292,6 +1426,11 @@ def main() -> None:
         help="Running as the gate of a make verb (up-onprem-trust, upgrade-onprem-trust): on READY, "
         "let it continue rather than suggest a command.",
     )
+    parser.add_argument(
+        "--upgrade",
+        action="store_true",
+        help="Judge the kit for an upgrade of a running site (upgrade-onprem-trust), which never seeds.",
+    )
     args = parser.parse_args()
 
     # The governance and site-privacy checks run stdlib tomllib under this interpreter.
@@ -1316,7 +1455,7 @@ def main() -> None:
     print(f"  {BOLD}Checks:{RESET}")
     print()
 
-    checks = run_checks(kit, repo_root, kit_file)
+    checks = run_checks(kit, repo_root, kit_file, args.upgrade)
     label_width = max(len(c.label) + 1 for c in checks)  # +1 for the trailing ":"
     for c in checks:
         render_check(c, label_width)
@@ -1339,7 +1478,7 @@ def main() -> None:
             # one for the upgrade (up-onprem-trust resets XNAT) or the one already running.
             print("  Proceeding.")
         else:
-            print("  Bring the stack up:")
+            print("  Bring the stack up (first install):")
             # Docker socket access is all the stack needs. Only a checklist that itself ran under
             # sudo (the playbook-provisioned host, whose login user has no socket access) prints the
             # same prefix for the next step (FLIP#1723).
@@ -1348,10 +1487,16 @@ def main() -> None:
                 f"{prefix}make up-onprem-trust {quote_make_assignment('KIT', kit)} "
                 f"{quote_make_assignment('KIT_FILE', kit_file)}"
             )
+            upgrade = f"{prefix}make upgrade-onprem-trust {quote_make_assignment('KIT', kit)}"
             hub = os.environ.get("HUB", "prod")
             if hub and hub != "prod":
                 command += f" {quote_make_assignment('HUB', hub)}"
+                upgrade += f" {quote_make_assignment('HUB', hub)}"
             print(f"      {BOLD}{command}{RESET}")
+            # The checklist is also step one of a site upgrade, where the first-install verb would
+            # reset XNAT's archive and database.
+            print("  A site that is already running upgrades instead (the command above would reset XNAT):")
+            print(f"      {BOLD}{upgrade}{RESET}")
         if n_warn:
             print(
                 f"  {YELLOW}Heads-up:{RESET} review the {YELLOW}⚠️{RESET}  warning(s) above "

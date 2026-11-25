@@ -73,7 +73,7 @@ which moves unrelated pins. Then apply the *Security floors* rule:
   to `constraint-dependencies`, next to the other advisory entries, with the GHSA IDs in a trailing comment.
 - In `flip-utils`, a vulnerable **direct** dependency (including the `[full]` extras) also needs its specifier raised.
   PyPI installs use plain pip, which reads neither `uv.lock` nor `[tool.uv]` (#1703, monai).
-- Leave dev and docs tooling (`docs/`, `deploy/providers/AWS/`, dev-only groups) lock-only, unless it already has a
+- Leave dev and docs tooling (`docs/`, `deploy/aws/`, dev-only groups) lock-only, unless it already has a
   floor.
 - Projects that consume `flip-utils` by path need relocking when its constraints change. Run `make lock` (it uses
   the root `UV_PROJECTS` list) and check that the diff only touches what you meant to change.

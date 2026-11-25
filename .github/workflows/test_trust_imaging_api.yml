@@ -35,6 +35,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   # Gate for pull requests into develop: run the suite only when the PR touches this
   # service (pr_paths_changed.yml; PRs into main always run everything). The list is
@@ -72,7 +78,7 @@ jobs:
           # cannot drift from requires-python. Do not go back to the previous
           # `github.event.inputs.python-version || '3.11'` form: this workflow has
           # no `workflow_dispatch` trigger, so that input was always empty and the
-          # job silently ran 3.11 while the file (and pyproject) pin 3.12.
+          # job silently ran 3.11 while the file (and pyproject) pinned 3.12.
           python-version-file: ./trust/imaging-api/.python-version
 
       - name: Install uv (if used for dependency management)

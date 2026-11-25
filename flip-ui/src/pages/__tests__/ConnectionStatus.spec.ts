@@ -12,8 +12,8 @@
  */
 
 import { createTestingPinia } from "@pinia/testing";
-import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { flushPromises, mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
 import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
@@ -56,12 +56,6 @@ const stubs = {
         emits: ["close-modal", "on-success"],
         template: "<div data-test='add-trust-modal' :data-dialog='dialog' />"
     },
-    TrustKitModal: {
-        name: "TrustKitModal",
-        props: ["dialog", "trust"],
-        emits: ["close-modal"],
-        template: "<div data-test='trust-kit-modal' :data-dialog='dialog' />"
-    },
     // Stubbed: the shared swrv mock returns trust fixtures, which the partial
     // (which expects IFLStatus shape) would otherwise misinterpret.
     FLNetsCard: { template: "<div />" },
@@ -73,6 +67,15 @@ const stubs = {
         emits: ["close"],
         template: "<div data-test='trust-detail-drawer' :data-show='show' :data-trust-id='trust?.id ?? \"\"'"
             + " :data-hub-version='hubVersion ?? \"\"' />"
+    },
+    // Stubbed: who sees the button on which row is the partial's own rule (TrustKitSection.spec.ts).
+    TrustKitSection: {
+        name: "TrustKitSection",
+        props: {
+            trust: Object,
+            compact: Boolean
+        },
+        template: "<span data-test='kit-cell-stub' :data-trust-id='trust.id' :data-compact='compact' />"
     },
     "icon-ph-list-bullets-duotone": { template: "<span />" },
     "icon-ph-share-network-duotone": { template: "<span />" }
@@ -151,19 +154,36 @@ const fixture: ITrustResponse[] = [
 
 interface MountOptions {
     permissions?: string[];
+    trustAdminOf?: { id: string; name: string; code: string } | null;
 }
 
-function mountPage({ permissions = ["CanAccessAdminPanel"] }: MountOptions = {}) {
+function mountPage({ permissions = ["CanAccessAdminPanel"], trustAdminOf = null }: MountOptions = {}) {
     return mount(ConnectionStatus, {
         global: {
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
                 stubActions: false,
-                initialState: { auth: { user: { permissions } } }
+                initialState: {
+                    auth: {
+                        user: {
+                            permissions,
+                            trustAdminOf
+                        }
+                    }
+                }
             })],
             stubs
         }
     });
+}
+
+// Seeds the swrv data, mounts, and lets the first render settle.
+async function mountLoaded(data: typeof fixture = fixture, opts?: MountOptions) {
+    mockSwrvData.value = data;
+    const wrapper = mountPage(opts);
+    await wrapper.vm.$nextTick();
+
+    return wrapper;
 }
 
 // The TRUST column shows the name prominently with the code in a small span
@@ -177,18 +197,25 @@ const codesInOrder = (wrapper: ReturnType<typeof mountPage>): string[] =>
     });
 
 beforeEach(() => {
+    // Pin the clock to the fixtures' `now`, so heartbeat ages are exact however long the
+    // run takes (a slow full suite aged Zebra's 10 s heartbeat past "fresh"). Only Date
+    // is faked, so promise flushing and timers stay real.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
     mockSwrvData.value = undefined;
     mockHubHealth.value = undefined;
     swrvCalls.length = 0;
+});
+
+afterEach(() => {
+    vi.useRealTimers();
 });
 
 describe("ConnectionStatus", () => {
     it("shows the hub's release beside the federation count, and an em dash until it is known", async () => {
         // FLIP#1204: a site upgrades to the release its hub runs, so the page names it where the
         // per-trust versions (drawer) can be compared against it.
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         expect(wrapper.find("[data-test='hub-version']").text()).toContain("—");
 
         mockHubHealth.value = {
@@ -214,7 +241,7 @@ describe("ConnectionStatus", () => {
     it("defaults to severity-first sort so failing trusts surface on load", async () => {
         // Alphabetical and severity order DIFFER here: Acme is online, Zebra is
         // offline — severity-first must put Zebra on top despite its name.
-        mockSwrvData.value = [
+        const wrapper = await mountLoaded([
             {
                 ...fixture[1],
                 name: "Acme NHS Trust",
@@ -229,42 +256,71 @@ describe("ConnectionStatus", () => {
                 services: undefined,
                 services_updated_at: undefined
             }
-        ];
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        ]);
         expect(codesInOrder(wrapper)).toEqual(["ZNT", "ANT"]);
         expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Severity ↑");
     });
 
-    it("toggles to descending on a second click of the same column", async () => {
+    it.each([
+        ["name", ["ANT", "MNT", "ZNT"], ["ZNT", "MNT", "ANT"]],
+        // Project counts: Zebra=1, Maple=3, Acme=7.
+        ["projects", ["ZNT", "MNT", "ANT"], ["ANT", "MNT", "ZNT"]],
+        // Regions: London (ZNT), North East (MNT), South West (ANT).
+        ["region", ["ZNT", "MNT", "ANT"], ["ANT", "MNT", "ZNT"]]
+    ])("sorts by %s ascending, then descending on a second click", async (column, ascending, descending) => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
-        const trustHeader = wrapper.find("[data-test='sort-header-name']");
-        await trustHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
-        await trustHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
+        const header = wrapper.find(`[data-test='sort-header-${column}']`);
+        await header.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(ascending);
+        await header.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(descending);
     });
 
     it("severity is the active default — clicking its header toggles to online-first", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         // Acme has no heartbeat → offline; Maple is degraded (2 min old); Zebra is online.
         expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
         await wrapper.find("[data-test='sort-header-severity']").trigger("click");
         expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
     });
 
-    it("sorts by project count, ascending then descending, on the Projects header", async () => {
-        // Fixture project counts: Zebra=1, Maple=3, Acme=7
-        mockSwrvData.value = fixture;
+    it("shows a hub admin each trust's in-progress and queued jobs in the Jobs column, and a dash for none", () => {
+        // FLIP#1739: counts only, from the trust list the page already fetches.
+        mockSwrvData.value = [
+            {
+                ...fixture[0],
+                jobs_in_progress: 1,
+                jobs_queued: 2
+            },
+            fixture[1]
+        ];
         const wrapper = mountPage();
-        const projectsHeader = wrapper.find("[data-test='sort-header-projects']");
-        await projectsHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
-        await projectsHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+
+        expect(wrapper.findAll("thead th").map(th => th.text())).toContain("Jobs");
+        const cells = wrapper.findAll("[data-test='trust-jobs']").map(c => c.text());
+        expect(cells).toHaveLength(2);
+        expect(cells).toContain("1 in progress2 queued");
+        expect(cells).toContain("—");
+        // The stacked mobile row has no room for both lines, so it carries the total.
+        expect(wrapper.findAll("[data-test='trust-jobs-mobile']").map(c => c.text())).toEqual(["3 jobs"]);
+    });
+
+    it("shows no Jobs column to a user who is not a hub admin", () => {
+        // The counts span every project, so the hub sends them to hub admins only (null for everyone else).
+        mockSwrvData.value = [
+            {
+                ...fixture[0],
+                jobs_in_progress: null,
+                jobs_queued: null
+            },
+            fixture[1]
+        ];
+        const wrapper = mountPage({ permissions: [] });
+
+        expect(wrapper.findAll("thead th").map(th => th.text())).not.toContain("Jobs");
+        expect(wrapper.findAll("[data-test='trust-jobs']")).toHaveLength(0);
+        expect(wrapper.findAll("[data-test='trust-jobs-mobile']")).toHaveLength(0);
     });
 
     it("shows an up arrow on the active ascending column and a down arrow on descending", async () => {
@@ -280,9 +336,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("counts trusts in the subtitle header (3 → 'trusts', 1 → 'trust')", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         // Header copy is "Federation · 3 trusts" — the loaded fixture has three rows.
         expect(wrapper.text()).toContain("3 trusts");
 
@@ -292,10 +346,51 @@ describe("ConnectionStatus", () => {
         expect(wrapper.text()).not.toContain("1 trusts");
     });
 
+    describe("phone count line", () => {
+        it("replaces the tiles below md with one count per state", async () => {
+            const wrapper = await mountLoaded();
+
+            const line = wrapper.find("[data-test='state-counts']");
+            expect(line.classes()).toContain("md:hidden");
+            expect(line.findAll("[data-test^='state-count-']").map(c => c.text()))
+                .toEqual(["1 online", "1 degraded", "1 offline"]);
+            expect(wrapper.find("[data-test='filter-tile-online']").element.parentElement!.className)
+                .toContain("hidden md:flex");
+        });
+
+        it("makes a non-zero problem count a bold link and leaves zero counts muted text", async () => {
+            const wrapper = await mountLoaded([fixture[0], fixture[1]]);
+
+            const offline = wrapper.find("[data-test='state-count-offline']");
+            expect(offline.element.tagName).toBe("BUTTON");
+            expect(offline.classes()).toEqual(expect.arrayContaining(["font-bold", "text-red-700"]));
+            expect(wrapper.find("[data-test='state-count-degraded']").element.tagName).toBe("SPAN");
+            expect(wrapper.find("[data-test='state-count-online']").element.tagName).toBe("SPAN");
+        });
+
+        it("takes the user to the first trust in that state", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mount(ConnectionStatus, {
+                attachTo: document.body,
+                global: {
+                    plugins: [createTestingPinia({ createSpy: vi.fn })],
+                    stubs
+                }
+            });
+            await wrapper.vm.$nextTick();
+
+            await wrapper.find("[data-test='state-count-degraded']").trigger("click");
+            await flushPromises();
+
+            const focused = document.activeElement as HTMLElement;
+            expect(focused.dataset.trustState).toBe("degraded");
+            expect(focused.textContent).toContain("Maple NHS Trust");
+            wrapper.unmount();
+        });
+    });
+
     it("hides the Add Trust button for non-admins", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage({ permissions: [] });
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded(fixture, { permissions: [] });
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
     });
 
@@ -312,25 +407,19 @@ describe("ConnectionStatus", () => {
     it("lets a non-admin (Researcher / Viewer) load trust statuses with no Add Trust control", async () => {
         // Acceptance criteria for #557: a non-admin sees the statuses populate
         // (no perpetual loader) while the admin-only Add Trust control stays hidden.
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage({ permissions: [] });
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded(fixture, { permissions: [] });
         expect(wrapper.find("[data-test='ai-loader']").exists()).toBe(false);
         expect(wrapper.findAll("[data-test='trust-row']").length).toBe(fixture.length);
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
     });
 
     it("shows the Add Trust button for admins", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(true);
     });
 
     it("puts Add Trust on the title row and collapses it to a plus below lg", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
 
         const btn = wrapper.find("[data-test='add-trust-btn']");
         // Same row as the h1 — not a separate bottom-aligned block.
@@ -343,15 +432,13 @@ describe("ConnectionStatus", () => {
     });
 
     it("renders the trust name prominently with the code beneath it (code hidden when absent)", async () => {
-        mockSwrvData.value = [
+        const wrapper = await mountLoaded([
             {
                 ...fixture[0],
                 code: undefined as unknown as string
             }, // codeless trust → name only, no code line
             fixture[1]
-        ];
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        ]);
         const rows = wrapper.findAll("[data-test='trust-row']");
         // Sorted alphabetically by name: "Acme NHS Trust" (ANT) before "Zebra NHS Trust" (no code).
         expect(rows[0].find("[data-test='trust-name']").text()).toBe("Acme NHS Trust");
@@ -362,9 +449,7 @@ describe("ConnectionStatus", () => {
 
     it("flags an offline trust (null heartbeat) and surfaces it via the red row background", async () => {
         // Acme (second fixture entry) has last_heartbeat: null → state "offline".
-        mockSwrvData.value = [fixture[1]];
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded([fixture[1]]);
         const row = wrapper.find("[data-test='trust-row']");
         // The offline-red bg pulls the row out of the default zebra striping.
         expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(true);
@@ -378,9 +463,7 @@ describe("ConnectionStatus", () => {
         // Zebra (first fixture entry) is online — no red tint applies, and no
         // dark-surface either: rows sit transparent on the card's dark canvas
         // exactly like the stacked mobile rows.
-        mockSwrvData.value = [fixture[0]];
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded([fixture[0]]);
         const row = wrapper.find("[data-test='trust-row']");
         expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(false);
         expect(row.classes()).not.toContain("dark:bg-dark-surface");
@@ -397,9 +480,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("stacks the topology legend vertically", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
 
         const legend = wrapper.find("[data-test='radial-legend']");
@@ -407,14 +488,77 @@ describe("ConnectionStatus", () => {
         expect(legend.findAll("span.rounded-full")).toHaveLength(3);
     });
 
-    it("lightens the offline dashed spoke in dark mode so it reads on the dark card", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+    it("pulses the spoke of an online trust drawn straight above the hub (FLIP#1980)", async () => {
+        // A lone trust sits at 12 o'clock, so its spoke is vertical: a zero-width
+        // bounding box, on which a bounding-box gradient paints nothing.
+        const wrapper = await mountLoaded([fixture[0]]);
         await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
 
-        // Offline spokes are the dashed ones (Acme has a null heartbeat).
-        const offlineSpokes = wrapper.findAll("line").filter(l => l.attributes("stroke-dasharray") === "3 4");
+        const pulses = wrapper.findAll("[data-test='spoke-pulse']");
+        expect(pulses).toHaveLength(1);
+        const pulse = pulses[0];
+        expect(pulse.attributes("x1")).toBe(pulse.attributes("x2"));
+
+        // Its gradient lives in user space along the spoke, never in bounding-box units.
+        const gradient = wrapper.find("[data-test='spoke-pulse-gradient']");
+        expect(pulse.attributes("stroke")).toBe(`url(#${gradient.attributes("id")})`);
+        expect(gradient.attributes("gradientUnits")).toBe("userSpaceOnUse");
+        expect(gradient.attributes("x1")).toBe(pulse.attributes("x1"));
+        expect(gradient.attributes("y1")).toBe(pulse.attributes("y1"));
+        expect(gradient.attributes("x2")).toBe(pulse.attributes("x2"));
+        expect(gradient.attributes("y2")).toBe(pulse.attributes("y2"));
+
+        // The band sweeps along the spoke: x stays put on a vertical spoke, y travels.
+        const sweep = Object.fromEntries(
+            gradient.findAll("animate").map(a => [a.attributes("attributeName"), a.attributes("values")])
+        );
+        const [hx, hy, ny] = ["x1", "y1", "y2"].map(k => Number(pulse.attributes(k)));
+        expect(sweep.x1).toBe(`${hx};${hx}`);
+        expect(sweep.y1).toBe(`${2 * hy - ny};${ny}`);
+        expect(sweep.y2).toBe(`${hy};${2 * ny - hy}`);
+    });
+
+    it("gives each online spoke its own pulse gradient", async () => {
+        const wrapper = await mountLoaded([fixture[0], {
+            ...fixture[0],
+            id: "second-online"
+        }]);
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const strokes = wrapper.findAll("[data-test='spoke-pulse']").map(l => l.attributes("stroke"));
+        expect(strokes).toHaveLength(2);
+        expect(new Set(strokes).size).toBe(2);
+    });
+
+    it("draws no pulse on spokes of trusts that are not online", async () => {
+        const wrapper = await mountLoaded([fixture[1], fixture[2]]); // Acme offline, Maple degraded
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+        expect(wrapper.findAll("[data-test='spoke-pulse']")).toHaveLength(0);
+    });
+
+    it("draws an offline spoke as a solid line broken in the middle", async () => {
+        const wrapper = await mountLoaded([fixture[1]]); // Acme has a null heartbeat
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const spoke = wrapper.find("[data-test='spoke']");
+        expect(spoke.attributes("pathLength")).toBe("100");
+        expect(spoke.attributes("stroke-dasharray")).toBe("45 10 45");
+
+        // A tiny dot caps each side of the break, 45% and 55% along hub->trust.
+        const [hx, hy, nx, ny] = ["x1", "y1", "x2", "y2"].map(k => Number(spoke.attributes(k)));
+        const caps = wrapper.findAll("[data-test='spoke-break-cap']");
+        expect(caps.map(c => [Number(c.attributes("cx")), Number(c.attributes("cy"))])).toEqual([
+            [hx + (nx - hx) * 0.45, hy + (ny - hy) * 0.45],
+            [hx + (nx - hx) * 0.55, hy + (ny - hy) * 0.55]
+        ]);
+    });
+
+    it("lightens the offline broken spoke in dark mode so it reads on the dark card", async () => {
+        const wrapper = await mountLoaded();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        // Offline spokes are the broken ones (Acme has a null heartbeat).
+        const offlineSpokes = wrapper.findAll("[data-test='spoke']").filter(l => l.attributes("stroke-dasharray") !== "none");
         expect(offlineSpokes.length).toBeGreaterThan(0);
         for (const spoke of offlineSpokes) {
             // CSS wins over the SVG stroke attribute, so these utilities recolour
@@ -424,10 +568,31 @@ describe("ConnectionStatus", () => {
         }
     });
 
+    it("lightens the online and degraded spokes and the ring guides in dark mode", async () => {
+        const wrapper = await mountLoaded([fixture[0], fixture[2]]); // Zebra online, Maple degraded
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const [online, degraded] = wrapper.findAll("[data-test='spoke']").map(s => s.classes());
+        expect(online).toEqual(expect.arrayContaining(["dark:stroke-emerald-400", "dark:[stroke-opacity:0.7]"]));
+        expect(degraded).toEqual(expect.arrayContaining(["dark:stroke-amber-400", "dark:[stroke-opacity:0.5]"]));
+        for (const ring of wrapper.findAll("[data-test='radial-ring']")) {
+            expect(ring.classes()).toContain("dark:stroke-gray-600");
+        }
+    });
+
+    it("keeps the project count of the trust above the hub clear of its dot", async () => {
+        const wrapper = await mountLoaded([fixture[0]]);
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const svg = wrapper.find("[data-test='connection-radial-svg']");
+        const dot = svg.findAll("circle").find(c => c.attributes("fill") === "#ffffff" && c.attributes("r") !== "40")!;
+        const count = svg.findAll("text").find(t => t.text().includes("project"))!;
+        // The count's baseline sits well above the dot's top edge, leaving room for descenders.
+        expect(Number(count.attributes("y"))).toBeLessThanOrEqual(Number(dot.attributes("cy")) - Number(dot.attributes("r")) - 8);
+    });
+
     it("renders the radial topology on the plain card surface with dark-visible labels", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
 
         // The bespoke gradient panel (off-token blue-grey in dark mode) is gone —
@@ -449,9 +614,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("toggles to the radial topology view when its tab is clicked", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         // Table view is the default — the list has rows, the radial SVG isn't mounted.
         expect(wrapper.findAll("[data-test='trust-row']").length).toBe(3);
         expect(wrapper.find("[data-test='connection-radial-svg']").exists()).toBe(false);
@@ -473,17 +636,6 @@ describe("ConnectionStatus", () => {
         await radialTab.trigger("click");
         expect(listTab.attributes("aria-selected")).toBe("false");
         expect(radialTab.attributes("aria-selected")).toBe("true");
-    });
-
-    it("sorts by region alphabetically and toggles direction on repeat click", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        const regionHeader = wrapper.find("[data-test='sort-header-region']");
-        await regionHeader.trigger("click");
-        // Regions: London (ZNT), North East (MNT), South West (ANT).
-        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
-        await regionHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
     });
 
     it("sorts by heartbeat freshness, pushing the never-heartbeat trust to the end", async () => {
@@ -524,24 +676,25 @@ describe("ConnectionStatus", () => {
         expect(modal.props("dialog")).toBe(true);
     });
 
-    it("closes AddTrustModal and opens TrustKitModal when a trust is created", async () => {
+    it("closes AddTrustModal and opens the new trust's drawer, where its kit is downloaded", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
 
         await wrapper.find("[data-test='add-trust-btn']").trigger("click");
         const addModal = wrapper.findComponent({ name: "AddTrustModal" });
-        const kitModal = wrapper.findComponent({ name: "TrustKitModal" });
         expect(addModal.props("dialog")).toBe(true);
 
-        await addModal.vm.$emit("on-success", {
-            id: "new-id",
-            name: "New Trust"
+        addModal.vm.$emit("on-success", {
+            id: fixture[0].id,
+            name: fixture[0].name
         });
-        expect(addModal.props("dialog")).toBe(false);
-        expect(kitModal.props("dialog")).toBe(true);
+        await flushPromises();
 
-        await kitModal.vm.$emit("close-modal");
-        expect(kitModal.props("dialog")).toBe(false);
+        expect(addModal.props("dialog")).toBe(false);
+        expect(wrapper.find("[data-test='trust-kit-modal']").exists()).toBe(false);
+        const drawer = wrapper.find("[data-test='trust-detail-drawer']");
+        expect(drawer.attributes("data-show")).toBe("true");
+        expect(drawer.attributes("data-trust-id")).toBe(fixture[0].id);
     });
 
     it("returns to the table view when the List tab is clicked after switching to radial", async () => {
@@ -585,31 +738,25 @@ describe("ConnectionStatus", () => {
         expect(detail().exists()).toBe(false);
     });
 
-    it("lets the Trust column squash and truncate instead of locking at 18rem", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+    it("sizes every column but Trust to its content, and Trust takes what is left and truncates", async () => {
+        const wrapper = await mountLoaded();
 
-        // The column absorbs the leftover width instead of pinning a 288px floor…
-        const th = wrapper.find("[data-test='sort-header-name']");
-        expect(th.classes()).toContain("w-full");
-        expect(th.classes()).not.toContain("min-w-[18rem]");
-        // …and max-w-0 gives the cell zero min-content, so the truncate spans
-        // actually clip when the table is squashed rather than forcing overflow.
+        // Automatic layout: a column that cannot wrap cannot be squeezed, so a long region
+        // widens its own column instead of running into the next one (FLIP#1852).
+        expect(wrapper.find("table").classes()).not.toContain("table-fixed");
+        expect(wrapper.find("[data-test='sort-header-name']").classes()).toContain("w-full");
+        const others = wrapper.findAll("th").filter(h => h.attributes("data-test") !== "sort-header-name");
+        expect(others.every(h => h.classes().includes("w-px") && h.classes().includes("whitespace-nowrap"))).toBe(true);
+        expect(wrapper.find("[data-test='trust-row']").classes()).toContain("whitespace-nowrap");
+        // max-w-0 gives the cell zero min-content, so the truncate spans clip.
         const nameCell = wrapper.find("[data-test='trust-name']").element.closest("td");
         expect(nameCell?.className).toContain("max-w-0");
     });
 
     it("renders seven columns — Services dots + drawer chevron, no sparkline", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded(fixture, { permissions: [] });
 
         expect(wrapper.findAll("th")).toHaveLength(7);
-        // Pinned column widths keep Region/Services/Heartbeat from being squeezed
-        // by the w-full Trust column (~ design grid 148/150/104px).
-        expect(wrapper.find("[data-test='sort-header-region']").classes()).toContain("w-36");
-        expect(wrapper.find("[data-test='sort-header-heartbeat']").classes()).toContain("w-28");
         const row = wrapper.find("[data-test='trust-row']");
         expect(row.findAll("td")).toHaveLength(7);
         // The placeholder 7d-uptime sparkline is gone (replaced by real service dots).
@@ -617,6 +764,50 @@ describe("ConnectionStatus", () => {
         expect(row.find("polyline").exists()).toBe(false);
         // The trailing cell carries the drawer-affordance chevron.
         expect(row.find("svg[data-icon='ph:caret-right']").exists()).toBe(true);
+    });
+
+    describe("download column (FLIP#1852)", () => {
+        it("gives a hub admin a Download column with the kit button on every row", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const headers = wrapper.findAll("th").map(th => th.text());
+            // Jobs (FLIP#1739) and Download are the two admin-only columns.
+            expect(headers).toHaveLength(9);
+            expect(wrapper.find("[data-test='trust-row']").findAll("td")).toHaveLength(9);
+            // Before the drawer chevron's empty header.
+            expect(headers.slice(-2)).toEqual(["Download", ""]);
+            const cells = wrapper.findAll("[data-test='kit-cell-stub']");
+            expect(cells).toHaveLength(wrapper.findAll("[data-test='trust-row']").length);
+            expect(cells[0].attributes("data-compact")).toBe("true");
+            const rowIds = wrapper.findAllComponents({ name: "TrustKitSection" }).map(c => c.props("trust").id);
+            expect(rowIds.sort()).toEqual(fixture.map(t => t.id).sort());
+        });
+
+        it("shows the column to a Trust Admin too", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage({
+                permissions: [],
+                trustAdminOf: {
+                    id: fixture[0].id,
+                    name: fixture[0].name,
+                    code: "T"
+                }
+            });
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.findAll("th").map(th => th.text())).toContain("Download");
+        });
+
+        it("hides the column from everyone else", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage({ permissions: [] });
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.findAll("th").map(th => th.text())).not.toContain("Download");
+            expect(wrapper.find("[data-test='kit-cell-stub']").exists()).toBe(false);
+        });
     });
 
     describe("services column", () => {

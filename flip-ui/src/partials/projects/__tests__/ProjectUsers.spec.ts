@@ -21,12 +21,21 @@ import ProjectUsers from "../ProjectUsers.vue";
 
 vi.mock("@/services/user-service", () => ({ lookupProjectUser: vi.fn() }));
 
+const owner = {
+    id: "owner-1",
+    email: "owner@e.com",
+    isDisabled: false
+};
+
 function mountProjectUsers(props: Record<string, unknown> = {}) {
-    // Cast: the component declares `users` as required, but the whole
-    // point of these tests is to exercise the `withDefaults` fallback
-    // when the prop is omitted at runtime — TypeScript can't model that.
+    // Cast: some tests omit `users` to exercise the `withDefaults` fallback,
+    // which TypeScript can't model.
     return mount(ProjectUsers, {
-        props: props as never,
+        props: {
+            ownerId: owner.id,
+            ownerEmail: owner.email,
+            ...props
+        } as never,
         global: {
             plugins: [
                 createTestingPinia({
@@ -67,55 +76,70 @@ function mountProjectUsers(props: Record<string, unknown> = {}) {
     });
 }
 
-describe("ProjectUsers — defensive prop default", () => {
-    test("renders the empty-state placeholder when the users prop is omitted", () => {
+describe("ProjectUsers — the list", () => {
+    const ownerRow = (wrapper: ReturnType<typeof mountProjectUsers>) => wrapper.find("[data-test=project-owner-row]");
+
+    test("lists the owner alone when the users prop is omitted", () => {
         const wrapper = mountProjectUsers();
-        expect(wrapper.text()).toContain("No Project Users");
+
+        expect(ownerRow(wrapper).text()).toContain("owner@e.com");
+        expect(ownerRow(wrapper).text()).toContain("Owner");
+        expect(wrapper.findAll("[data-test=added-user-project-list]")).toHaveLength(0);
     });
 
-    test("renders the empty-state placeholder when users is an empty array", () => {
-        const wrapper = mountProjectUsers({ users: [] });
-        expect(wrapper.text()).toContain("No Project Users");
+    test("heads the list Project Users", () => {
+        expect(mountProjectUsers().find("[data-test=project-users-heading]").text()).toBe("Project Users");
     });
 
-    test("lists each user row when users is populated", () => {
+    test("shows the owner once, in their own row, when users includes them", () => {
+        // An existing project's `users` holds the owner (the hub adds them).
         const wrapper = mountProjectUsers({
-            users: [
-                {
-                    id: "u1",
-                    email: "alice@e.com",
-                    isDisabled: false
-                },
-                {
-                    id: "u2",
-                    email: "bob@e.com",
-                    isDisabled: false
-                }
-            ]
+            users: [owner, {
+                id: "u2",
+                email: "bob@e.com",
+                isDisabled: false
+            }]
         });
-        expect(wrapper.text()).toContain("alice@e.com");
-        expect(wrapper.text()).toContain("bob@e.com");
+
+        const members = wrapper.findAll("[data-test=added-user-project-list]");
+        expect(members).toHaveLength(1);
+        expect(members[0].text()).toContain("bob@e.com");
+        expect(ownerRow(wrapper).text()).toContain("owner@e.com");
     });
 
-    test("filters out the current user from the displayed list", () => {
-        // Self-row would let a project owner remove themselves; the
-        // `displayUsers` computed drops `currentUserId` to prevent that.
+    test("never offers to remove the owner", () => {
+        const wrapper = mountProjectUsers({ users: [owner] });
+
+        expect(ownerRow(wrapper).find("button").exists()).toBe(false);
+        expect(wrapper.find("[data-test=remove-user-0-project-btn]").exists()).toBe(false);
+    });
+
+    test("lists the signed-in user like any other member", () => {
+        // The pinia user is "current-user"; the list no longer hides whoever is viewing.
         const wrapper = mountProjectUsers({
-            users: [
-                {
-                    id: "current-user",
-                    email: "self@e.com",
-                    isDisabled: false
-                },
-                {
-                    id: "u2",
-                    email: "bob@e.com",
-                    isDisabled: false
-                }
-            ]
+            users: [owner, {
+                id: "current-user",
+                email: "self@e.com",
+                isDisabled: false
+            }]
         });
-        expect(wrapper.text()).not.toContain("self@e.com");
-        expect(wrapper.text()).toContain("bob@e.com");
+
+        expect(wrapper.text()).toContain("self@e.com");
+        expect(wrapper.find("[data-test=remove-user-0-project-btn]").exists()).toBe(true);
+    });
+
+    test("keeps the owner in the emitted list when another member is removed", async () => {
+        // Editing replaces the project's whole access list, so dropping the owner here would lock them out.
+        const bob = {
+            id: "u2",
+            email: "bob@e.com",
+            isDisabled: false
+        };
+        const wrapper = mountProjectUsers({ users: [owner, bob] });
+
+        await wrapper.find("[data-test=remove-user-0-project-btn]").trigger("click");
+
+        expect(wrapper.emitted("updatedUsers")?.at(-1)?.[0]).toEqual([owner]);
     });
 });
 
@@ -180,6 +204,15 @@ describe("ProjectUsers — add-user submit path", () => {
         expect(wrapper.emitted("updatedUsers")).toBeUndefined();
     });
 
+    test("does not call the hub for the owner's own address", async () => {
+        const wrapper = mountProjectUsers({ users: [] });
+
+        await submitEmail(wrapper, "owner@e.com");
+
+        expect(lookupProjectUser).not.toHaveBeenCalled();
+        expect(errorText(wrapper)).toContain("owner@e.com has already been added");
+    });
+
     test("does not call the hub for an address already in the list", async () => {
         const wrapper = mountProjectUsers({
             users: [{
@@ -193,5 +226,54 @@ describe("ProjectUsers — add-user submit path", () => {
 
         expect(lookupProjectUser).not.toHaveBeenCalled();
         expect(errorText(wrapper)).toContain("alice@e.com has already been added");
+    });
+});
+
+describe("ProjectUsers — errors and removal", () => {
+    const alice = {
+        id: "u1",
+        email: "alice@e.com",
+        isDisabled: false
+    };
+
+    test("reports a lookup failure other than not-found generically, then clears the message after 5 s", async () => {
+        vi.useFakeTimers();
+        vi.mocked(lookupProjectUser).mockRejectedValue(new Error("Network Error"));
+        const wrapper = mountProjectUsers({ users: [] });
+
+        wrapper.findComponent({ name: "Form" }).vm.$emit("submit", { email: "new@e.com" }, { resetForm: vi.fn() });
+        await flushPromises();
+        expect(wrapper.text()).toContain("Something went wrong when retrieving the user");
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(wrapper.find("[data-test=\"invalid-user-project-list\"]").exists()).toBe(false);
+        vi.useRealTimers();
+    });
+
+    test("removes a user from the list and emits the remaining users", async () => {
+        const wrapper = mountProjectUsers({
+            users: [alice, {
+                id: "u2",
+                email: "bob@e.com",
+                isDisabled: false
+            }]
+        });
+
+        await wrapper.find("[data-test=remove-user-1-project-btn]").trigger("click");
+
+        expect(wrapper.text()).not.toContain("bob@e.com");
+        expect(wrapper.emitted("updatedUsers")?.at(-1)?.[0]).toEqual([alice]);
+    });
+
+    test("lists the users without add or remove controls when read-only", () => {
+        const wrapper = mountProjectUsers({
+            users: [alice],
+            readonly: true
+        });
+
+        expect(wrapper.text()).toContain("Project Users");
+        expect(wrapper.text()).toContain("alice@e.com");
+        expect(wrapper.find("form").exists()).toBe(false);
+        expect(wrapper.find("[data-test=remove-user-0-project-btn]").exists()).toBe(false);
     });
 });

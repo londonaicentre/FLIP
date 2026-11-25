@@ -24,7 +24,6 @@ import { createRouter,
 
 const routes = setupLayouts(generatedRoutes);
 
-// import { routes } from "@/router/routes";
 import { IS_DEMO } from "@/demo/bootstrap";
 import { doneRouteProgress, startRouteProgress } from "@/router/progress";
 import { authCheck } from "@/utils/auth";
@@ -33,14 +32,10 @@ import { authCheck } from "@/utils/auth";
 const CHUNK_RELOAD_KEY = "flip:chunk-reload";
 
 const router = createRouter({
-    // BASE_URL is "/" for normal/dev builds and "/demo/" for the demo build
-    // (vite.config sets `base`), so deep links resolve under the hosting prefix.
     history: createWebHistory(import.meta.env.BASE_URL),
     routes,
     scrollBehavior(to) {
         if (to.hash) {
-            console.log(to);
-
             return document.querySelector(to.hash)?.scrollIntoView({ behavior: "smooth" });
         }
     }

@@ -36,6 +36,8 @@ on:
       - "trust/Makefile"
       - "trust/xnat/Makefile"
       - "tests/make_dry_run.py"
+      # trust/tests renders these to check the fl-client list (FLIP#1677).
+      - "trust/deploy/compose/**"
       - ".github/workflows/test_trust_data_tools.yml"
       # `make -C trust test-trust-data-tools` parse-time-includes these (make's own
       # MAKEFILE_LIST names them), so a change to any can break this suite before a
@@ -53,6 +55,12 @@ on:
 
 permissions:
   contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   # Gate for pull requests into develop: run the suite only when the PR touches this
@@ -77,6 +85,7 @@ jobs:
         trust/Makefile
         trust/xnat/Makefile
         tests/make_dry_run.py
+        trust/deploy/compose/**
         .github/workflows/test_trust_data_tools.yml
         deploy/env_mode.mk
         deploy/fl_backend.mk
@@ -96,7 +105,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv

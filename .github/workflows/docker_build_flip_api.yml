@@ -40,10 +40,16 @@ jobs:
     # copy of this file running in the fork. Rationale + regression guard:
     # scripts/tests/test_workflow_trust_guards.py; the same clause guards
     # terraform_plan.yml. One shared workflow for these copies: FLIP#1201.
+    # The event clause builds a commit once (FLIP#2020): the suite also runs for the
+    # develop→main PR, whose head branch passes the `branches` filter above, and a second
+    # build would replace the immutable sha-<short7> tag with a different image.
+    # A suite run started by hand is not a push either, so it no longer republishes: dispatch
+    # this workflow instead.
     if: >-
       (github.event_name == 'workflow_dispatch' ||
       github.event_name == 'push' ||
       (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository)) &&
       github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
@@ -105,7 +111,7 @@ jobs:
           [[ -n "$SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
 
           # Immutable short-SHA tag consumed by `make deploy-centralhub` (FLIP#751).
-          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          # Length 7 must match the tag resolution in deploy/aws/Makefile.
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
 
           # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".

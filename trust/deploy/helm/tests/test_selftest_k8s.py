@@ -72,6 +72,10 @@ class FakeCluster:
         self.orthanc_statistics = '{"CountInstances": 250, "CountStudies": 25}'
         self.orthanc_anonymous_code = "401"
         self.kit_present = True
+        self.fl_mounts = [
+            {"name": "fl-client-kit", "mountPath": "/app/local", "subPath": "local"},
+            {"name": "fl-client-kit", "mountPath": "/app/startup", "subPath": "startup"},
+        ]
         self.fl_states = [(True, 0), (True, 0)]
         self.exec_log = []
         self.__dict__.update(overrides)
@@ -90,6 +94,9 @@ class FakeCluster:
 
     def container_state(self, pod):
         return self.fl_states.pop(0)
+
+    def mounts(self, pod, container):
+        return self.fl_mounts if container == "fl-client" else []
 
     def exec(self, pod, script, stdin=None):
         self.exec_log.append((pod, script, stdin))
@@ -181,6 +188,43 @@ def test_the_kit_check_looks_for_the_backends_own_kit_files(backend):
 
 def test_a_client_without_its_kit_fails():
     assert not selftest.check_fl_kit(FakeCluster(kit_present=False), "nvflare").ok
+
+
+def test_the_nvflare_kit_check_reads_the_kit_where_the_pod_mounts_it():
+    """With job pods the chart mounts the kit under the parent's workspace, not /app (FLIP#1958).
+
+    The check used to look only in /app/startup, so it failed on every job-pod trust while the client was connected.
+    """
+    workspace = "/var/tmp/nvflare/workspace"
+    cluster = FakeCluster(
+        fl_mounts=[
+            {"name": "fl-client-kit", "mountPath": f"{workspace}/startup", "subPath": "startup", "readOnly": True},
+            {"name": "workspace", "mountPath": workspace},
+        ]
+    )
+
+    check = selftest.check_fl_kit(cluster, "nvflare")
+
+    assert check.ok, check.detail
+    assert cluster.exec_log[-1][1] == f"test -s {workspace}/startup/fed_client.json"
+    assert f"{workspace}/startup/fed_client.json" in check.detail
+
+
+def test_a_client_mounting_no_kit_folder_fails_without_exec():
+    cluster = FakeCluster(fl_mounts=[{"name": "workspace", "mountPath": "/var/tmp/nvflare/workspace"}])
+
+    check = selftest.check_fl_kit(cluster, "nvflare")
+
+    assert not check.ok
+    assert "startup/" in check.detail
+    assert cluster.exec_log == []
+
+
+def test_a_missing_kit_is_reported_at_the_path_the_client_reads():
+    check = selftest.check_fl_kit(FakeCluster(kit_present=False), "nvflare")
+
+    assert not check.ok
+    assert "/app/startup/fed_client.json" in check.detail
 
 
 def test_no_fl_client_pod_fails_the_kit_check():
@@ -791,16 +835,9 @@ def test_the_chart_default_without_orthanc_seeding_skips_only_the_orthanc_checks
         assert checks[name].detail.startswith("skipped: trustData.seed.orthanc=false"), checks[name]
 
 
-def test_a_seeded_release_still_runs_the_store_and_the_conversion(monkeypatch):
-    converted = selftest.Check("dcm2niix conversion", True, "converted")
-    monkeypatch.setattr(selftest, "check_conversion", lambda *args: converted)
-    checks = _checks(_values(), smoke=lambda: (1, "❌ XNAT received nothing", ""))
-    assert checks["xnat c-store"] == selftest.Check("xnat c-store", False, "❌ XNAT received nothing")
-    assert checks["dcm2niix conversion"] is converted
-    assert checks["orthanc seeded"].detail == "250 instances"
-
-
-@pytest.mark.parametrize("seed", [{"enabled": False}, {"orthanc": False}], ids=["seed off", "chart default"])
+@pytest.mark.parametrize(
+    "seed", [{}, {"enabled": False}, {"orthanc": False}], ids=["seeded", "seed off", "chart default"]
+)
 def test_an_orthanc_holding_studies_is_stored_and_converted_whatever_the_seed_values_say(monkeypatch, seed):
     """Orthanc's count decides, not the seed values: a broken DICOM import (FLIP#1411) on a trust whose Orthanc
     holds its own or otherwise-loaded studies must not hide behind a skip."""

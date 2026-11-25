@@ -12,8 +12,8 @@
 
 .PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
-		check-aws-access generate-internal-service-key generate-xnat-credentials _check-compose-project-owner \
-		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub integration_test \
+		check-aws-access generate-fl-api-key generate-xnat-credentials _check-compose-project-owner \
+		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub _refuse-deployed-hub _check-revoke-old integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint mirror-images aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
@@ -70,8 +70,8 @@ export DOCKER_GID := $(shell id -g)
 UID ?= $(shell id -u)
 export UID
 
-COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
-FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
+COMMON_COMPOSE_FILE := deploy/compose/compose.$(__DCKR_SUFFIX).yml
+FL_BACKEND_COMPOSE_FILE := deploy/compose/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
 # Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (from .env, or overridden at the CLI) to
 # absolute paths against the repo root — see abs_or_relative_to in deploy/fl_backend.mk.
@@ -99,35 +99,16 @@ $(error OBJECT_STORE_DIR=/ is not a directory of its own)
 endif
 export OBJECT_STORE_DIR
 
-# Service configuration
-define SERVICE_CONFIG
-data-access-api:trust
-imaging-api:trust
-trust-api:trust
-flip-api
-fl-api
-endef
-
-# Function to get service type (trust or central)
-get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
-
-# Function to get service display name
-get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
-
 export COMPOSE_BAKE=true
-DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-# The pair is exported at parse time, before `up`'s generate-internal-service-key can rewrite it,
+# --project-directory deploy: the compose files' relative paths, their .env lookup and the working_dir label
+# _check-compose-project-owner compares all stay at deploy/, where the files lived before deploy/compose/ (FLIP#1438).
+DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) --project-directory deploy -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+# FL_API_KEY is exported at parse time, before `up`'s generator can rewrite it,
 # so `up`/`up-no-trust` re-read it from KEY_ENV_FILE when compose runs (FLIP#1501).
 KEY_ENV_FILE = $(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE)))
 read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
-FRESH_INTERNAL_SERVICE_KEY = INTERNAL_SERVICE_KEY="$(call read_key_env,INTERNAL_SERVICE_KEY)" \
-	INTERNAL_SERVICE_KEY_HASH="$(call read_key_env,INTERNAL_SERVICE_KEY_HASH)"
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
-# Through compose, addressing the service rather than the container: the containers are
-# named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
-# `docker logs flip-api` names nothing on any stack.
-SHOW_LOGS_CENTRAL_HUB=$(DOCKER_COMMAND) logs --follow --tail 100 --timestamps flip-api
-GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
+FRESH_FL_API_KEY = FL_API_KEY="$(call read_key_env,FL_API_KEY)"
+DEBUG_OVERRIDE_COMPOSE_COMMAND=$(DOCKER_COMMAND) -f deploy/compose/compose.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
 #
@@ -183,11 +164,11 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
+up: _check-compose-project-owner generate-fl-api-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_FL_API_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 	@echo "🔑 Registering trusts and writing kit files..."
 	$(MAKE) register-trusts
 	@echo "🚢 Starting trust services (each trust brings up its own XNAT)..."
@@ -236,7 +217,7 @@ _check-fl-provisioned:
 # working_dir label); both sides are compared with symlinks resolved, an unlabelled container
 # counts as foreign, and `ps -a` because a stopped stack still owns the name. The first
 # prerequisite of every target here that drives the project. ALLOW_FOREIGN_PROJECT=1 skips
-# it: deliberately not FORCE, which `up` hands on to generate-internal-service-key, where it
+# it: deliberately not FORCE, which `up` hands on to generate-fl-api-key, where it
 # rotates the key.
 _check-compose-project-owner:
 	@mine=$$(cd deploy && pwd -P); \
@@ -256,10 +237,10 @@ _check-compose-project-owner:
 	fi
 
 # Minimal $(MAKE) up
-up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
+up-no-trust: _check-compose-project-owner generate-fl-api-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_FL_API_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 
 up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
@@ -269,8 +250,6 @@ up-trusts: create-networks
 	@echo "✅ Trust services started successfully!"
 
 up-trust-ec2: create-networks
-	@echo "Hey! HUB="$(HUB)
-	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) HUB=${HUB}
 	@echo "✅ Trust services started successfully!"
@@ -303,7 +282,7 @@ up-onprem-trust:
 # ALLOW_CHECKOUT_DRIFT=1 overrides for a deliberate mismatch (testing a branch).
 upgrade-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
-	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS="--gate --upgrade"
 	$(MAKE) -C trust upgrade-trust KIT=$(KIT) HUB=$(or $(HUB),prod) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
@@ -377,8 +356,7 @@ clean-object-store: _check-compose-project-owner
 # Clean Docker resources
 clean: _check-compose-project-owner
 	${DOCKER_COMMAND} down --rmi local && \
-	docker system prune -f && \
-	rm -rf ./flip-fl-api/*/transfer/*/
+	docker system prune -f
 
 # Stop all services and remove the containers
 restart: down up
@@ -438,36 +416,36 @@ restart-no-trust: _check-compose-project-owner
 	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
 ci:
 	act --env-file .env.development
-# Runs the script directly; `make -C deploy/providers/AWS lint` runs it too, with
+# Runs the script directly; `make -C deploy/aws lint` runs it too, with
 # terraform fmt and tflint. Both are credential-free and need no deploy env file.
 checkov-lint:
-	bash deploy/providers/AWS/scripts/checkov_lint.sh
-# Static tflint lint over deploy/providers/AWS: unused declarations, missing provider
+	bash deploy/aws/scripts/checkov_lint.sh
+# Static tflint lint over deploy/aws: unused declarations, missing provider
 # version constraints, AWS argument values the API would reject. Credential-free;
 # needs tflint at the version pinned in the script, and downloads the pinned AWS
 # ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
-	bash deploy/providers/AWS/scripts/tflint_lint.sh
+	bash deploy/aws/scripts/tflint_lint.sh
 # Copy the third-party images a trust node runs (trust/deploy/mirror-images.manifest) into
 # ghcr.io/londonaicentre/mirror/ by digest (FLIP#1721). CI does this on develop/main
 # (.github/workflows/mirror_images.yml); locally it needs a GHCR login with write:packages.
 # CHECK=1 pushes nothing and fails on a missing or drifted mirror.
 mirror-images:
 	bash scripts/mirror_images.sh $(if $(CHECK),--check)
-# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
-# (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
+# Re-render the two committed Central Hub AWS diagrams under deploy/aws/docs/
+# (central-hub-aws-lza-{network,data}.png) from deploy/aws/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
-# so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
+# so it otherwise runs the identical render in a throwaway python:3.13-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across
 # runs), and a host `dot` of another graphviz version produces a different file for an unchanged
 # diagram, so don't commit a re-render that only differs by graphviz. Runs the script directly
-# rather than via deploy/providers/AWS/Makefile, whose env guards need the gitignored deploy env
+# rather than via deploy/aws/Makefile, whose env guards need the gitignored deploy env
 # file for any goal but its static lint ones.
 aws-diagram:
 ifneq ($(shell command -v dot 2>/dev/null),)
-	cd deploy/providers/AWS && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
+	cd deploy/aws && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
 else
-	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/providers/AWS python:3.12-slim sh -c \
+	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/aws python:3.13-slim sh -c \
 	  "apt-get update -qq >/dev/null && apt-get install -y -qq graphviz >/dev/null && \
 	   pip -q install --root-user-action=ignore diagrams >/dev/null && \
 	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
@@ -478,7 +456,7 @@ ifeq ($(IS_DEPLOYED),)
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
 else
 	@echo "ℹ️  flip-ui is served from S3 + CloudFront when HUB=$(HUB); no container to start."
-	@echo "    CI publishes it after each apply; to publish by hand, run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\`."
+	@echo "    CI publishes it after each apply; to publish by hand, run \`make -C deploy/aws deploy-ui HUB=$(HUB)\`."
 endif
 ui-off: _check-compose-project-owner
 ifeq ($(IS_DEPLOYED),)
@@ -606,7 +584,7 @@ release-main-check: _release-tag
 	@python3 scripts/release/main_check.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(OWED),--owed "$(OWED)")
 
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
-UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
+UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask deploy/aws flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
 
 # Regenerate every uv.lock so it matches its pyproject.toml. Run after changing
 # dependencies in any service, or to refresh all lockfiles in one pass.
@@ -633,6 +611,9 @@ e2e_smoke:
 # EHR risk-prediction tutorial (tabular-only, no imaging stage — FLIP#1071) on the FL_BACKEND stack.
 e2e_smoke_ehr:
 	$(MAKE) -C flip-api e2e_smoke_ehr $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+
+e2e_smoke_causal:
+	$(MAKE) -C flip-api e2e_smoke_causal $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 # Record the end-to-end demo video against the running dev stack: six
 # Playwright segments over the live UI (real sign-ins, trusts, uploads,
@@ -669,10 +650,11 @@ reset-keycloak: _check-compose-project-owner
 seed-demo-projects:
 	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
-# The key goes into the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE),
-# made absolute here because the sub-make runs in flip-api/ (FLIP#1603).
-generate-internal-service-key:
-	$(MAKE) -C flip-api generate-internal-service-key ENV_FILE=$(KEY_ENV_FILE) $(if $(FORCE),FORCE=$(FORCE))
+# The key flip-api presents to the FL APIs (every FL API route but /health requires it). It goes into
+# the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE), made absolute here
+# because the sub-make runs in flip-api/ (FLIP#1603).
+generate-fl-api-key:
+	$(MAKE) -C flip-api generate-fl-api-key ENV_FILE=$(KEY_ENV_FILE) $(if $(FORCE),FORCE=$(FORCE))
 
 # Poll flip-api /api/health before registering. The entrypoint seeds the DB —
 # including the FL kit-slot pool that register_trust claims from — *before* the
@@ -687,13 +669,24 @@ _wait-for-hub:
 	  sleep 2; \
 	done
 
+# A deployed hub runs on ECS, out of reach of the local flip-api these targets exec into: they
+# would mint keys in the local database and write them into the real kit (FLIP#938).
+_refuse-deployed-hub:
+	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/aws $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)$(if $(filter 1,$(REVOKE_OLD)), REVOKE_OLD=1)'"; exit 1; }
+
+# REVOKE_OLD is the leaked-key switch (FLIP#1714). Anything other than empty, 0 or 1 (`true`, `yes`)
+# is refused rather than read as "stage", which would leave a leaked key valid.
+_check-revoke-old:
+	@case '$(REVOKE_OLD)' in ''|0|1) ;; *) echo "❌ REVOKE_OLD must be empty, 0 or 1 (got '$(REVOKE_OLD)')."; exit 1 ;; esac
+
 # Register one trust on the running hub from its kit file. KIT is the trust
 # CODE (the kit-file handle). Seeds trust/.env.<CODE>.<env> from its .example on
 # first run, reads TRUST_NAME/CODE/REGION from it, registers (idempotent — an
 # already-registered name is skipped, credentials preserved), then writes the
 # minted credentials + assigned FL kit slot + hub-shared block back into the
 # kit. The hub keeps no trust list — the kit files ARE the list.
-register-trust: _check-compose-project-owner _wait-for-hub
+register-trust: AWS_TARGET := register-trusts
+register-trust: _check-compose-project-owner _refuse-deployed-hub _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit='$(call kit_file,trust/,$(KIT))'; ex="trust/.env.$(KIT).$(ENV).example"; \
 	  if [ ! -f "$$kit" ]; then \
@@ -714,25 +707,34 @@ register-trust: _check-compose-project-owner _wait-for-hub
 	@$(MAKE) generate-xnat-credentials KIT=$(KIT)
 
 # Reissue one trust's api and internal-service keys in place (FLIP#1569).
-# KIT is the trust CODE, as for register-trust. Unlike registration this changes
-# the accepted hash: the hub refuses the old key as soon as this commits, so the
-# trust stays offline until its containers are recreated from the new kit.
+# KIT is the trust CODE, as for register-trust. The new key is STAGED (FLIP#1714): the hub
+# accepts the old and the new key until the trust first calls it with the new one, which
+# then becomes its only key. The site stays online while its new kit is delivered, and an
+# unused new key is dropped after TRUST_KEY_ROTATION_GRACE_DAYS (the old one keeps working).
+# REVOKE_OLD=1 is the immediate cutover, for a leaked key: the hub refuses the old key as
+# soon as this commits, and the trust is offline until its containers are recreated.
 # Only the two hub keys rotate here; XNAT credentials have their own caveat
 # (Postgres applies XNAT_DATASOURCE_* only on first initdb, see
 # generate-xnat-credentials).
-rotate-trust-keys: _check-compose-project-owner _wait-for-hub
+rotate-trust-keys: AWS_TARGET := rotate-trust-keys
+rotate-trust-keys: _check-compose-project-owner _check-revoke-old _refuse-deployed-hub _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit='$(call kit_file,trust/,$(KIT))'; \
 	  [ -f "$$kit" ] || { echo "❌ $$kit not found. Register the trust first."; exit 1; }; \
 	  name="$$(sed -n 's/^TRUST_NAME=//p' "$$kit" | head -1)"; \
 	  [ -n "$$name" ] || { echo "❌ TRUST_NAME not set in $$kit"; exit 1; }; \
-	  echo "🔑 Rotating keys for trust '$$name' (KIT=$(KIT))..."; \
-	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust --rotate --name "$$name")" \
+	  echo "🔑 Rotating keys for trust '$$name' (KIT=$(KIT)$(if $(filter 1,$(REVOKE_OLD)), REVOKE_OLD=1))..."; \
+	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust --rotate $(if $(filter 1,$(REVOKE_OLD)),--revoke-old) --name "$$name")" \
 	    || { echo "❌ key rotation failed for KIT=$(KIT)"; exit 1; }; \
 	  printf '%s\n' "$$kitjson" | uv run --no-config trust/deploy/scripts/distribute_trust_kits.py --target "$$kit" \
-	    || { echo "❌ The hub has already committed the new keys, but $$kit could not be written: it still holds the OLD, now-refused keys."; \
+	    || { echo "❌ The hub has already committed the new keys, but $$kit could not be written: it still holds the OLD keys."; \
 	         echo "   Fix the write error and re-run 'make rotate-trust-keys KIT=$(KIT)' to mint another pair."; exit 1; }; \
-	  echo "⚠️  Old key refused from now on: recreate the trust containers from $$kit."
+	  staged_until="$$(printf '%s\n' "$$kitjson" | uv run --no-config python -c 'import json, sys; print(json.load(sys.stdin)[0].get("staged_until") or "")')"; \
+	  if [ -n "$$staged_until" ]; then \
+	    echo "✅ New key staged: both keys work until the trust restarts on $$kit (its first call with the new key retires the old one), or until $$staged_until."; \
+	  else \
+	    echo "⚠️  Old key refused from now on: recreate the trust containers from $$kit."; \
+	  fi
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
 # the roster (each is seeded to a live kit + registered). Used by `make up`.
@@ -760,9 +762,8 @@ new-trust:
 # $(MAIN_ENV_FILE) values. Preserves credentials. Safe to run repeatedly. Use
 # after rotating AES_KEY_BASE64 or bumping image tags on the hub side — does NOT
 # redistribute the updated kit file to remote operators (still out-of-band).
-# On prod this is REQUIRED after `register-trust`: register fills only the
-# hub-shared vars present in the flip-api task env (AES_KEY_BASE64,
-# TRUST_API_KEY_HEADER, FL_BACKEND); the rest come from the admin's local env here.
+# A deployed hub's `make -C deploy/aws register-trusts` runs this same refresh
+# itself (FLIP#1476): its flip-api task env carries only some of the hub-shared vars.
 #
 # Works identically for dev/stag/prod: the Hub-shared values live in
 # $(MAIN_ENV_FILE), which the root Makefile already `include`s + exports.
@@ -816,7 +817,7 @@ check-aws-access:
 	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
 		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
 		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. Only the"; \
-		echo "    AWS-backed targets need it — deploy/providers/AWS, FL kit uploads, the optional OMOP vocabulary load.)"; \
+		echo "    AWS-backed targets need it — deploy/aws, FL kit uploads, the optional OMOP vocabulary load.)"; \
 		exit 1; \
 	fi
 	@echo "✅ AWS access confirmed."

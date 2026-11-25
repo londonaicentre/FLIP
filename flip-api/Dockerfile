@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-FROM python:3.12-slim-bookworm AS development
+FROM python:3.13-slim-bookworm AS development
 
 # Build identity (FLIP#1204): CI passes the release tag (v<X.Y.Z>) or the sha-<short7>
 # tag it is publishing; /api/health reports it so a trust site can pick the release the
@@ -51,7 +51,7 @@ RUN chmod +x /app/entrypoint.sh
 # package itself lives under src/ and rides the existing mount / COPY.
 COPY alembic.ini /app/alembic.ini
 # Bake the base FL application templates (the repo-root fl-apps/ tree, supplied as the `fl_apps`
-# named build context — see deploy/compose*.yml and docker_build_flip_api.yml) into the image so
+# named build context — see deploy/compose/compose*.yml and docker_build_flip_api.yml) into the image so
 # the bundler reads them from FL_APP_BASE_DIR (default /app/fl-apps) instead of S3 (FLIP#724). In
 # dev this path is overlaid by a bind-mount of ../fl-apps for live iteration.
 COPY --chown=${UNAME}:${UNAME} --from=fl_apps . /app/fl-apps/
@@ -76,7 +76,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Dependency changes ship by rebuilding the image (BUILD=true in dev), never at boot.
 ENV UV_NO_SYNC=1 PYTHONPATH=/app/src
 
-# The path the API writes on ECS's read-only root filesystem; must stay a VOLUME (FLIP#1795, deploy/providers/AWS/AGENTS.md).
+# The path the API writes on ECS's read-only root filesystem; must stay a VOLUME (FLIP#1795, deploy/aws/AGENTS.md).
 VOLUME ["/tmp"]
 
 # Expose the application port

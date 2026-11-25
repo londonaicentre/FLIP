@@ -76,7 +76,7 @@ def delete_project_endpoint(
     #     the old one stays keyed to the deleted project's id and unreachable from the UI.
 
     # Get the project models and abort training if necessary
-    project_models, _ = get_project_models_service(project_id, db, all_results=True)
+    project_models = get_project_models_service(project_id, db)
     logger.debug(f"Project models to be deleted: {project_models}")
 
     for model in project_models.data:

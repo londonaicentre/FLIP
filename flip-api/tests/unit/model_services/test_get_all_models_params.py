@@ -10,50 +10,14 @@
 # limitations under the License.
 #
 
-from uuid import uuid4
-
 import pytest
 from fastapi import HTTPException
 
 from flip_api.domain.schemas.status import ModelStatus
-from flip_api.model_services.get_all_models import _parse_project_id, _parse_statuses
-
-
-class TestParseProjectId:
-    """The ``project`` query param must never fail open.
-
-    ``get_paging_details`` ignores query keys it does not recognise, so anything this parser
-    lets through as ``None`` becomes "show the whole estate" — under a UI that says otherwise.
-    """
-
-    def test_absent_or_blank_means_no_filter(self):
-        assert _parse_project_id(None) is None
-        assert _parse_project_id("") is None
-        assert _parse_project_id("   ") is None
-
-    def test_parses_a_uuid_and_tolerates_surrounding_whitespace(self):
-        project_id = uuid4()
-
-        assert _parse_project_id(str(project_id)) == project_id
-        assert _parse_project_id(f"  {project_id}  ") == project_id
-
-    def test_rejects_a_malformed_id_rather_than_ignoring_it(self):
-        with pytest.raises(HTTPException) as exc:
-            _parse_project_id("not-a-uuid")
-
-        assert exc.value.status_code == 400
-
-    def test_rejects_a_numeric_id(self):
-        """A project id is a UUID; an integer is a caller bug, not a wildcard."""
-        with pytest.raises(HTTPException) as exc:
-            _parse_project_id("42")
-
-        assert exc.value.status_code == 400
+from flip_api.model_services.get_all_models import _parse_statuses
 
 
 class TestParseStatuses:
-    """Sibling parser, previously untested."""
-
     def test_absent_means_no_filter(self):
         assert _parse_statuses(None) is None
         assert _parse_statuses("") is None
@@ -70,5 +34,12 @@ class TestParseStatuses:
     def test_rejects_an_unknown_status(self):
         with pytest.raises(HTTPException) as exc:
             _parse_statuses("RUNNING,NOT_A_STATUS")
+
+        assert exc.value.status_code == 400
+
+    def test_rejects_the_legacy_training_started_name(self):
+        # No silent aliasing of the pre-rename status on the public filter (#803).
+        with pytest.raises(HTTPException) as exc:
+            _parse_statuses("TRAINING_STARTED")
 
         assert exc.value.status_code == 400

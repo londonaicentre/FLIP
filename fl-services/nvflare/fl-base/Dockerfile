@@ -10,16 +10,13 @@
 # limitations under the License.
 #
 
-FROM python:3.12-slim-bookworm AS base
+FROM python:3.13-slim-bookworm AS base
 
 ARG LOCAL_DEV=false
 # Set log level
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:${PATH}"
-# torch's native Triton kernels compile a C helper on first use, and this image has no C compiler:
-# without this, a GPU backward through one of them fails (FLIP#1700). torch reads it at import.
-ENV TORCH_DISABLE_NATIVE_JIT=1
 
 # Minimal OS deps including procps for pkill
 RUN apt-get update && \
@@ -45,7 +42,7 @@ WORKDIR /app
 # The args are kept, rather than hardcoded below, so the values still appear once
 # at the top and an out-of-tree build can still override them; nothing in-tree does.
 # 1000 also matches the ubuntu uid that EC2/on-prem trust hosts stage kits as, which
-# is why it was chosen — see deploy/providers/AWS/efs.tf.
+# is why it was chosen — see deploy/aws/efs.tf.
 # USER is NOT set here — derived images (fl-server, fl-client) switch after their
 # own COPY/RUN so the user owns the files those instructions create. Created
 # before the uv sync below so the final chown lands in the same layer as the
@@ -66,7 +63,7 @@ COPY flip-utils/flip/ ./flip/
 # Sync dependencies using uv, then chown the result in the same layer.
 # If LOCAL_DEV is set to true, install dev dependencies as well, else --no-dev
 # --frozen ensures exact versions from uv.lock are used
-# Install with full optional dependencies for ML frameworks
+# Install the nvflare extra (this image's FL backend; FLIP#1047) and the full ML extra
 # --compile-bytecode ships the venv's .pyc files (FLIP#1782). PYTHONDONTWRITEBYTECODE
 # stops runtime writes only, so without them every FL job process compiled torch,
 # MONAI and NVFLARE from source on each start (~7-11 s, 2.6 s with them).
@@ -87,6 +84,6 @@ COPY flip-utils/flip/ ./flip/
 # permission grant this does not need and should not make.
 # /app itself is also world-writable, sticky: a kit's FLIP_UID (FLIP#1731) is neither this
 # user nor in its group and still has to create those entries. The files under it are untouched.
-RUN uv sync --frozen --no-cache --compile-bytecode --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi) && \
+RUN uv sync --frozen --no-cache --compile-bytecode --extra nvflare --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi) && \
     chown -R ${UNAME}:${UNAME} /app && \
     chmod 1777 /app && chmod g+rwX /home/${UNAME}

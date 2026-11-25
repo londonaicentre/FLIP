@@ -12,7 +12,8 @@
  */
 
 import { _http } from "@/services/api";
-import { getAccessRequests,
+import {     deleteUser,
+    getAccessRequests,
     getCurrentUser,
     getMfaStatus,
     getUserPermissions,
@@ -252,6 +253,16 @@ describe("user-service", () => {
 
             expect(_http.put).toHaveBeenCalledWith("/users/u-1", { disabled: true });
             expect(result).toEqual({ disabled: true });
+        });
+    });
+
+    describe("deleteUser", () => {
+        it("DELETEs /users/{userId}", async () => {
+            vi.mocked(_http.delete).mockResolvedValue({ data: {} } as never);
+
+            await deleteUser("u-1");
+
+            expect(_http.delete).toHaveBeenCalledWith("/users/u-1");
         });
     });
 

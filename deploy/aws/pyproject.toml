@@ -1,0 +1,88 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+[project]
+name = "aws"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+authors = [
+    { name = "R. Garcia-Dias", email = "rafaelagd@gmail.com" }
+]
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "ansible-core>=2.19.11",
+    "click>=8.0.0",
+    "cryptography>=46.0.5",
+    "idna>=3.15",
+    "requests>=2.33.0",
+    "urllib3>=2.7.0",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "black>=26.10.1",  # GHSA-cg8m-r9f2-5wm2
+    "frictionless>=5.18.1",
+    "ipykernel>=6.29.5",
+    "isort>=6.0.1",
+    "mypy>=1.17.0",
+    "pyqt5>=5.15.11",
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12.3",
+    "simpleeval>=1.0.4",
+    "taskipy>=1.14.1",
+    "terraform-local>=0.24.1",
+    "tornado>=6.6.1",  # GHSA-pcg2-g6cj-q92c, GHSA-pw9p-v7r6-gx4p, GHSA-r4j5-9xpp-3985, GHSA-5cjw-f85j-cv6r
+]
+
+
+[tool.coverage.report]
+exclude_lines = ["if __name__ == .__main__.:"]
+omit = ["*.venv/*", "*/tests/*", "*/__init__.py", "*/translation/*"]
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]
+addopts = []
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+preview = true
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']
+exclude = [
+    "src/flip_api/translation/*"
+]
+
+[tool.mypy]
+ignore_missing_imports = true
+exclude = [
+    "src/flip_api/translation/*",
+]
+
+[tool.setuptools]
+packages = []
+
+[tool.uv]
+# 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
+exclude-newer = "3 days"
+# Security: minimum versions for transitive packages with open CVEs.
+constraint-dependencies = [
+    "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
+]

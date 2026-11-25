@@ -187,12 +187,18 @@ export const deriveServices = (t: ITrustResponse, nowMs: number = Date.now()): I
     });
 };
 
+export const isFailing = (s: IDerivedService): s is IDerivedService & { status: FailingStatus } =>
+    s.status === "down" || s.status === "degraded";
+
+const trustApiDown = (services: IDerivedService[]): boolean =>
+    services.find(s => s.key === "trust-api")?.status === "down";
+
 // The design's pure state derivation over an already-derived row set: trust-api
 // down → Offline; any service down/degraded → Degraded; else Online. "unknown"
 // never degrades.
 export const stateFromServices = (services: IDerivedService[]): TrustState => {
-    if (services.find(s => s.key === "trust-api")?.status === "down") return "offline";
-    if (services.some(s => s.status === "down" || s.status === "degraded")) return "degraded";
+    if (trustApiDown(services)) return "offline";
+    if (services.some(isFailing)) return "degraded";
 
     return "online";
 };
@@ -200,14 +206,11 @@ export const stateFromServices = (services: IDerivedService[]): TrustState => {
 export const deriveTrustState = (t: ITrustResponse, nowMs: number = Date.now()): TrustState =>
     stateFromServices(deriveServices(t, nowMs));
 
-export const isFailing = (s: IDerivedService): s is IDerivedService & { status: FailingStatus } =>
-    s.status === "down" || s.status === "degraded";
-
 // Caption parts for a non-online row ("XNAT down · OMOP degraded"), down first —
 // except when trust-api is down, where the caption collapses to just that, since
 // nothing else can be known about a trust that isn't reporting.
 export const failingFromServices = (services: IDerivedService[]): IFailingService[] => {
-    if (services.find(s => s.key === "trust-api")?.status === "down") {
+    if (trustApiDown(services)) {
         return [
             {
                 text: "trust-api down",
@@ -235,6 +238,21 @@ export const deriveTrust = (t: ITrustResponse, nowMs: number = Date.now()): IDer
         _failing: failingFromServices(services)
     };
 };
+
+// The Jobs column (FLIP#1739): a trust's in-progress and queued FL jobs, one line each, zeros left out.
+export const jobLines = (t: ITrustResponse): string[] => [
+    ...(t.jobs_in_progress ? [`${t.jobs_in_progress} in progress`] : []),
+    ...(t.jobs_queued ? [`${t.jobs_queued} queued`] : [])
+];
+
+const JOB_MODE_LABELS = new Map([
+    ["process", "jobs run in the client container"],
+    ["pods", "a pod per job"]
+]);
+
+// How a trust runs an FL job, from its fl-client heartbeat entry. A mode this build does not know is shown as sent.
+export const jobModeLabel = (mode: string | null | undefined): string | null =>
+    mode ? JOB_MODE_LABELS.get(mode) ?? mode : null;
 
 // "6s ago"-style heartbeat age; "never" when absent or unparseable.
 export const heartbeatText = (iso: string | null, nowMs: number = Date.now()): string => {

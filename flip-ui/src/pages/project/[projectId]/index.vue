@@ -25,7 +25,7 @@
             <header class="px-6 pt-4 shrink-0">
                 <router-link
                     to="/projects"
-                    class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
+                    class="text-xs font-semibold text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
                 >
                     Projects
                 </router-link>
@@ -64,7 +64,7 @@
                                     data-test="unstage-project-btn"
                                     aria-label="Unstage Project"
                                     tooltip="Unstage Project"
-                                    @click="openUnstagingModal"
+                                    @click="unstageProjectOpen = true"
                                 >
                                     <icon-ph-clipboard class="lg:mr-2" />
                                     <span class="hidden lg:inline">Unstage Project</span>
@@ -77,7 +77,7 @@
                                     continue-button-text="Unstage Project"
                                     :submitting="unstagingProject"
                                     :continue-action="unstageCurrentProject"
-                                    @close-modal="closeUnstageModal"
+                                    @close-modal="unstageProjectOpen = false"
                                 />
                             </template>
                         </AiGuard>
@@ -92,7 +92,7 @@
                                 data-test="edit-project-btn"
                                 :aria-label="isViewer ? 'View Project' : 'Edit Project'"
                                 :tooltip="isViewer ? 'View Project' : 'Edit Project'"
-                                @click.capture="openEditProjectDrawer"
+                                @click.capture="editDrawerOpen = true"
                             >
                                 <icon-ph-pencil-simple v-if="!isViewer" class="lg:mr-2" />
                                 <icon-mdi-eye-outline v-else class="lg:mr-2" />
@@ -180,7 +180,8 @@
             :has-imaging="hasImaging"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
-            @close="closeEditProjectDrawer"
+            :owner-email="project.ownerEmail"
+            @close="editDrawerOpen = false"
             @save="updateProjectEvent"
         />
     </div>
@@ -227,7 +228,6 @@ const errorStore = useErrorStore();
 const projectStore = useProjectStore();
 
 const editDrawerOpen = ref(false);
-const stageProjectOpen = ref(false);
 const stagingProject = ref(false);
 const unstageProjectOpen = ref(false);
 const projectUpdating = ref(false);
@@ -315,27 +315,16 @@ const isOwnerOrHasAccess = () => {
     return projectOwner === currentUserId || project?.value?.users?.map(u => u.id).includes(currentUserId as string);
 };
 
-// Owner counts as +1 on top of the shared users.
-const totalUserCount = computed(() => (project?.value?.users?.length ?? 0) + 1);
+// The owner plus every other member: the rows the Project Users list shows. The hub already
+// includes the owner in `users`, so count them once whether or not they are there.
+const totalUserCount = computed(() => {
+    const ownerId = project?.value?.ownerId;
+
+    return (project?.value?.users ?? []).filter(u => u.id !== ownerId).length + 1;
+});
 
 const getUserCountMessage = () => {
     return `${totalUserCount.value} ${totalUserCount.value === 1 ? "User" : "Users"}`;
-};
-
-const openEditProjectDrawer = () => {
-    editDrawerOpen.value = true;
-};
-
-const openUnstagingModal = () => {
-    unstageProjectOpen.value = true;
-};
-
-const closeUnstageModal = () => {
-    unstageProjectOpen.value = false;
-};
-
-const closeEditProjectDrawer = () => {
-    editDrawerOpen.value = false;
 };
 
 const updateProjectEvent = async (update: IEditProject) => {
@@ -453,15 +442,11 @@ const approveProjectEvent = async (decisions: ITrustDecisions) => {
 
 const stageProject = async (trustIds: string[]) => {
 
-    if(stagingProject.value) {
+    if (stagingProject.value || !trustIds.length) {
         return;
     }
 
     stagingProject.value = true;
-
-    if (!trustIds.length) {
-        return;
-    }
 
     try {
         await stageProjectWithTrusts(`/projects/${project?.value?.id}/stage`, trustIds);
@@ -473,7 +458,6 @@ const stageProject = async (trustIds: string[]) => {
         });
     }
 
-    stageProjectOpen.value = false;
     stagingProject.value = false;
 
 };

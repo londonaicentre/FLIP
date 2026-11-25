@@ -16,6 +16,8 @@ import { createTestingPinia } from "@pinia/testing";
 import { mount, VueWrapper } from "@vue/test-utils";
 import { reactive, ref } from "vue";
 
+import { issuedKit } from "@/utils/issued-trust-kit";
+
 import MainLayout from "../MainLayout.vue";
 
 const mockRoute = reactive({
@@ -85,6 +87,7 @@ vi.mock("@/utils/snackbar", () => ({
 
 function mountMainLayout(options: {
     permissions?: string[];
+    trustAdminOf?: { id: string; name: string; code: string } | null;
     email?: string;
     userId?: string;
     bannerEnabled?: boolean;
@@ -97,6 +100,7 @@ function mountMainLayout(options: {
 } = {}) {
     const {
         permissions = [],
+        trustAdminOf = null,
         email = "test@example.com",
         userId = "1",
         bannerEnabled,
@@ -136,7 +140,8 @@ function mountMainLayout(options: {
                                     sub: userId,
                                     email
                                 },
-                                permissions
+                                permissions,
+                                trustAdminOf
                             },
                             signInStep: "DONE"
                         },
@@ -165,6 +170,12 @@ function mountMainLayout(options: {
                 AiLoader: { template: "<div data-test='loader' />" },
                 DeploymentMode: { template: "<div data-test='deployment-mode' />" },
                 CreateModelModal: true,
+                TrustKitModal: {
+                    name: "TrustKitModal",
+                    props: ["kit", "trustLabel"],
+                    emits: ["close-modal"],
+                    template: "<div data-test='trust-kit-modal'>{{ kit?.passphrase }}</div>"
+                },
                 "router-view": {
                     template: "<div><slot :Component=\"comp\" /></div>",
                     data() { return { comp: { template: "<div>stub</div>" } }; }
@@ -186,6 +197,30 @@ describe("MainLayout", () => {
             const wrapper = mountMainLayout();
 
             expect(wrapper.exists()).toBe(true);
+        });
+    });
+
+    describe("trust kit passphrase dialog", () => {
+        it("shows the kit a trust card or table row just issued, and forgets it on close", async () => {
+            const wrapper = mountMainLayout();
+            const modal = wrapper.findComponent({ name: "TrustKitModal" });
+            expect(modal.props("kit")).toBeNull();
+
+            issuedKit.value = {
+                file_name: "flip-trust-kit-GSTT.tar.gz.enc",
+                kind: "full",
+                passphrase: "amber-otter-quartz",  // pragma: allowlist secret
+                content_base64: btoa("kit"),
+                trustLabel: "GSTT"
+            };
+            await wrapper.vm.$nextTick();
+            expect(modal.props("trustLabel")).toBe("GSTT");
+            expect(wrapper.html()).toContain("amber-otter-quartz");
+
+            await modal.vm.$emit("close-modal");
+
+            expect(issuedKit.value).toBeNull();
+            expect(wrapper.html()).not.toContain("amber-otter-quartz");
         });
     });
 
@@ -226,32 +261,38 @@ describe("MainLayout", () => {
     });
 
     describe("userRole", () => {
-        it("returns Admin when user has CanAccessAdminPanel permission", () => {
-            const wrapper = mountMainLayout({ permissions: ["CanAccessAdminPanel"] });
+        it.each<[string, string[], string]>([
+            ["returns Admin when user has CanAccessAdminPanel permission", ["CanAccessAdminPanel"], "Admin"],
+            [
+                "returns Researcher when user has CanCreateProjects but not CanAccessAdminPanel",
+                ["CanCreateProjects"],
+                "Researcher"
+            ],
+            ["returns Viewer when user has no management permissions", [], "Viewer"],
+            [
+                "prioritises Admin over Researcher when user has both permissions",
+                ["CanAccessAdminPanel", "CanManageProjects"],
+                "Admin"
+            ]
+        ])("%s", (_name, permissions, role) => {
+            const wrapper = mountMainLayout({ permissions });
             const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Admin");
+            expect((dropdown.props() as Record<string, unknown>).role).toBe(role);
         });
 
-        it("returns Researcher when user has CanCreateProjects but not CanAccessAdminPanel", () => {
-            const wrapper = mountMainLayout({ permissions: ["CanCreateProjects"] });
+        it("returns Trust Admin for a Trust Admin, who also holds the Researcher grant", () => {
+            const wrapper = mountMainLayout({
+                permissions: ["CanCreateProjects"],
+                trustAdminOf: {
+                    id: "t1",
+                    name: "Guy's and St Thomas'",
+                    code: "GSTT"
+                }
+            });
             const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Researcher");
-        });
-
-        it("returns Viewer when user has no management permissions", () => {
-            const wrapper = mountMainLayout({ permissions: [] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
-
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Viewer");
-        });
-
-        it("prioritises Admin over Researcher when user has both permissions", () => {
-            const wrapper = mountMainLayout({ permissions: ["CanAccessAdminPanel", "CanManageProjects"] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
-
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Admin");
+            expect((dropdown.props() as Record<string, unknown>).role).toBe("Trust Admin");
         });
     });
 

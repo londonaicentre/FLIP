@@ -11,7 +11,7 @@
 # limitations under the License.
 #
 
-FROM python:3.12-slim-bookworm AS development
+FROM python:3.13-slim-bookworm AS development
 
 # Build identity: CI passes the release tag (v<X.Y.Z>) or the sha-<short7> tag it is
 # publishing; /health reports it. Empty for a local build, where /health falls back to
@@ -48,7 +48,7 @@ USER app
 RUN uv sync --no-dev
 
 # The paths the API writes on ECS's read-only root filesystem (/tmp and the entrypoint's Flower CLI
-# config); must stay VOLUMEs (FLIP#1795, deploy/providers/AWS/AGENTS.md).
+# config); must stay VOLUMEs (FLIP#1795, deploy/aws/AGENTS.md).
 RUN mkdir -p /home/app/.flwr
 VOLUME ["/tmp", "/home/app/.flwr"]
 

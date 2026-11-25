@@ -24,6 +24,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   # Gate for pull requests into develop: run the suite only when the PR touches this
   # service (pr_paths_changed.yml; PRs into main always run everything). The list is
@@ -199,6 +205,58 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: cypress-screenshots-${{ matrix.group }}
+          path: flip-ui/test/cypress/screenshots
+          if-no-files-found: ignore
+          retention-days: 7
+
+  public-demo:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    # Builds the public demo as its publish does (build:demo, into dist-demo/
+    # at base "/", FLIP#2012) and walks it as a visitor would. The demo shares
+    # src/ with the real UI, so a UI change that breaks it fails here. The demo
+    # build reads no environment, and its Mirage server answers every request.
+    name: Public demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./flip-ui
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set Node.js version
+        uses: actions/setup-node@v5
+        with:
+          # Node 24 LTS bundles npm >=11.10; see the comment in the flip-ui job above.
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: flip-ui/package-lock.json
+
+      - name: Build and walk the demo
+        uses: cypress-io/github-action@v7
+        with:
+          working-directory: flip-ui
+          browser: chrome
+          build: npm run build:demo
+          # The walk's baseUrl is 127.0.0.1, so bind there rather than to
+          # whichever address "localhost" resolves to on the runner. The demo
+          # is served at the root, as on its own host.
+          start: npm run serve:demo -- --host 127.0.0.1
+          wait-on: "http://127.0.0.1:4174/"
+          wait-on-timeout: 120
+          config-file: cypress.public-demo.config.ts
+
+      # The publish ships dist-demo/ as built: check it carries the demo's own window.js.
+      - name: Check the demo build
+        run: grep -Eq 'window.RELEASE_VERSION = "demo/[^"]+";' dist-demo/js/window.js
+
+      - name: Upload Cypress screenshots
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cypress-screenshots-public-demo
           path: flip-ui/test/cypress/screenshots
           if-no-files-found: ignore
           retention-days: 7

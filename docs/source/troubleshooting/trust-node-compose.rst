@@ -23,9 +23,12 @@ as a user with Docker socket access (``sudo -E`` on a host provisioned by the on
 :ref:`onprem-operator-access`). An AWS EC2 node is reached with ``ssh flip-<env>-<code>``, which
 ``make -C trust/deploy/terraform/aws/ec2 ssh-config KIT=<CODE> HUB=<env>`` sets up.
 
-**Kit and environment.** On an on-prem host the kit file is ``trust/.env.<CODE>.prod``, so ``make -C trust …``
-commands take ``KIT=<CODE> HUB=prod``. Without ``HUB`` they fall back
-to the development setup. For the AWS-hosted trust they run on the workstation with ``KIT=<CODE> HUB=<env>``.
+**Kit and environment.** ``make -C trust …`` commands name the trust's kit and hub:
+
+- On an on-prem host the kit file is ``trust/.env.<CODE>.prod``: pass ``KIT=<CODE> HUB=prod``.
+- For the AWS-hosted trust, run them on the workstation with ``KIT=<CODE> HUB=<env>``.
+
+Without ``HUB`` they fall back to the development setup.
 
 **Container names.** A trust's containers are named ``trust<N>-<service>-1`` and its XNAT stack ``xnat<N>``,
 where ``<N>`` is the FL kit slot the hub assigned (``FL_KIT_SLOT_NUMBER`` in the kit file). ``docker ps``
@@ -69,8 +72,8 @@ A kit created from an older template may lack the key: copy it from ``trust/.env
 ===================================================================
 
 **Cause.** The trust image set (the FL client with its PyTorch dependencies, XNAT, Orthanc, OMOP and the APIs)
-needs more room than an older 50 GB root volume. Terraform now provisions 100 GB, but growing an existing volume
-leaves the partition and filesystem at the old size.
+needs more room than a 50 GB root volume, which older nodes were created with. Terraform provisions 100 GB, but
+growing an existing volume leaves the partition and filesystem at the old size.
 
 **Fix.** After ``terraform apply`` has grown the volume, resize once on the host and retry the deployment:
 
@@ -111,6 +114,59 @@ imaging-api and the FL client:
    Wherever a non-root container bind-mounts a host path, create that path with the right owner before the
    container starts. A path Docker creates is owned by root.
 
+.. _ts-compose-upgrade-data-dirs:
+
+``upgrade-onprem-trust`` stops at ``Data dir paths: cannot create``
+===================================================================
+
+**Symptom.** On a site that is already running, the upgrade stops at its readiness checklist::
+
+   ❌ Data dir paths:  cannot create: OMOP_DATA_DIR (/opt/flip/omop is not writable, and the seed marker is written there); ...
+   Status: NOT READY
+
+Nothing has been changed at that point.
+
+**Cause.** The checklist asks whether you can write the folder that holds each data directory, because a first
+install writes its seed marker there. On a site that root installed, those folders belong to root. An upgrade
+never seeds and writes nothing there, but before v0.16 it ran the same checklist. From v0.16,
+``upgrade-onprem-trust`` skips that part of the row.
+
+**Fix.** On a checkout older than v0.16, read the checklist once on its own and confirm this is the only failing
+row:
+
+.. code-block:: shell
+
+   make onboard-onprem-trust KIT=<CODE>
+
+Then run the upgrade verb itself, which is what ``upgrade-onprem-trust`` calls after the checklist:
+
+.. code-block:: shell
+
+   make -C trust upgrade-trust KIT=<CODE> HUB=<env> TAG=vX.Y.Z
+
+It still refuses a release your checkout is not at, checks the registry for every image, and asks before it
+changes anything.
+
+.. _ts-compose-xnat-backup-writable:
+
+The upgrade stops: ``backups is not writable by uid``
+=====================================================
+
+**Symptom.** The upgrade prints the new tags, then stops before any container changes::
+
+   ✅ .env.<CODE>.<env>: DOCKER_TAG=vX.Y.Z, DOCKER_FL_TAG=vX.Y.Z
+   ❌ <XNAT_DATA_DIR>/backups is not writable by uid 1001:1001, which writes the XNAT backup ...
+      chown -R 1001:1001 <XNAT_DATA_DIR>/backups
+
+**Cause.** The upgrade dumps the XNAT database before touching XNAT, as the user XNAT runs as. On a site
+installed by an older release the ``backups`` folder belongs to root.
+
+**Fix.** Run the printed ``chown`` as root, then the same upgrade command again.
+
+The kit file already names the new release while the containers still run the old one, so do not start or
+restart the stack in between. If the retry has to wait, put ``DOCKER_TAG`` and ``DOCKER_FL_TAG`` in the kit back
+to the old release until then.
+
 *****************
 Imaging and XNAT
 *****************
@@ -137,7 +193,8 @@ the EC2. Docker creates that directory empty and Orthanc starts with no studies.
 
 #. Set host paths (``/opt/flip/...``) for ``ORTHANC_STORAGE_DIR`` and the other host-local entries in the kit file.
    Check the other containers' mounts the same way.
-#. Redeploy the trust, which stops the stack, seeds OMOP and Orthanc on the host and starts it again:
+#. Redeploy the trust, which stops the stack, seeds OMOP and Orthanc on the host and starts it again. This is a
+   first-install command: it wipes the XNAT archive (see the warning at the top of this page).
 
    .. code-block:: shell
 
@@ -189,7 +246,8 @@ got the whole one.
 
 **Fix.**
 
-#. Check what ``make`` sees. Run from the repo root, with the kit file's path:
+#. Check what ``make`` sees. Run from the repo root, replacing ``trust/.env.<CODE>.prod`` with your kit file's
+   path if it differs (for example ``trust/.env.<CODE>.<env>`` for the AWS-hosted trust):
 
    .. code-block:: shell
 
@@ -206,10 +264,15 @@ got the whole one.
       make -C trust/xnat up-xnat KIT=<CODE> HUB=prod
 
    ``up-xnat`` deletes the XNAT archive and database and configures a new XNAT from the kit. For the AWS-hosted
-   trust, run it from the workstation with ``KIT=<CODE> HUB=<env>`` and ``DOCKER_CONTEXT=flip-<env>-<code>`` in front,
-   as the EC2 root's ``deploy`` does.
-#. Recreate imaging-api so it reads the new value. A plain ``docker restart`` keeps the old environment; see
-   "Changing the log level" on :doc:`../components/component-logging-stack` for how to recreate one container.
+   trust, run it from the workstation against the node's Docker context, as
+   ``make -C trust/deploy/terraform/aws/ec2 deploy`` does:
+
+   .. code-block:: shell
+
+      DOCKER_CONTEXT=flip-<env>-<code> make -C trust/xnat up-xnat KIT=<CODE> HUB=<env>
+#. Recreate imaging-api so it reads the new value. A plain ``docker restart`` keeps the old environment. The
+   command to recreate one container is in "Changing the log level" on
+   :doc:`../components/component-logging-stack`.
 
 .. warning::
 
