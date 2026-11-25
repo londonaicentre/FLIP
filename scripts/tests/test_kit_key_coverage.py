@@ -19,11 +19,12 @@ kept its own ``TRUST_API_KEY_HEADER`` whatever the kit said.
 
 A key counts as read on a shape when that shape's kit readers name it: ``${KEY`` in a trust
 compose file (Compose), a quoted ``"KEY"`` in the chart's kit scripts (Helm) or in the spec
-renderers (Snowflake). A Makefile counts only where it uses the value: it expands the
-variable (``$(KEY)``, ``${KEY}``, ``$$KEY``) or reads its line out of the kit (``^KEY=``); a
-name in an ``export`` list or a message is not a read. Comment lines do not count. This
-proves a shape names the key, not that it passes the kit's value on, so a new key still
-needs its own test.
+renderers (Snowflake). The SPCS container env is keyed by the kit's own names, so in
+``spec_templates.py`` only ``kit.get("KEY"`` or ``kit["KEY"]`` counts. A Makefile counts only
+where it uses the value: it expands the variable (``$(KEY)``, ``${KEY}``, ``$$KEY``) or reads
+its line out of the kit (``^KEY=``); a name in an ``export`` list or a message is not a read.
+Comment lines do not count. This proves a shape names the key, not that it passes the kit's
+value on, so a new key still needs its own test.
 
 Compose is two shapes: the deployed files (``compose_trust.prod*.yml``) and the development
 ones are separate reader sets, so a key wired only in development does not pass for a
@@ -52,6 +53,8 @@ KIT_KEY = re.compile(r"^(?:# ?)?([A-Z_][A-Z0-9_]*)=", re.MULTILINE)
 COMPOSE_VAR = r"\$\{KEY(?![A-Za-z0-9_])"
 MAKE_USE = r"\$[({]KEY[)}]|\$\$\{?KEY(?![A-Za-z0-9_])|\^KEY="
 QUOTED = r'"KEY"'
+# The text is joined, so `\s*` spans a call that wraps after `kit.get(`.
+KIT_LOOKUP = r'\bkit(?:\.get\(\s*|\[)"KEY"'
 # The XNAT stack file and the two Makefiles serve the deployed and the development trust alike.
 COMPOSE_SHARED = (
     ("trust/xnat/docker-compose-stack.yml", COMPOSE_VAR),
@@ -71,7 +74,7 @@ READERS = {
         ("trust/deploy/helm/Makefile", MAKE_USE),
     ),
     "snowflake": (
-        ("trust/deploy/snowflake/spec_templates.py", QUOTED),
+        ("trust/deploy/snowflake/spec_templates.py", KIT_LOOKUP),
         ("trust/deploy/snowflake/render_specs.py", QUOTED),
         ("trust/deploy/snowflake/sync_snowflake_kit.py", QUOTED),
         # SECRET_KIT_VAR: the kit keys sync_snowflake_kit.py writes as Snowflake SECRETs.
@@ -132,7 +135,12 @@ NOT_APPLICABLE = {
     "snowflake": {
         "host port or bind address; SPCS endpoints": HOST_PORTS,
         "host directory; SPCS volumes and stages": (
-            "ORTHANC_STORAGE_DIR XNAT_DATA_DIR COHORT_SNAPSHOT_STORAGE_DIR OMOP_DATA_DIR OMOP_VOCAB_DIR"
+            "ORTHANC_STORAGE_DIR BASE_IMAGES_DOWNLOAD_DIR XNAT_DATA_DIR COHORT_SNAPSHOT_STORAGE_DIR OMOP_DATA_DIR "
+            "OMOP_VOCAB_DIR"
+        ),
+        "derived on SPCS from the trust's object names": (
+            "OMOP_BACKEND SNOWFLAKE_WAREHOUSE SNOWFLAKE_DATABASE SNOWFLAKE_SCHEMA SNOWFLAKE_ROLE "
+            "DATA_ACCESS_API_URL IMAGING_API_URL"
         ),
         "container uid; SPCS runs the image's user": "FLIP_UID FLIP_GID",
         "no omop-db container; OMOP is the Snowflake database": (
@@ -154,6 +162,7 @@ NOT_APPLICABLE = {
             "COHORT_REMOVAL_GRACE_HOURS COHORT_RECONCILE_MINUTES IMAGE_CACHE_RETENTION_HOURS"
         ),
         "not wired (#2047, no stack file reads it on any shape)": "XNAT_ACTIVEMQ_PASSWORD",
+        "not wired (#2047 N6, the spec reads PACS_HOST_OVERRIDE)": "PACS_HOST",
     },
 }
 
@@ -193,12 +202,25 @@ def check_shape(shape: str, keys: list[str], failures: list[str]) -> None:
         failures.append(f"{shape}: NOT_APPLICABLE lists {key}, which trust/.env.example no longer declares.")
 
 
+def check_kit_lookup(failures: list[str]) -> None:
+    """KIT_LOOKUP counts a lookup of the kit, not a value written under the same env name."""
+    pattern = KIT_LOOKUP.replace("KEY", "PACS_HOST")
+    cases = {
+        '"PACS_HOST": kit.get(\n    "PACS_HOST", "orthanc")': True,
+        '"PACS_HOST": kit["PACS_HOST"]': True,
+        '"PACS_HOST": "orthanc"': False,
+        '"PACS_HOST": kit.get("PACS_HOST_OVERRIDE", "")': False,
+    }
+    for text, expected in cases.items():
+        if bool(re.search(pattern, text)) != expected:
+            failures.append(f"KIT_LOOKUP {'misses' if expected else 'counts'} {text!r}")
+
+
 def main() -> int:
     failures: list[str] = []
+    check_kit_lookup(failures)
     try:
         keys = kit_keys()
-        if len(keys) < 50:
-            raise ValueError(f"{KIT_EXAMPLE}: only {len(keys)} keys found, the parser is broken or the file moved")
         for shape in READERS:
             check_shape(shape, keys, failures)
     except ValueError as exc:

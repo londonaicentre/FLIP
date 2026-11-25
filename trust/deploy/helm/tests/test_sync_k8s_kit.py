@@ -563,12 +563,25 @@ def test_render_override_carries_the_kits_expected_trust_id():
 
 
 @pytest.mark.parametrize("key", ["TRUST_API_KEY_HEADER", "EXPECTED_TRUST_ID"])
-@pytest.mark.parametrize("value", [None, "", "<run-make-register-trust>"])
+@pytest.mark.parametrize("value", [None, ""])
 def test_render_override_leaves_an_unset_trust_api_value_to_the_chart(key, value):
-    """A dev kit (Hub-shared block commented out) keeps the chart's header, and a scaffolded
-    placeholder is not a trust id: passed on, it would match no trust and stop trust-api."""
+    """A dev kit (Hub-shared block commented out) keeps the chart's values."""
     kit = dict(_FL_KIT) if value is None else {**_FL_KIT, key: value}
     assert key not in _trust_api_env(kit)
+
+
+def test_render_override_keeps_the_chart_header_for_a_placeholder():
+    """A scaffolded header placeholder is not a header name; the chart's `Authorization` stands."""
+    assert "TRUST_API_KEY_HEADER" not in _trust_api_env(
+        {**_FL_KIT, "TRUST_API_KEY_HEADER": "<run-make-register-trust>"}
+    )
+
+
+def test_render_override_passes_an_expected_trust_id_placeholder_on():
+    """trust-api treats the placeholder as unset and warns that the self-check is off, as on every
+    other shape; filtered here, a Helm trust would be the only one with no warning."""
+    env = _trust_api_env({**_FL_KIT, "EXPECTED_TRUST_ID": "<run-make-register-trust>"})
+    assert env["EXPECTED_TRUST_ID"] == "<run-make-register-trust>"
 
 
 @pytest.mark.parametrize("target", ["sync-kit", "sync-kit-override", "patch-kit-secrets"])

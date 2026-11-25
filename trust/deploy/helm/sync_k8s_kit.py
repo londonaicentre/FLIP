@@ -794,12 +794,15 @@ def render_override(
         "  env:",
         f"    CENTRAL_HUB_API_URL: {hub_url}",
     ]
-    # The hub's key header and the wrong-host self-check, as the Compose trust-api gets them.
-    # Unset (a dev kit) or still a placeholder, the chart's value stands.
-    for kit_key in ("TRUST_API_KEY_HEADER", "EXPECTED_TRUST_ID"):
-        value = kit.get(kit_key, "")
-        if not _is_placeholder(value):
-            lines.append(f"    {kit_key}: {yaml_quote(value.strip())}")
+    # The hub's key header, as the Compose trust-api gets it. Unset (a dev kit) or still a
+    # placeholder, the chart's value stands.
+    header = kit.get("TRUST_API_KEY_HEADER", "")
+    if not _is_placeholder(header):
+        lines.append(f"    TRUST_API_KEY_HEADER: {yaml_quote(header.strip())}")
+    # The wrong-host self-check, passed on as is: trust-api warns on a placeholder, as on every shape.
+    expected_trust_id = kit.get("EXPECTED_TRUST_ID", "").strip()
+    if expected_trust_id:
+        lines.append(f"    EXPECTED_TRUST_ID: {yaml_quote(expected_trust_id)}")
     lines.append("")
 
     # OMOP core vocabulary (FLIP#842/843): the licensed bundle cannot be mirrored
