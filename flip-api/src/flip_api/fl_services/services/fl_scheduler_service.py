@@ -16,7 +16,7 @@ from typing import cast
 from uuid import UUID
 
 import httpx
-from sqlalchemy import Column, exists, update
+from sqlalchemy import Column, exists, or_, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, col, select
 
@@ -43,6 +43,7 @@ from flip_api.domain.schemas.status import (
     ModelStatus,
     NetStatus,
 )
+from flip_api.domain.schemas.trusts import UpgradeReportState
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
     ResearcherFacingError,
@@ -703,6 +704,12 @@ def _retire_job_with_unapproved_trusts(job: FLJob, scheduler_id: UUID, session: 
     revert_scheduler_pickup(scheduler_id, session)
 
 
+def _held_by_upgrade(trust: Trust, now: datetime) -> bool:
+    """Whether an upgrade keeps jobs off ``trust``: a live lease, or a FAILED attempt no operator has cleared."""
+    leased = trust.upgrade_lease_expires_at is not None and trust.upgrade_lease_expires_at > now
+    return leased or trust.last_upgrade_state == UpgradeReportState.FAILED
+
+
 def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse | None:
     """
     Checks for any queued jobs for a given scheduler.
@@ -726,18 +733,25 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         # Find the earliest queued job. The id tiebreak on identical created
         # timestamps keeps the pickup order in exact agreement with the ranks
         # shown by log_queue_positions / queued_positions_by_model.
-        # A trust that holds an upgrade lease (trust auto-upgrade) is being recreated: no job that involves it is
-        # assigned until the lease is released or expires. The job stays QUEUED and the jobs behind it still run.
-        leased_trust = (
+        # A trust that holds an upgrade lease (trust auto-upgrade) is being recreated, and one whose last upgrade
+        # FAILED is left half-upgraded on purpose (nothing is rolled back): no job that involves either is assigned
+        # until the lease is released or expires, or an operator restores the site and clears the failure in the
+        # portal. The job stays QUEUED and the jobs behind it still run.
+        held_trust = (
             select(FLJobTrust.fl_job_id)
             .join(Trust, col(Trust.id) == col(FLJobTrust.trust_id))
             .where(col(FLJobTrust.fl_job_id) == col(FLJob.id))
-            .where(col(Trust.upgrade_lease_expires_at) > datetime.utcnow())
+            .where(
+                or_(
+                    col(Trust.upgrade_lease_expires_at) > datetime.utcnow(),
+                    col(Trust.last_upgrade_state) == UpgradeReportState.FAILED,
+                )
+            )
         )
         job_stmt = (
             select(FLJob)
             .where(FLJob.status == JobStatus.QUEUED)
-            .where(~exists(leased_trust))
+            .where(~exists(held_trust))
             .order_by(cast(Column, FLJob.created).asc(), cast(Column, FLJob.id).asc())
             .limit(1)
             .with_for_update(skip_locked=True)
@@ -766,8 +780,8 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
                 .execution_options(populate_existing=True)
             ).all()
             now = datetime.utcnow()
-            if any(t.upgrade_lease_expires_at and t.upgrade_lease_expires_at > now for t in locked):
-                logger.info("A trust of the next queued job is being upgraded, leaving it queued")
+            if any(_held_by_upgrade(t, now) for t in locked):
+                logger.info("A trust of the next queued job is being upgraded or its upgrade failed, leaving it queued")
                 revert_scheduler_pickup(scheduler_id, session)
                 return None
 

@@ -28,6 +28,7 @@ from flip_api.domain.interfaces.fl import (
     ISchedulerResponse,
 )
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
+from flip_api.domain.schemas.trusts import UpgradeReportState
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
@@ -1170,7 +1171,9 @@ def test_check_for_queued_jobs_leaves_a_job_queued_while_its_trust_is_being_upgr
     fake_session, scheduler_id, model_id
 ):
     """A trust that holds an upgrade lease gets no job: the job stays QUEUED and the net is released."""
-    trust = MagicMock(id=uuid4(), upgrade_lease_expires_at=datetime.utcnow() + timedelta(hours=1))
+    trust = MagicMock(
+        id=uuid4(), upgrade_lease_expires_at=datetime.utcnow() + timedelta(hours=1), last_upgrade_state=None
+    )
     job = MagicMock(id=uuid4(), model_id=model_id, trusts=[trust], status=JobStatus.QUEUED)
     fake_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=job)),
@@ -1189,8 +1192,62 @@ def test_check_for_queued_jobs_leaves_a_job_queued_while_its_trust_is_being_upgr
     validate.assert_not_called()
 
 
+def test_check_for_queued_jobs_leaves_a_job_queued_while_its_trust_has_an_uncleared_failed_upgrade(
+    fake_session, scheduler_id, model_id
+):
+    """A FAILED upgrade releases the lease but leaves the site half-upgraded: it gets no job until cleared."""
+    trust = MagicMock(id=uuid4(), upgrade_lease_expires_at=None, last_upgrade_state=UpgradeReportState.FAILED)
+    job = MagicMock(id=uuid4(), model_id=model_id, trusts=[trust], status=JobStatus.QUEUED)
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=job)),
+        MagicMock(all=MagicMock(return_value=[trust])),
+    ]
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids") as validate,
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as revert,
+    ):
+        result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    assert result is None
+    assert job.status == JobStatus.QUEUED
+    revert.assert_called_once_with(scheduler_id, fake_session)
+    validate.assert_not_called()
+
+
+@pytest.mark.parametrize("state", [None, UpgradeReportState.SUCCEEDED, UpgradeReportState.BLOCKED])
+def test_check_for_queued_jobs_assigns_a_trust_whose_last_upgrade_did_not_fail(
+    fake_session, scheduler_id, model_id, state
+):
+    trust = MagicMock(id=uuid4(), upgrade_lease_expires_at=None, last_upgrade_state=state)
+    job = MagicMock(id=uuid4(), model_id=model_id, trusts=[trust])
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=job)),
+        MagicMock(all=MagicMock(return_value=[trust])),
+    ]
+    fake_session.get.return_value = MagicMock()
+
+    with patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=True):
+        result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    assert isinstance(result, IJobResponse)
+
+
+def test_the_queued_job_query_excludes_trusts_with_a_failed_upgrade(fake_session, scheduler_id):
+    """The first query, not only the lock re-check, skips them, so the jobs behind still run."""
+    fake_session.exec.return_value.first.return_value = None
+    with patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup"):
+        fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    sql = str(fake_session.exec.call_args_list[0].args[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "last_upgrade_state = 'FAILED'" in sql
+    assert "upgrade_lease_expires_at >" in sql
+
+
 def test_check_for_queued_jobs_ignores_an_expired_lease(fake_session, scheduler_id, model_id):
-    trust = MagicMock(id=uuid4(), upgrade_lease_expires_at=datetime.utcnow() - timedelta(minutes=1))
+    trust = MagicMock(
+        id=uuid4(), upgrade_lease_expires_at=datetime.utcnow() - timedelta(minutes=1), last_upgrade_state=None
+    )
     job = MagicMock(id=uuid4(), model_id=model_id, trusts=[trust])
     fake_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=job)),
