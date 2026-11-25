@@ -59,3 +59,14 @@ def test_a_credential_with_nowhere_to_go_fails_the_upload(monkeypatch):
 
     assert failed.value.status_code == 500
     assert CREDENTIAL not in failed.value.detail
+
+
+def test_a_model_id_that_leaves_the_directory_is_refused(tmp_path, monkeypatch):
+    directory = tmp_path / "credentials"
+    monkeypatch.setenv("JOB_CREDENTIAL_DIR", str(directory))
+
+    with pytest.raises(HTTPException) as failed:
+        deliver_job_credential("../escaped", CREDENTIAL)
+
+    assert failed.value.status_code == 400
+    assert not (tmp_path / "escaped").exists()
