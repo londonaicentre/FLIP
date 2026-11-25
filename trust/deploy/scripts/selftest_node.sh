@@ -51,10 +51,6 @@ record() { # <name> <ok:true|false> <detail>
     printf '%s\t%s\t%s\n' "$1" "$2" "${3//$'\t'/ }" >> "${CHECKS_FILE}"
     if [ "$2" = true ]; then echo "  ✅ $1"; else echo "  ❌ $1: $3"; fi
 }
-skip() { # <name> <reason>: a pass that says why the check did not run
-    record "$1" true "skipped: $2" >/dev/null
-    echo "  ⏭️  $1: skipped, $2"
-}
 
 if [ "${BACKEND}" = nvflare ]; then
     DEV_KIT_DIR="${SELFTEST_DEV_KIT_DIR:-${REPO_ROOT}/fl-services/nvflare/provision/workspace-dev}"
@@ -71,9 +67,9 @@ echo "== Self-test (${BACKEND}) started ${STARTED}"
 # carry the development tooling.
 if [ "${SELFTEST_SKIP_PROVISION:-0}" = 1 ]; then
     if [ -d "${DEV_KIT_DIR}/net-1" ]; then
-        record "fl kit delivered" true "${DEV_KIT_DIR}"
+        record "fl kit on the node" true "${DEV_KIT_DIR}"
     else
-        record "fl kit delivered" false "no FL kit at ${DEV_KIT_DIR}"
+        record "fl kit on the node" false "no FL kit at ${DEV_KIT_DIR}"
         PREP_OK=false
     fi
 elif make -C "${REPO_ROOT}/fl-services/${BACKEND}" provision >/dev/null; then
@@ -137,144 +133,12 @@ else
     record "stack up" false "up-trust failed; see the output above"
 fi
 
-health() { # <name> <port>
-    local body
-    if body="$(curl -fsS --max-time 10 "http://127.0.0.1:$2/health" 2>&1)" && [[ "${body}" == *'"status":"ok"'* ]]; then
-        record "$1 health" true "200 from :$2/health"
-    else
-        record "$1 health" false "no healthy answer from :$2/health (${body:0:120})"
-    fi
-}
-health trust-api 8020
-health imaging-api 8001
-health data-access-api 8010
-
-marker() { # <name> <path>
-    if [ -s "$2" ] && grep -q '^version=' "$2"; then
-        record "$1 seeded" true "$2"
-    else
-        record "$1 seeded" false "missing or empty seed marker $2"
-    fi
-}
-NO_SAMPLE_DATA=""
-if [ "$(sed -n 's/^TRUST_DATA_SEED=//p' "${KIT_OUT}" 2>/dev/null | tail -1)" = false ]; then
-    NO_SAMPLE_DATA="TRUST_DATA_SEED=false, so the stack holds no sample data"
-    skip "omop seeded" "${NO_SAMPLE_DATA}"
-    skip "orthanc seeded" "${NO_SAMPLE_DATA}"
-else
-    marker omop "${DATA_ROOT}/omop/.seeded"
-    marker orthanc "${DATA_ROOT}/.orthanc-storage.seeded"
-fi
-
-code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1:8042/" 2>/dev/null || true)"
-if [ "${code}" = 401 ]; then
-    record "orthanc requires auth" true "401 without credentials"
-else
-    record "orthanc requires auth" false "expected 401 from :8042/, got ${code:-no answer}"
-fi
-
-# A real C-STORE from Orthanc to XNAT's receiver (the prod compose configures the XNAT
-# modality), because a C-ECHO would pass while every store aborts. Receipt is read from
-# received.log, which XNAT's SCP writes one line per object it accepts; dicom.log is scanned
-# for the importer failures the Helm chart's smoke-cstore looks for. dicom.log alone is no
-# evidence: XNAT writes it only when something goes wrong, so a working store leaves it empty.
-ORTHANC_AUTH="$(grep -E '^ORTHANC_USERNAME=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-):$(grep -E '^ORTHANC_PASSWORD=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-)"
-# curl against Orthanc with the credentials in a config read from stdin, never in argv, where
-# any process on the node could read them. Base64 needs no quoting (as check_status.py does).
-ORTHANC_TOKEN="$(printf '%s' "${ORTHANC_AUTH}" | base64 | tr -d '\n')"
-orthanc_curl() {
-    printf 'header = "Authorization: Basic %s"\n' "${ORTHANC_TOKEN}" | curl -fsS -K - "$@"
-}
-XNAT_CTR="$(docker ps --filter status=running --format '{{.Names}}' | grep -E 'xnat-web' | head -1)"
-RECEIVED_LOG=/data/xnat/home/logs/received.log
-DICOM_LOG=/data/xnat/home/logs/dicom.log
-# Only digits survive: the count comes from inside a container and is later used in shell
-# arithmetic, which would otherwise evaluate (and run) whatever the container printed.
-log_lines() {
-    local count
-    count="$(docker exec "${XNAT_CTR}" sh -c "wc -l < $1 2>/dev/null || echo 0" 2>/dev/null | tr -dc '0-9')"
-    echo "${count:-0}"
-}
-# Orthanc's own answer, not TRUST_DATA_SEED, decides whether there is an instance to send: a node whose Orthanc
-# holds studies all the same still proves its DICOM path end to end.
-instance="$(orthanc_curl "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
-if [ -z "${XNAT_CTR}" ]; then
-    record "xnat c-store" false "no running xnat-web container"
-elif [ -z "${instance}" ]; then
-    if [ -n "${NO_SAMPLE_DATA}" ]; then
-        skip "xnat c-store" "${NO_SAMPLE_DATA}, and Orthanc has no instance to send"
-    else
-        record "xnat c-store" false "Orthanc has no instance to send (did seeding run?)"
-    fi
-else
-    before="$(log_lines "${RECEIVED_LOG}")"
-    dicom_before="$(log_lines "${DICOM_LOG}")"
-    store="$(orthanc_curl -X POST "http://127.0.0.1:8042/modalities/XNAT/store" \
-        -d "{\"Resources\":[\"${instance}\"],\"Synchronous\":true}" 2>/dev/null || true)"
-    # XNAT records the receipt after the store has returned, so poll for it rather than read once
-    # (the Helm smoke sleeps a fixed SETTLE_SECONDS for the same reason).
-    after="$(log_lines "${RECEIVED_LOG}")"
-    for ((waited = 0; waited < ${SELFTEST_CSTORE_SETTLE_SECONDS:-30} && after <= before; waited++)); do
-        sleep 1
-        after="$(log_lines "${RECEIVED_LOG}")"
-    done
-    errors="$(docker exec "${XNAT_CTR}" sh -c "tail -n +$((dicom_before + 1)) ${DICOM_LOG} 2>/dev/null" 2>/dev/null |
-        grep -cE 'AbstractMethodError|NoSuchMethodError|unable to read DICOM object null' || true)"
-    if [[ "${store}" != *'"FailedInstancesCount" : 0'* && "${store}" != *'"FailedInstancesCount":0'* ]]; then
-        record "xnat c-store" false "Orthanc's store to XNAT did not succeed: ${store:0:160}"
-    elif [ "${errors:-0}" -gt 0 ]; then
-        record "xnat c-store" false "XNAT's importer logged ${errors} failure(s) in dicom.log"
-    elif [ "${after}" -le "${before}" ]; then
-        record "xnat c-store" false "XNAT never recorded the object: received.log stayed at ${before} lines"
-    else
-        record "xnat c-store" true "1 instance received (received.log ${before}->${after}); no importer error in dicom.log"
-    fi
-fi
-
-# A container on `restart: unless-stopped` is briefly "running" between crashes, so one look
-# proves nothing: sample twice, a settle period apart, and require it running, not
-# restarting, with an unchanged restart count.
-fl_state() { docker inspect -f '{{.State.Running}} {{.State.Restarting}} {{.RestartCount}}' "$1" 2>/dev/null; }
-FL_CTR="$(docker ps -a --format '{{.Names}}' | grep -E 'fl-client|supernode' | head -1)"
-if [ -z "${FL_CTR}" ]; then
-    record "fl client running" false "no fl-client or supernode container"
-else
-    first="$(fl_state "${FL_CTR}")"
-    sleep "${SELFTEST_FL_SETTLE_SECONDS:-45}"
-    second="$(fl_state "${FL_CTR}")"
-    if [[ "${first}" == "true false "* && "${second}" == "${first}" ]]; then
-        record "fl client running" true "${FL_CTR} steady (no FL server is reachable by design; it retries)"
-    else
-        tail_log="$(docker logs --tail 5 "${FL_CTR}" 2>&1 | tr '\n' ' ' | cut -c1-240)"
-        record "fl client running" false "${FL_CTR} not steady (${first} -> ${second}); last log: ${tail_log}"
-    fi
-fi
-
-FINISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-python3 - "${CHECKS_FILE}" "${OUT}" "${BACKEND}" "${STARTED}" "${FINISHED}" "${STAMP}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-checks_file, out, backend, started, finished, stamp = sys.argv[1:]
-checks = []
-for line in Path(checks_file).read_text().splitlines():
-    name, ok, detail = (line.split("\t", 2) + [""])[:3]
-    checks.append({"name": name, "ok": ok == "true", "detail": detail})
-report = {
-    "backend": backend,
-    "started": started,
-    "finished": finished,
-    "ok": bool(checks) and all(c["ok"] for c in checks),
-    "checks": checks,
-}
-base = Path(out) / f"selftest-{backend}-{stamp}"
-base.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")
-rows = "\n".join(f"| {'✅' if c['ok'] else '❌'} | {c['name']} | {c['detail']} |" for c in checks)
-status = "PASSED" if report["ok"] else "FAILED"
-md = f"# Node self-test: {backend}\n\n{status} · {started} → {finished}\n\n| | Check | Detail |\n|---|---|---|\n{rows}\n"
-base.with_suffix(".md").write_text(md)
-(Path(out) / f"latest-{backend}.md").write_text(md)
-print(f"Report: {base}.md")
-sys.exit(0 if report["ok"] else 1)
-PY
+# The checks themselves are check_node.py's, the ones every trust shape runs (node_checks.py). It
+# heads its report with the rows recorded above, and its exit code is this script's.
+PREFIX="${FLIP_INSTANCE:+${FLIP_INSTANCE}-}"
+CHECK_NODE=("${SELFTEST_CHECK_NODE:-python3}")
+[ -n "${SELFTEST_CHECK_NODE:-}" ] || CHECK_NODE+=("${REPO_ROOT}/trust/deploy/scripts/check_node.py")
+"${CHECK_NODE[@]}" --project "${PREFIX}trust1" --xnat-stack "${PREFIX}xnat1" --backend "${BACKEND}" \
+    --kit-file "${KIT_OUT}" --out "${OUT}" --earlier-rows "${CHECKS_FILE}" \
+    --stem "selftest-${BACKEND}-${STAMP}" --latest "latest-${BACKEND}" --title "Node self-test: ${BACKEND}" \
+    --fl-settle-seconds "${SELFTEST_FL_SETTLE_SECONDS:-45}"

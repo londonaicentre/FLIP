@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node check-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
@@ -546,6 +546,16 @@ build:
 
 # The root on-prem verbs delegate here so readiness checks exactly the kit that
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
+# The checks every trust shape runs, against this kit's RUNNING stack (FLIP#1449): services up, the
+# three APIs healthy, OMOP and Orthanc hold data, Orthanc refuses anonymous requests, a C-STORE
+# reaches XNAT and converts, the FL client stays up. It starts nothing. On a kit with
+# TRUST_DATA_SEED=false the node holds the site's own data, so no study is sent. Report under CHECKS_OUT.
+check-node:
+	@python3 deploy/scripts/check_node.py --site --project $(TRUST_PROJECT) \
+	  --xnat-stack $(INSTANCE_PREFIX)xnat$(TRUST_NUM) --backend $(FL_BACKEND) --title 'Trust node check: $(KIT)' \
+	  --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' \
+	  --out '$(subst ','"'"',$(CHECKS_OUT))'
+
 # It also writes the checklist as a report (JSON + markdown) under CHECKS_OUT, as the self-tests do.
 CHECKS_OUT ?= $(abspath $(CURDIR)/../build/checks)
 onboard-onprem-trust:

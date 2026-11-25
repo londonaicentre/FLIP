@@ -16,8 +16,8 @@ through `docker` instead of `kubectl`, and the same report. It reads the stack t
 starts nothing. `selftest_node.sh` runs it against its throwaway stack; `up-onprem-trust` and
 `upgrade-onprem-trust` run it against the site's own.
 
-On a site that holds its own data (TRUST_DATA_SEED=false) no study is sent: the C-STORE and the
-conversion are skipped, and say so.
+With --site, on a kit that loads no sample data (TRUST_DATA_SEED=false), no study is sent: the node
+holds the site's own data, so the C-STORE and the conversion are skipped, and say so.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ import node_checks  # noqa: E402
 import trust_checks  # noqa: E402
 import trust_kit_lib  # noqa: E402
 from node_checks import CURL_AUTH, ORTHANC_CURL, ORTHANC_URL  # noqa: E402
-from trust_checks import Check, Status, failed, passed  # noqa: E402
+from trust_checks import Check, failed, passed  # noqa: E402
 
 RECEIVED_LOG = "/data/xnat/home/logs/received.log"
 DICOM_LOG = "/data/xnat/home/logs/dicom.log"
@@ -222,9 +222,7 @@ def earlier_rows(path: Path | None) -> list[Check]:
     rows = []
     for line in path.read_text().splitlines() if path else []:
         name, ok, detail = (line.split("\t", 2) + ["", ""])[:3]
-        skipped = detail.startswith("skipped: ")
-        status = Status.SKIPPED if skipped else Status.PASS if ok == "true" else Status.FAIL
-        rows.append(Check(name, status, detail.removeprefix("skipped: ")))
+        rows.append(trust_checks.verdict(name, ok == "true", detail))
     return rows
 
 
@@ -238,6 +236,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stem", help="report file name without its extension (default node-<project>-<stamp>)")
     parser.add_argument("--latest", help="name of the copy that is overwritten each run (default latest-<project>)")
     parser.add_argument("--title", default="Trust node check")
+    parser.add_argument(
+        "--site",
+        action="store_true",
+        help="this is the site's own stack: send no study unless the kit loads the sample data",
+    )
     parser.add_argument("--earlier-rows", type=Path, help="rows recorded before these checks, to head the report")
     parser.add_argument("--fl-settle-seconds", type=int, default=45)
     parser.add_argument("--conversion-timeout", type=int, default=600)
@@ -258,7 +261,9 @@ def main(argv: list[str] | None = None) -> int:
         smoke=lambda: cstore(node),
         no_omop=no_data,
         no_orthanc=no_data,
-        no_study="" if seeded else "TRUST_DATA_SEED=false: the node holds the site's own data, so no study is sent",
+        no_study="TRUST_DATA_SEED=false: the node holds the site's own data, so no study is sent"
+        if args.site and not seeded
+        else "",
         conversion_timeout=args.conversion_timeout,
         fl_settle_seconds=args.fl_settle_seconds,
     )

@@ -818,6 +818,12 @@ def _checks(values, smoke=_no_smoke, **cluster):
     return {c.name: c for c in selftest.run_checks(FakeCluster(**cluster), values, smoke, 0, 0)}
 
 
+def test_the_release_reports_the_rows_every_platform_reports():
+    """The contract that keeps the platforms from drifting (FLIP#1449); Compose's half is in test_check_node.py."""
+    checks = _checks(_values(), smoke=lambda: (0, "ok", ""))
+    assert list(checks) == list(selftest.node_checks.ROWS)
+
+
 def test_a_release_without_sample_data_skips_what_needs_it_and_says_why():
     # Empty stores: each of these would fail if it ran.
     checks = _checks(_values(enabled=False), person_count="0", orthanc_statistics='{"CountInstances": 0}')
