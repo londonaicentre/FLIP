@@ -160,8 +160,8 @@ Where all outbound traffic goes through a proxy, as in most trusted research env
 
   Merge the ``proxies`` key into the file if it exists; containers created before the change keep their old
   environment until they are recreated. The proxy must also allow the FL server's port (the kit's
-  ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``), not only 443. The NVIDIA FLARE client does not use the proxy, so a
-  FLARE trust needs a firewall rule to that port instead.
+  ``FL_EDGE_PORT_OVERRIDE``, else ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``) where it is not 443. The NVIDIA FLARE
+  client does not use the proxy, so a FLARE trust needs a firewall rule to that port instead.
 - **Your shell** may export ``http_proxy`` too. Then ``curl http://127.0.0.1:<port>`` goes to the proxy, and a
   published port seems not to answer. Use ``curl --noproxy '*' …``, or export ``NO_PROXY=localhost,127.0.0.1``
   (and ``no_proxy``). The readiness checklist's loopback probe of trust-api bypasses the proxy; its hub and
@@ -366,12 +366,15 @@ Every trust container is named ``trust<N>-<service>-1``, where ``<N>`` is ``FL_K
    * - Trust not polling the hub
      - Is the stack running (``docker ps``)? Look for polling errors in ``docker logs trust<N>-trust-api-1``.
    * - ``Connection timed out`` (FL)
-     - Is a host or network firewall blocking outbound traffic on the FL port (the kit's ``FL_EDGE_PORT``, else
-       ``FL_SERVER_PORT``; 8002 for production, 8003 for staging)?
+     - Is a host or network firewall blocking outbound traffic on the FL port (the kit's ``FL_EDGE_PORT_OVERRIDE``,
+       else ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``; 443 for production, 8003 for staging)? Has the FLIP team
+       admitted the node's public address?
    * - Connection reset after the TLS hello (FL)
      - An application-aware firewall rejecting TLS on a non-default port, not a closed port. Confirm with the
-       ``openssl`` check on :ref:`deploy-trust-node-network`; the network team must allow the ``ssl`` application on
-       the FL port, or the site needs a VPN (:ref:`site-to-site-vpn`).
+       ``openssl`` check on :ref:`deploy-trust-node-network`. Dial 443, the production default: the kit's hub-shared
+       block must carry ``FL_EDGE_PORT=443`` (ask the FLIP team to refresh an older kit) and no
+       ``FL_EDGE_PORT_OVERRIDE``. A trust that must dial another port needs the network team to allow the ``ssl``
+       application on it.
    * - Ansible ``Permission denied``
      - Does the user have ``sudo``? Is ``ANSIBLE_BECOME_PASS`` exported in the same shell (see `Provision the host with
        Ansible`_)? If the playbook targets a remote host, is the SSH key correct?

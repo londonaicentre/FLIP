@@ -242,6 +242,14 @@ def test_the_flower_client_command_is_unchanged_by_this():
     assert "fl-client-init" not in [c["name"] for c in _pod(rendered)["initContainers"]]
 
 
+def test_the_server_port_reaches_the_init_step_only_when_set():
+    # fl-client-init writes it into the kit's fed_client.json (FLIP#2051); unset keeps the kit's port.
+    env = {e["name"]: e.get("value") for e in _init(_render("--set", "flClient.nvflare.serverPort=443"))["env"]}
+    assert env["FL_EDGE_PORT"] == "443"
+    assert "FL_EDGE_PORT" not in {e["name"] for e in _init(_render())["env"]}
+    assert "flip.nvflare.server_port" in INIT_SCRIPT.read_text()
+
+
 def test_the_pods_gpu_count_reaches_the_client():
     rendered = _render("--set", "flClient.gpu.enabled=true", "--set", "flClient.gpu.count=1")
 
