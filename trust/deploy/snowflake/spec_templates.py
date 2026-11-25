@@ -543,10 +543,10 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
         ]
     flare_workspace: list[dict[str, str]] = []
     if backend != "flower":
-        # The FLARE client runs from /app/startup (it chmods the scripts there) and renders
-        # privacy.json and its log config into /app/local, so both must be writable. A stage
-        # volume cannot be mounted writable here (the kit stays read-only), so the client gets
-        # local volumes and the kit is copied in before the image's own entrypoint runs.
+        # Copies the kit from its read-only stage volume into local volumes at /app/<part>, then
+        # runs the image's entrypoint. Nothing here renders local/resources.json, log_config.json
+        # or privacy.json (fl-client-init does on Compose and Helm), and the entrypoint refuses to
+        # start without them.
         flare_workspace = [{"name": f"fl-{part}", "source": "local"} for part in FLARE_WORKSPACE]
         container["volumeMounts"] += [{"name": f"fl-{part}", "mountPath": f"/app/{part}"} for part in FLARE_WORKSPACE]
         copies = " && ".join(
@@ -612,7 +612,9 @@ def refuse_site_privacy(kit: dict[str, str]) -> None:
                 f"ACCESS_POLICY_FILE={ref!r} cannot be read ({e}), so it cannot be checked for a site privacy filter"
             ) from None
         # An empty [fl_privacy.nvflare] is no policy, as flip.nvflare.site_policy reads it.
-        if any(section.values()) if isinstance(section, dict) else section:
+        if isinstance(section, dict):
+            section = any(section.values())
+        if section:
             asked = f"[fl_privacy] in {ref}"
     if asked:
         raise ValueError(

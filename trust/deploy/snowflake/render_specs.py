@@ -67,9 +67,8 @@ def load_digests(directory: Path, code: str, env: str, kit: dict[str, str]) -> d
     """Image digests ``make mirror-images`` recorded for this trust at the kit's tags.
 
     There is one lock per checkout, so it is used only when it was written for this trust
-    and environment, and an image mirrored at another tag than the kit now asks for is
-    dropped: its digest is the previous release's. Either way the image is referenced by
-    tag, as it is with no lock at all.
+    and environment. An image mirrored at another tag than the kit now asks for is refused:
+    that tag is not in the account repository, so its service could not pull it.
     """
     lock = directory / IMAGE_LOCK
     if not lock.exists():
@@ -85,21 +84,25 @@ def load_digests(directory: Path, code: str, env: str, kit: dict[str, str]) -> d
     # A kit that switched FL backend keeps the old client's entry in the lock for good.
     other_clients = set(FL_CLIENT_IMAGES.values()) - {fl_client_image(kit)}
     digests: dict[str, str] = {}
+    stale: list[str] = []
     for repo, entry in data.get("images", {}).items():
         if repo in other_clients:
             continue
-        mirrored, asked = entry.get("tag"), source_tag(kit, repo)
-        if mirrored == asked:
+        asked = source_tag(kit, repo)
+        if entry.get("tag") == asked:
             digests[repo] = entry.get("digest", "")
         else:
-            print(f"   ⚠  {repo} was mirrored at {mirrored}, the kit asks for {asked}:")
-            print("      referenced by TAG. Run `make mirror-images`.")
+            stale.append(f"{repo}:{asked}")
+    if stale:
+        sys.exit(f"❌ Not mirrored at the kit's tag: {', '.join(stale)}. Run `make mirror-images` first.")
     return digests
 
 
 def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dict[str, str]) -> dict[str, Any]:
     """Write every service specification and the manifest. Returns the manifest."""
     names = Names(code)
+    # Built before anything is cleared, so a refused kit leaves the previous specs in place.
+    rendered = build_all(kit, code, digests)
     out_dir.mkdir(parents=True, exist_ok=True)
     # A stale spec from a previous render (an FL net removed from the kit, say) would
     # otherwise still be deployed by `up`, which walks the manifest - and still sit in
@@ -108,7 +111,7 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
         stale.unlink()
 
     services: list[dict[str, Any]] = []
-    for item in build_all(kit, code, digests):
+    for item in rendered:
         path = out_dir / f"{item.name}.yaml"
         body = HEADER.format(service=item.name, code=names.code, env=env) + yaml_min.dump(item.spec)
         path.write_text(body)
@@ -176,9 +179,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # The kit is the one place that holds the switch: an ignored HUB_EGRESS=true would
-    # render a hubless trust. The Makefile refuses the make line; this also catches an
-    # exported one, and the script run on its own.
+    # The kit is the one place that holds the switch: a value given for one run is gone on
+    # the next, whose `up` then detaches the trust. Make exports a make-line value too.
     if "HUB_EGRESS" in os.environ:
         sys.exit(
             "❌ HUB_EGRESS is set on the make line or in the environment. It is read from the kit file\n"

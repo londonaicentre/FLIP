@@ -560,7 +560,7 @@ def test_orthanc_knows_xnat_as_a_modality(specs: dict) -> None:
 # --- found on the live account (review of #1600, #1710, #1756) ------------------------------------
 
 import spec_templates  # noqa: E402
-from render_specs import load_digests  # noqa: E402
+from render_specs import load_digests, render  # noqa: E402
 
 
 def test_a_written_stage_volume_is_owned_by_the_user_its_container_runs_as(specs: dict, manifest: dict) -> None:
@@ -698,16 +698,25 @@ def test_another_trusts_image_lock_is_not_used(kit: dict, tmp_path: Path, code: 
     assert load_digests(_lock(tmp_path, code, env, **{"trust-api": "v1.2.3"}), "GSTT", "stag", kit) == {}
 
 
-def test_a_digest_mirrored_at_another_tag_is_dropped(kit: dict, tmp_path: Path) -> None:
-    """DOCKER_TAG edited, no `make mirror-images`: the specs kept the old release's digests and
-    every ALTER SERVICE succeeded on the old images."""
+def test_an_image_mirrored_at_another_tag_is_refused(kit: dict, tmp_path: Path) -> None:
+    """DOCKER_TAG edited, no `make mirror-images`: the new tag is not in the account repository,
+    and `up` exited 0 on services that could not pull their image."""
     lock = _lock(tmp_path, **{"trust-api": "v1.2.2", "orthanc": "v1.2.3", "flare-fl-client": "v1.2.3"})
-    assert load_digests(lock, "GSTT", "stag", kit) == {
-        "orthanc": "sha256:orthanc",
-        "flare-fl-client": "sha256:flare-fl-client",
-    }
-    moved = {**kit, "DOCKER_FL_TAG": "v1.3.0", "ORTHANC_TAG": "v1.0.0"}
-    assert load_digests(lock, "GSTT", "stag", moved) == {}
+    with pytest.raises(SystemExit, match=r"trust-api:v1\.2\.3\. Run `make mirror-images`"):
+        load_digests(lock, "GSTT", "stag", kit)
+    moved = {**kit, "DOCKER_TAG": "v1.2.2", "DOCKER_FL_TAG": "v1.3.0", "ORTHANC_TAG": "v1.0.0"}
+    with pytest.raises(SystemExit, match=r"orthanc:v1\.0\.0, flare-fl-client:v1\.3\.0\."):
+        load_digests(lock, "GSTT", "stag", moved)
+
+
+def test_a_refused_render_keeps_the_previous_specs(kit: dict, tmp_path: Path) -> None:
+    """`up` deploys what the directory holds: a refusal must not leave it empty or half-written."""
+    out = tmp_path / "rendered"
+    render(kit, "GSTT", "stag", out, digests={})
+    before = {path.name: path.read_text() for path in out.iterdir()}
+    with pytest.raises(ValueError, match="FL_SITE_PRIVACY_POLICY"):
+        render({**kit, "FL_SITE_PRIVACY_POLICY": "percentile"}, "GSTT", "stag", out, digests={})
+    assert {path.name: path.read_text() for path in out.iterdir()} == before
 
 
 def test_a_misspelt_site_privacy_name_is_refused(kit: dict) -> None:

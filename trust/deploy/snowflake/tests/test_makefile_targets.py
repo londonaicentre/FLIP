@@ -68,30 +68,20 @@ def _without_hub_egress() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key != "HUB_EGRESS"}
 
 
-@pytest.mark.parametrize("target", [*RENDERING, "status"])
-def test_hub_egress_on_the_make_line_is_refused(target: str) -> None:
-    """The kit holds it: a value given for one run is gone on the next, which detaches the trust."""
-    result = subprocess.run(
-        ["make", "-n", "-C", str(SNOWFLAKE_DIR), target, "KIT=GSTT", "SNOW_CONNECTION=x", "HUB_EGRESS=true"],
-        capture_output=True,
-        text=True,
-        env=_without_hub_egress(),
-    )
-    assert result.returncode != 0
-    assert "HUB_EGRESS" in result.stderr
-    assert "kit" in result.stderr
-
-
+@pytest.mark.parametrize("on_make_line", [True, False])
 @pytest.mark.parametrize("target", RENDERING)
-def test_an_exported_hub_egress_is_refused_by_every_target_that_renders(target: str) -> None:
-    """Left to render_specs.py, which sees the environment: it stops before a kit is read, and the
-    target's own recipe (the SQL) never runs. `snow` is `false` so nothing could reach an account."""
+def test_a_per_run_hub_egress_is_refused_by_every_target_that_renders(target: str, on_make_line: bool) -> None:
+    """The kit holds it: a value given for one run is gone on the next, which detaches the trust.
+    render_specs.py sees it in the environment (make exports a make-line value) and stops before a
+    kit is read, so the target's own recipe (the SQL) never runs. `snow` is `false` so nothing
+    could reach an account."""
     assert f"\n{target}: require-kit require-connection render\n" in f"\n{MAKEFILE}" or target == "render"
     result = subprocess.run(
-        ["make", "-C", str(SNOWFLAKE_DIR), target, "KIT=GSTT", "SNOW_CONNECTION=x", "SNOW=false"],
+        ["make", "-C", str(SNOWFLAKE_DIR), target, "KIT=GSTT", "SNOW_CONNECTION=x", "SNOW=false"]
+        + (["HUB_EGRESS=true"] if on_make_line else []),
         capture_output=True,
         text=True,
-        env={**_without_hub_egress(), "HUB_EGRESS": "true"},
+        env=_without_hub_egress() if on_make_line else {**_without_hub_egress(), "HUB_EGRESS": "true"},
     )
     assert result.returncode != 0
     assert "HUB_EGRESS" in result.stderr

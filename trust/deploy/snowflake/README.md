@@ -161,9 +161,9 @@ that digest: a tag in the account repository can be re-pushed, a digest cannot. 
 amd64 only, so the explicit platform matters on an arm64 workstation, where a tag pull
 gets arm64 silently and the service fails to start with an exec-format error.
 `images.lock.json` is one file per checkout, so the renderer uses it only for the trust and
-environment it was written for, and drops an image mirrored at another tag than the kit now
-asks for (a `DOCKER_TAG` edited without a new `mirror-images`). Such an image is referenced
-by tag, with a line saying to run `make mirror-images`.
+environment it was written for, and refuses to render when an image in it was mirrored at
+another tag than the kit now asks for (a `DOCKER_TAG` edited without a new `mirror-images`):
+that tag is not in the account repository, so its service could not pull it.
 
 **No FL site privacy filter yet.** On Compose and Helm an init step renders the FLARE
 client's `privacy.json` from the kit's `FL_SITE_PRIVACY_*` or the governance document's
