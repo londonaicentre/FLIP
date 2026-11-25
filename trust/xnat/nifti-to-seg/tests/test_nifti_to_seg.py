@@ -165,6 +165,28 @@ def test_codes_modifier_and_colour_come_from_labels_json(scan) -> None:
     assert iliopsoas.SegmentedPropertyCategoryCodeSequence[0].CodeValue == "123037004"  # the default category
 
 
+def test_more_segments_than_a_byte_counts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(sys.modules[__name__], "ROWS", 20)  # 400 voxels, room for 300 labels
+    dicom_dir = tmp_path / "dicom"
+    dicom_dir.mkdir()
+    _write_series(dicom_dir, next(iter(ORIENTATIONS.values())))
+    reader = sitk.ImageSeriesReader()
+    reader.SetFileNames(reader.GetGDCMSeriesFileNames(str(dicom_dir)))
+    reference = reader.Execute()
+    values = np.zeros(sitk.GetArrayFromImage(reference).shape, dtype=np.uint16)
+    values.flat[:300] = np.arange(1, 301)  # one voxel each for labels 1 to 300
+    mask = sitk.GetImageFromArray(values)
+    mask.CopyInformation(reference)
+    sitk.WriteImage(mask, str(tmp_path / "mask.nii.gz"))
+    labels = {str(v): {"name": f"structure_{v}"} for v in range(1, 301)}
+
+    seg = nifti_to_seg.nifti_to_seg(tmp_path / "mask.nii.gz", dicom_dir, labels, "NIFTI_SEG test")
+
+    assert [s.SegmentNumber for s in seg.SegmentSequence] == list(range(1, 301))
+    assert seg.SegmentSequence[-1].SegmentLabel == "structure_300"
+    assert seg.NumberOfFrames == 300  # every label kept its own voxel
+
+
 def test_no_seg_when_no_labelled_voxel_is_listed(scan) -> None:
     dicom_dir, mask, _ = scan
     assert nifti_to_seg.nifti_to_seg(mask, dicom_dir, {"7": {"name": "spleen"}}, "NIFTI_SEG test") is None
@@ -284,11 +306,16 @@ class _Answer:
             raise requests.HTTPError(response=self)
 
 
-@pytest.mark.parametrize(("exists", "raises"), [("true", False), ("false", True)])
-def test_a_lost_race_is_fine_only_when_the_collection_exists(monkeypatch, exists, raises) -> None:
+@pytest.mark.parametrize(
+    ("before", "after", "raises"),
+    [("false", "true", False), ("false", "false", True), ("true", "true", True)],
+    ids=["lost race", "nothing stored", "old collection still there"],
+)
+def test_a_failed_upload_is_fine_only_when_a_concurrent_run_stored_it(monkeypatch, before, after, raises) -> None:
     xnat = nifti_to_seg.Xnat("http://xnat", "u", "p")
+    answers = iter([before, after])
     monkeypatch.setattr(xnat.session, "request", lambda *args, **kwargs: _Answer(500))
-    monkeypatch.setattr(xnat.session, "get", lambda *args, **kwargs: _Answer(200, exists))
+    monkeypatch.setattr(xnat.session, "get", lambda *args, **kwargs: _Answer(200, next(answers)))
     if raises:
         with pytest.raises(requests.HTTPError):
             xnat.store_roi_collection("P", "E", "E_NIFTI_SEG_1", b"seg")

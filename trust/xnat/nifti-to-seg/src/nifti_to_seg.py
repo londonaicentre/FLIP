@@ -106,12 +106,19 @@ class Xnat:
             if not name.endswith("/"):
                 (target / Path(name).name).write_bytes(archive.read(name))
 
+    def _collection_exists(self, project: str, label: str) -> bool:
+        exists = self.session.get(f"{self.host}/xapi/roi/projects/{project}/exists/{label}", timeout=60)
+        return exists.ok and exists.text.strip() == "true"
+
     def store_roi_collection(self, project: str, experiment: str, label: str, seg: bytes) -> None:
         """Store the SEG through the OHIF viewer plugin's ROI API, which registers it as an assessor on the session.
 
         Two runs for one resource (a job adding more than two files to it) can race to the same collection, and
         XNAT fails the loser. The collection is then in place, written from the same files, so that is not an error.
+        Only a collection that was not there before the upload can be a lost race: when this run is replacing
+        one, a failed upload leaves the old SEG in place, and that is an error.
         """
+        existed = self._collection_exists(project, label)
         try:
             self._request(
                 "PUT",
@@ -121,8 +128,7 @@ class Xnat:
                 headers={"Content-Type": "application/octet-stream"},
             )
         except requests.HTTPError as error:
-            exists = self.session.get(f"{self.host}/xapi/roi/projects/{project}/exists/{label}", timeout=60)
-            if not (exists.ok and exists.text.strip() == "true"):
+            if existed or not self._collection_exists(project, label):
                 raise
             print(f"Collection {label} was stored by a concurrent run ({error.response.status_code}).")
 
@@ -176,7 +182,8 @@ def nifti_to_seg(mask_path: Path, dicom_dir: Path, labels: dict[str, dict], desc
     present = [int(v) for v in np.unique(values) if v and str(int(v)) in labels]
     if not present:
         return None
-    segments = np.zeros(values.shape, dtype=np.uint8)
+    # uint16: labels.json may name up to MAX_LABELS segments, more than a byte counts.
+    segments = np.zeros(values.shape, dtype=np.uint16)
     for number, value in enumerate(present, start=1):
         segments[values == value] = number
 

@@ -143,11 +143,12 @@ In the simulator the masks go to `DEV_MASKS_DIR`, and the two simulated sites ea
 
 ## Output metrics
 
-Each trust returns three counts, collected into `evaluation_results.json` and shown on the model page per trust:
+Each trust returns four counts, collected into `evaluation_results.json` and shown on the model page per trust:
 
 - `studies_predicted`: scans for which a mask was predicted
 - `studies_failed`: scans the model could not process
 - `masks_saved`: masks that were stored
+- `masks_empty`: scans holding none of the structures asked for, so nothing was stored
 
 A scan that fails is counted and logged at the trust, and the other scans still run. No per-scan information is
 returned.
@@ -168,7 +169,8 @@ What a failed run looks like:
 - **`No module named 'totalsegmentator'` at a trust**: the trust's FL client image is older than this job type.
 - **A download error from `github.com` at a trust, or a read-only file system error**: the app asked for weights the
   image does not hold. Check that `task` is `total` and that `fast` is not set.
-- **`masks_saved` is 0 with `studies_predicted` above 0**: the masks of an earlier run are still in the resource.
+- **`masks_saved` is 0 with `studies_predicted` above 0**: the masks of an earlier run are still in the resource,
+  unless `masks_empty` accounts for them.
 
 ## Key files
 
