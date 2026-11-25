@@ -202,8 +202,7 @@ if [ ${#skipped[@]} -gt 0 ]; then
 fi
 
 # Register node_id → trust_name mappings with FL API. They live only in its memory and only this
-# one-shot writes them, so one it did not take fails the run: exit 0 left the trust shown as
-# disconnected with its SuperNode online (FLIP#2047).
+# one-shot writes them, so one it did not take fails the run.
 if [ -n "$fl_api_address" ] && [ ${#trust_names[@]} -gt 0 ]; then
     echo ""
     echo "Registering node → trust name mappings with FL API at ${fl_api_address}..."

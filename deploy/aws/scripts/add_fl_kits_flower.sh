@@ -321,11 +321,9 @@ done
 # An explicit exit, not die(): nothing is half-uploaded, so the abort report does not apply.
 if [[ "${TASK_EXIT_CODE}" == "3" || "${register_log}" == *"ERROR: FL API at "* ]]; then
     echo "" >&2
-    echo "❌ ${MINT_NAMES[*]} is registered with the SuperLink and claimable, but the fl-api did not take" >&2
-    echo "   the node → trust name mappings (task ${TASK_ID}, log in ${REGISTER_LOG_GROUP}), so trusts" >&2
-    echo "   show as disconnected until it does. No public key is left to delete and no slot to mint" >&2
-    echo "   again. Check the fl-api is running with the FL_API_KEY the task holds, then run the" >&2
-    echo "   registration alone: terraform taint 'null_resource.flower_register_supernode_keys[0]' and apply." >&2
+    echo "❌ Minted ${MINT_NAMES[*]} (claimable), but the fl-api did not take every node → trust name mapping," >&2
+    echo "   so trusts show as disconnected (task ${TASK_ID}, log in ${REGISTER_LOG_GROUP}). Check the fl-api runs with" >&2
+    echo "   the task's FL_API_KEY, then: terraform taint 'null_resource.flower_register_supernode_keys[0]' and apply." >&2
     exit 1
 fi
 

@@ -64,7 +64,8 @@ def test_the_secure_harness_refuses_to_start_without_the_fl_api_key() -> None:
     """Its SuperNodes wait on the key-registration one-shot, which an FL API with no key answers 401."""
     result = subprocess.run(
         ["make", "-C", str(REPO_ROOT / "fl-services" / "flower"), "-o", "_ensure-dev-dirs", "up-secure"]
-        + [NO_ENV_FILE, "FL_API_KEY="],
+        # SECURE_COMPOSE=false: a regressed guard fails here instead of starting a stack.
+        + [NO_ENV_FILE, "FL_API_KEY=", "SECURE_COMPOSE=false"],
         env=ENV,
         capture_output=True,
         text=True,
