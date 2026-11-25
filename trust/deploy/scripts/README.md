@@ -32,6 +32,11 @@ a re-run.
   `TRUST_REGION`). Refuses to overwrite an existing kit. The root `new-trust` target also refuses when that trust still has a kit under its old, pre-FLIP#1479 file name. The result is ready for
   registration to fill in credentials (`make -C deploy/aws register-trusts KIT=<CODE>
   HUB=<hub>` on a deployed hub, `make register-trust KIT=<CODE>` in development).
+- **`trust_endpoints.py`** — reader of [`../endpoints.toml`](../endpoints.toml), the one list of
+  what a trust node connects out to: host, port, when it is needed and on which platform. The
+  onboarding checklist probes the registry hosts from it, and `tests/test_trust_endpoints.py`
+  fails when the network tables in `docs/source/deploy-flip/` name a host the file does not, or
+  the other way round. Add a destination to the file and the docs together.
 - **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
   `sync_trust_kit.py`, and the AWS registration path. Merges a kit dict into a kit file while
   preserving operator edits: credentials (`TRUST_API_KEY` / `TRUST_INTERNAL_SERVICE_KEY`) are
