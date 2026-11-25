@@ -10,10 +10,11 @@
 # limitations under the License.
 
 # Everything a trust node connects out to (FLIP#2076). The one list: the onboarding checklist
-# probes from it, and trust/deploy/scripts/tests/test_trust_endpoints.py holds the tables in
+# probes its registry hosts from it, and trust/deploy/scripts/tests/test_trust_endpoints.py holds the tables in
 # docs/source/deploy-flip/ to it. Read with trust/deploy/scripts/trust_endpoints.py.
 #
-#   hosts           literal host names; "*.x" is a wildcard a firewall rule must cover
+#   hosts           literal host names; "*.x" is a wildcard a firewall rule must cover. An empty list
+#                   is a destination that is not a host list (a cloud's own rule set): `why` describes it
 #   host_from_kit   the kit variable that names the host, for the two hub endpoints
 #   port            a number, or port_from_kit for the FL port
 #   when            always | first-install | provisioning

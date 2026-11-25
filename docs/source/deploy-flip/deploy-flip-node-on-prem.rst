@@ -321,18 +321,24 @@ and the FL endpoint reachable from this host (the image registries too, as a war
 ``FL_KIT_DIR`` and the FL kit contents, and GPU capacity. Fix every ❌ row; ``up-onprem-trust`` runs the same checks
 and will not start until they pass.
 
-Once the stack is up, ``up-onprem-trust`` checks it: every service is running, the three APIs answer, OMOP and
-Orthanc hold data, Orthanc refuses a request without credentials, a study sent from Orthanc reaches XNAT and is
-converted, the FL client stays up, and trust-api's heartbeat has reached the hub. It writes the result as a report
-under ``build/checks/``. The check never changes the outcome of the install: a service that is still starting shows
+Once the stack is up, ``up-onprem-trust`` checks it: every service is running, the FL client sees its kit, the three
+APIs answer, OMOP and Orthanc hold data, Orthanc refuses a request without credentials, a study sent from Orthanc
+reaches XNAT and is converted, the FL client stays up, trust-api's heartbeat has reached the hub, and the hub API and
+FL server answer from the containers that use them. It also tries two hosts no trust needs (``example.com``,
+``www.wikipedia.org``) from inside the stack: one that answers is a ⚠️ row naming it, for your network and governance
+teams, and never fails the check. Last, it compares the running containers with what the compose files and your kit
+describe now, and names any service that differs: run it from the checkout the stack was started from. XNAT's own
+stack is not part of that comparison. It writes the result as a report under ``build/checks/``. The check never changes the outcome of the install: a service that is still starting shows
 as a ❌ row, and you run the check again when it has settled:
 
 .. code-block:: shell
 
    make check-onprem-trust KIT=<CODE>
 
-It starts and changes nothing. On a kit with ``TRUST_DATA_SEED=false`` the node holds your own data, so no study is
-sent and those two rows are skipped.
+It starts no service. With the sample data loaded it sends one sample study from Orthanc to XNAT, where it stays in
+the prearchive, and converts one in a throwaway XNAT project that it deletes. On a kit with
+``TRUST_DATA_SEED=false`` the node holds your own data: no study is sent, and the rows that need sample data are
+skipped, saying why.
 
 Then continue at step 6 of :doc:`onboarding-a-trust`.
 

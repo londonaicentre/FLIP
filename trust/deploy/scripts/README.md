@@ -119,9 +119,10 @@ a re-run.
   each side.
 - **`check_node.py`** (`make -C trust check-node KIT=<CODE>`, or `make check-onprem-trust
   KIT=<CODE>` from the repo root) — the Compose answer to that interface, through `docker`. It
-  checks the stack that is running and starts nothing; `up-onprem-trust` and
-  `upgrade-onprem-trust` end with it, and its result never changes theirs. On a kit with
-  `TRUST_DATA_SEED=false` it sends no study. The Kubernetes answer is
+  checks the stack that is running and starts no service; `up-onprem-trust` and
+  `upgrade-onprem-trust` end with it, and its result never changes theirs. It sends one sample
+  study to XNAT and converts one in a throwaway project, unless the kit has
+  `TRUST_DATA_SEED=false`: then it sends none. The Kubernetes answer is
   `trust/deploy/helm/scripts/selftest_k8s.py`.
 - **`selftest_node.sh`** (`make -C trust selftest-node FL_BACKEND=<backend>`) — the trust-node
   self-test. It runs on the node itself, needs no hub ("hubless"): it brings a throwaway stack up

@@ -64,22 +64,26 @@ DRIFT_REFS = ("SATRE 5.5.01", "SATRE 2.4.03", "SATRE 2.4.04")
 # A sample: a node that blocks both may still allow others. test_trust_endpoints.py keeps them off the declared list.
 UNDECLARED = ("example.com", "www.wikipedia.org")
 EGRESS_REFS = ("SATRE 5.5.01", "SATRE 2.2.11")
-# Run inside a container: says for each target whether anything answered. A URL goes the way the
-# container's own traffic does (its proxy settings included); a host:port is dialled directly with a TLS hello,
-# which is what a firewall that filters by server name judges. A certificate this container does not trust still
-# means the far side answered. Reads the targets as JSON on its last line; prints {target: "reached" | why not}.
+# Run inside a container: says for each target what answered. A URL goes the way the container's own traffic
+# does (its proxy settings included); a host:port is dialled directly with a TLS hello, which is what a firewall
+# that filters by server name judges. Reads the targets as JSON on its last line and prints {target: answer}:
+# "reached" (a 2xx, or a completed handshake), "answered …" (something replied, but not that: an HTTP error, a
+# certificate the container does not trust, a refused hello), or the reason nothing did. `answered()` reads it.
 PROBE = r"""
 import json, socket, ssl, sys, urllib.error, urllib.request
+
+UNTRUSTED = "answered with a certificate this container does not trust"
 
 def url(url):
     try:
         urllib.request.urlopen(url, timeout=8)
-    except urllib.error.HTTPError:
-        pass
+    except urllib.error.HTTPError as error:
+        return f"answered HTTP {error.code}"
     except Exception as error:
         reason = getattr(error, "reason", error)
-        if not isinstance(reason, ssl.SSLCertVerificationError):
-            return f"{type(reason).__name__}: {reason}"
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return UNTRUSTED
+        return f"{type(reason).__name__}: {reason}"
     return "reached"
 
 def tls(target):
@@ -88,10 +92,13 @@ def tls(target):
         with socket.create_connection((host, int(port)), timeout=8) as raw:
             with ssl.create_default_context().wrap_socket(raw, server_hostname=host):
                 pass
+    except ssl.SSLCertVerificationError:
+        return UNTRUSTED
     except (ssl.SSLEOFError, ssl.SSLZeroReturnError) as error:
         return f"closed during the TLS hello: {error}"
-    except ssl.SSLError:
-        pass
+    except ssl.SSLError as error:
+        # Any other TLS error is a reply from a peer: an FL server that wants a client certificate sends one.
+        return f"answered, refusing the TLS hello ({error.reason})"
     except Exception as error:
         return f"{type(error).__name__}: {error}"
     return "reached"
@@ -160,23 +167,38 @@ def check_health(node: Node, component: str) -> Check:
     )
 
 
-def check_hub_heartbeat(node: Node) -> Check:
-    """trust-api's last heartbeat reached the hub, and the hub holds the same key (its /health says both)."""
+def check_hub_heartbeat(
+    node: Node, wait_seconds: int = 90, sleep: Callable[[float], None] = time.sleep, poll: int = 10
+) -> Check:
+    """trust-api's last heartbeat reached the hub, and the hub holds the same key (its /health says both).
+
+    trust-api forgets the hub's answer whenever a heartbeat fails or is refused, so "no answer on record" after a
+    wait is a failure: a wrong API key looks exactly like that. Just after bring-up it only means "not yet", hence
+    the wait.
+    """
     name = "hub heartbeat"
     pod = node.pod("trust-api")
     if not pod:
         return failed(name, "no running trust-api container")
     port = node.container_port(pod) or 8000
-    ok, body = node.exec(
-        pod,
+    script = (
         'python3 -c "import urllib.request; '
-        f"print(urllib.request.urlopen('http://127.0.0.1:{port}/health', timeout=10).read().decode())\"",
+        f"print(urllib.request.urlopen('http://127.0.0.1:{port}/health', timeout=10).read().decode())\""
     )
-    try:
-        health = json.loads(body) if ok else {}
-    except json.JSONDecodeError:
-        health = {}
-    match = health.get("hub_key_match") if isinstance(health, dict) else None
+    waited = 0
+    while True:
+        ok, body = node.exec(pod, script)
+        try:
+            health = json.loads(body) if ok else None
+        except json.JSONDecodeError:
+            health = None
+        if not isinstance(health, dict):
+            raise RuntimeError(f"trust-api did not answer its own /health ({body[:120]})")
+        match = health.get("hub_key_match")
+        if match is not None or waited >= wait_seconds:
+            break
+        sleep(poll)
+        waited += poll
     if match is True:
         return passed(
             name, f"the hub answered (it runs {health.get('hub_version') or 'an unreported release'}), key matches"
@@ -185,7 +207,11 @@ def check_hub_heartbeat(node: Node) -> Check:
         return failed(
             name, "the hub answered, but its key differs from this trust's: refresh the kit's hub-shared block"
         )
-    return Check(name, trust_checks.Status.WARN, "no heartbeat reply yet; trust-api polls about once a minute")
+    return failed(
+        name,
+        f"trust-api has no accepted heartbeat on record after {waited}s: its last one failed or was refused "
+        "(a wrong TRUST_API_KEY looks like this). Its log says which",
+    )
 
 
 def drift(differences: list[str], compared: str) -> Check:
@@ -227,46 +253,69 @@ def fl_server(node: Node, pod: str, backend: str) -> str | None:
     return args[args.index("--superlink") + 1] if "--superlink" in args[:-1] else None
 
 
+def answered(answer: str) -> bool:
+    """Whether a probe's answer means the far side replied at all, whatever it said."""
+    return answer.startswith(("reached", "answered"))
+
+
 def check_declared_reachable(node: Node, backend: str, fl_enabled: bool) -> Check:
-    """The two endpoints a running node needs answer from the containers that use them: the hub API, the FL server."""
+    """The hub API answers trust-api and the FL server answers the FL client, each asked from its own container.
+
+    The hub must answer its /health with a 2xx over a connection the container trusts: an error page, or a
+    certificate a firewall put in the way, is not the hub. The FL server only has to reply: its certificate comes
+    from the FL network's own CA, which the client holds and this probe does not, so the client is its judge.
+    The image registry is not asked from here: the host pulls images, and the onboarding checklist probes it.
+    """
     name = "declared endpoints reachable"
     api = node.pod("trust-api")
     if not api:
         return failed(name, "no running trust-api container")
-    _, hub = node.exec(api, "printenv CENTRAL_HUB_API_URL")
+    ok, hub = node.exec(api, "printenv CENTRAL_HUB_API_URL")
     health = f"{hub.strip()}/health"
-    if not health.startswith("http"):
-        return failed(name, f"trust-api's CENTRAL_HUB_API_URL is not a URL ({hub.strip()[:80] or 'unset'})")
-    answers = {f"hub API {health}": probe(node, api, [health])[health]}
-    client = node.pod("fl-client") if fl_enabled else None
-    if client:
+    if not ok or not health.startswith("http"):
+        return failed(name, "trust-api has no CENTRAL_HUB_API_URL, or it is not a URL")
+    found = [f"hub API {health}"]
+    problems = []
+    answer = probe(node, api, [health])[health]
+    if answer != "reached":
+        problems.append(f"hub API {health}: {answer}")
+    if fl_enabled:
+        client = node.pod("fl-client")
+        if not client:
+            return failed(name, "no running fl-client container to ask the FL server from")
         target = fl_server(node, client, backend)
         if not target:
             return failed(name, f"could not read the FL server's address from {client}")
-        answers[f"FL server {target}"] = probe(node, client, [target])[target]
-    blocked = [f"{what}: {why}" for what, why in answers.items() if why != "reached"]
-    if blocked:
-        return Check(name, trust_checks.Status.FAIL, "; ".join(blocked), refs=EGRESS_REFS)
-    return Check(name, trust_checks.Status.PASS, ", ".join(answers) + " answered", refs=EGRESS_REFS)
+        answer = probe(node, client, [target])[target]
+        found.append(f"FL server {target}")
+        if not answered(answer):
+            problems.append(f"FL server {target}: {answer}")
+    if problems:
+        return Check(name, trust_checks.Status.FAIL, "; ".join(problems), refs=EGRESS_REFS)
+    return Check(name, trust_checks.Status.PASS, ", ".join(found) + " answered", refs=EGRESS_REFS)
 
 
 def check_undeclared_blocked(node: Node, fl_enabled: bool) -> Check:
     """The node's network lets nothing out to a sample of destinations no trust needs.
 
-    A warning, never a failure: what a site's network allows is the site's decision, and this row tells its IT and
-    governance teams what it found. Asked from trust-api and from the FL client, which runs the researcher's code.
+    A destination that answers is a warning, never a failure: what a site's network allows is the site's decision,
+    and this row tells its IT and governance teams what it found. Asked from trust-api and from the FL client,
+    which runs the researcher's code; a container that should be there and is not fails the row, since nothing
+    was learned about it. A pass gives the reason each attempt failed, so "blocked" can be told from "no DNS".
     """
     name = "undeclared destinations blocked"
-    pods = [pod for pod in (node.pod("trust-api"), node.pod("fl-client") if fl_enabled else None) if pod]
-    if not pods:
-        return failed(name, "no running trust-api or fl-client container to ask from")
+    pods = [node.pod("trust-api"), node.pod("fl-client") if fl_enabled else "skip"]
+    if not all(pods):
+        return failed(name, "trust-api or the fl-client is not running, so its network could not be sampled")
     targets = [f"https://{host}/" for host in UNDECLARED]
-    reached = [
-        f"{host} from {pod}"
-        for pod in pods
-        for host, (_, answer) in zip(UNDECLARED, probe(node, pod, targets).items())
-        if answer == "reached"
-    ]
+    reached, reasons = [], []
+    for pod in pods:
+        if pod == "skip":
+            continue
+        for host, answer in zip(UNDECLARED, probe(node, pod, targets).values()):
+            (reached if answered(answer) else reasons).append(
+                f"{host} from {pod}" + ("" if answered(answer) else f": {answer}")
+            )
     if reached:
         return Check(
             name,
@@ -278,7 +327,7 @@ def check_undeclared_blocked(node: Node, fl_enabled: bool) -> Check:
     return Check(
         name,
         trust_checks.Status.PASS,
-        f"none of {', '.join(UNDECLARED)} answered from {', '.join(pods)} (a sample, not a proof)",
+        "none answered (a sample, not a proof): " + "; ".join(reasons),
         refs=EGRESS_REFS,
     )
 
@@ -295,34 +344,35 @@ def check_omop_seeded(node: Node) -> Check:
     return failed("omop seeded", f"omop.person is empty or unreadable ({count[:120]})")
 
 
-def check_orthanc(node: Node) -> tuple[Check, Check]:
-    """Orthanc holds studies, and refuses a request without credentials.
+def check_orthanc(node: Node) -> tuple[Check, Check, bool]:
+    """Orthanc holds studies, and refuses a request without credentials; and whether it answered that it is empty.
 
-    Both asked from the xnat-web pod, which the chart's NetworkPolicies already let reach Orthanc
-    (it is the C-STORE receiver smoke-cstore drives from there).
+    Both asked from the xnat-web container, which can reach Orthanc on every platform (it is the C-STORE receiver).
+    The third value is true only when Orthanc itself said it holds no instance: a count that could not be read is
+    a failure of this check, never an empty Orthanc.
     """
     pod = node.pod("xnat-web")
     if not pod:
-        missing = "no running xnat-web pod to ask Orthanc from"
-        return failed("orthanc seeded", missing), failed("orthanc requires auth", missing)
+        missing = "no running xnat-web container to ask Orthanc from"
+        return failed("orthanc seeded", missing), failed("orthanc requires auth", missing), False
 
     creds = node.orthanc_credentials()
+    empty = False
     if not creds:
-        seeded = failed("orthanc seeded", "could not read an Orthanc user from its Secret")
+        seeded = failed("orthanc seeded", "could not read an Orthanc user from its configuration")
     else:
-        # The credential travels on stdin, never in argv, where the pod's process list would show it.
-        ok, out = node.exec(
-            pod, f'read -r creds; exec curl -fsS --max-time 30 -u "$creds" {ORTHANC_URL}/statistics', stdin=creds
-        )
+        # The credential goes to curl as a config on stdin: in argv the container's process list would show it.
+        ok, out = node.exec(pod, f"{CURL_AUTH}\nread -r ocreds\n{ORTHANC_CURL} {ORTHANC_URL}/statistics", stdin=creds)
         try:
-            instances = int(json.loads(out).get("CountInstances", 0)) if ok else 0
-        except (json.JSONDecodeError, AttributeError, ValueError):
-            instances = 0
-        seeded = (
-            passed("orthanc seeded", f"{instances} instances")
-            if instances > 0
-            else failed("orthanc seeded", f"Orthanc holds no instances ({out[:120]})")
-        )
+            instances = int(json.loads(out)["CountInstances"]) if ok else None
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            instances = None
+        if instances is None:
+            seeded = failed("orthanc seeded", f"Orthanc did not say what it holds ({out[:120]})")
+        elif instances == 0:
+            seeded, empty = failed("orthanc seeded", "Orthanc holds no instances"), True
+        else:
+            seeded = passed("orthanc seeded", f"{instances} instances")
 
     _, code = node.exec(pod, f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 10 {ORTHANC_URL}/")
     code = code.strip()
@@ -331,7 +381,7 @@ def check_orthanc(node: Node) -> tuple[Check, Check]:
         if code == "401"
         else failed("orthanc requires auth", f"expected 401 from {ORTHANC_URL}/, got {code or 'no answer'}")
     )
-    return seeded, auth
+    return seeded, auth, empty
 
 
 def check_cstore(run_smoke: Callable[[], tuple[int, str, str]]) -> Check:
@@ -615,6 +665,7 @@ def run_checks(
     no_orthanc: str = "",
     no_study: str = "",
     no_hub: str = "",
+    hub_wait_seconds: int = 90,
     find_drift: Callable[[], Check] | None = None,
     conversion_timeout: int = 600,
     fl_settle_seconds: int = 45,
@@ -653,11 +704,13 @@ def run_checks(
     # Orthanc's own count, not the seed setting, decides whether there is a study to send: a node whose Orthanc
     # holds studies all the same (loaded another way) still proves its DICOM path end to end.
     try:
-        orthanc_seeded, orthanc_auth = check_orthanc(node)
+        orthanc_seeded, orthanc_auth, orthanc_empty = check_orthanc(node)
     except Exception as error:  # noqa: BLE001 — as trust_checks.run: neither row could be checked
         orthanc_seeded = trust_checks.could_not_run("orthanc seeded", error)
         orthanc_auth = trust_checks.could_not_run("orthanc requires auth", error)
-    nothing_to_send = no_orthanc and not orthanc_seeded.ok
+        orthanc_empty = False
+    # Skipped only when Orthanc itself said it is empty: a count that could not be read stays a failure.
+    nothing_to_send = bool(no_orthanc) and orthanc_empty
     if nothing_to_send:
         skip("orthanc seeded", no_orthanc)
     else:
@@ -683,7 +736,7 @@ def run_checks(
         skip("hub heartbeat", no_hub)
         skip("declared endpoints reachable", no_hub)
     else:
-        attempt("hub heartbeat", lambda: check_hub_heartbeat(node))
+        attempt("hub heartbeat", lambda: check_hub_heartbeat(node, hub_wait_seconds))
         attempt("declared endpoints reachable", lambda: check_declared_reachable(node, backend, fl_enabled))
     attempt("undeclared destinations blocked", lambda: check_undeclared_blocked(node, fl_enabled))
     if find_drift:

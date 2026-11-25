@@ -471,7 +471,10 @@ def test_64_a_checklist_that_breaks_is_not_ready_and_exits_2() -> None:
             mod.main()
         except SystemExit as e:
             _assert(e.code == 2, "exits 2", str(e.code))
-    _assert("NOT READY" in out.getvalue() and "docker info hung" in out.getvalue(), "says why", out.getvalue()[-300:])
+    said = out.getvalue()
+    _assert("NOT READY" in said and "docker info hung" in said, "says why", said[-300:])
+    _assert("1 could not run" in said and "The checklist itself broke" in said, "the summary counts it", said[-300:])
+    _assert("Fix the" not in said, "and does not tell the operator to fix rows that did not fail")
 
 
 def test_19_hub_on_its_release_sha_build_is_not_behind() -> None:

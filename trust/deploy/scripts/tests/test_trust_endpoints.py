@@ -109,6 +109,22 @@ def test_a_row_that_is_not_one_clear_destination_is_refused() -> None:
         "a literal host and a kit host together",
     )
     _assert(_rejects(base + 'when = "always"\nhosts = ["a"]', "either port or port_from_kit"), "no port")
+    ok = base + 'when = "always"\nhosts = ["a"]\n'
+    _assert(_rejects(ok + 'port = "443"', "port must be a number"), "a port that is not a number")
+    _assert(
+        _rejects(ok + 'port = 1\nplatform = "azure"', "platform must be one of"), "a platform the file does not know"
+    )
+    _assert(_rejects(ok + "port = 1\nprot = 2", "x: "), "an unknown key, naming the row")
+    _assert(_rejects(ok + "port = 1\n[[endpoint]]\n" + ok + "port = 2", "named twice"), "a name used twice")
+
+
+def test_asking_for_hosts_that_are_not_there_says_so() -> None:
+    for name in ("no-such-endpoint", "hub-api", "aks-platform"):
+        try:
+            trust_endpoints.hosts(name)
+            _assert(False, f"{name}: raises")
+        except KeyError as error:
+            _assert(name in str(error), f"{name}: no literal hosts is an error naming it")
 
 
 def test_the_docs_tables_name_exactly_the_files_hosts() -> None:
@@ -133,6 +149,7 @@ def main() -> None:
     test_the_file_loads_and_names_each_endpoint_once()
     test_the_egress_checks_sample_is_not_on_the_list()
     test_a_row_that_is_not_one_clear_destination_is_refused()
+    test_asking_for_hosts_that_are_not_there_says_so()
     test_the_docs_tables_name_exactly_the_files_hosts()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

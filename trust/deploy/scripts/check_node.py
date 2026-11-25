@@ -12,9 +12,10 @@
 """Check a running Compose trust node (FLIP#1449): `make -C trust check-node KIT=<CODE>`.
 
 The Compose form of `make -C trust/deploy/helm selftest`: the same checks (node_checks.py), asked
-through `docker` instead of `kubectl`, and the same report. It reads the stack that is running and
-starts nothing. `selftest_node.sh` runs it against its throwaway stack; `up-onprem-trust` and
-`upgrade-onprem-trust` run it against the site's own.
+through `docker` instead of `kubectl`, and the same report. It checks the stack that is running and
+starts no service. Unless told otherwise (below) it does send one study from Orthanc to XNAT, where it
+stays in the prearchive, and converts one in a throwaway XNAT project it deletes. `selftest_node.sh`
+runs it against its throwaway stack; `up-onprem-trust` and `upgrade-onprem-trust` against the site's own.
 
 With --site, on a kit that loads no sample data (TRUST_DATA_SEED=false), no study is sent: the node
 holds the site's own data, so the C-STORE and the conversion are skipped, and say so.
@@ -56,7 +57,8 @@ class DockerNode:
         try:
             result = subprocess.run(args, input=stdin, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as e:
-            return False, str(e)
+            # docker itself is missing, unreachable or hung: the check could not run, which is not "the node failed".
+            raise RuntimeError(f"`{' '.join(args[:2])}` did not run: {e}") from e
         return result.returncode == 0, (result.stdout if result.returncode == 0 else result.stderr).strip()
 
     def _inspect(self, pod: str) -> dict:
@@ -121,7 +123,11 @@ class DockerNode:
         )
 
     def not_running(self) -> list[str] | None:
-        """Containers of the project that are neither running nor a one-shot that finished; None when it has none."""
+        """Containers of the project that are neither running nor a finished one-shot; None when it has none.
+
+        A one-shot is a service named `…-init`. Any other service that has stopped is not running, exit 0 or not:
+        a database told to stop exits 0 too.
+        """
         ok, out = self._run(
             [
                 "docker",
@@ -130,13 +136,19 @@ class DockerNode:
                 "--filter",
                 f"label=com.docker.compose.project={self.project}",
                 "--format",
-                "{{.Names}}\t{{.State}}\t{{.Status}}",
+                '{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Label "com.docker.compose.service"}}',
             ]
         )
-        rows = [line.split("\t") for line in out.splitlines()] if ok else []
+        if not ok:
+            raise RuntimeError(f"docker could not list the project's containers: {out[:160]}")
+        rows = [line.split("\t") for line in out.splitlines() if line.count("\t") == 3]
         if not rows:
             return None
-        return [f"{name} {status}" for name, state, status in rows if state != "running" and "Exited (0)" not in status]
+        return [
+            f"{name} {status}"
+            for name, state, status, service in rows
+            if state != "running" and not (service.endswith("-init") and "Exited (0)" in status)
+        ]
 
 
 def check_ready(node: DockerNode) -> Check:
@@ -179,7 +191,9 @@ def check_drift(node: DockerNode, declared: dict[str, str]) -> Check:
             differences.append(f"{service}: its configuration differs from the compose files and kit")
         image = container.get("Config", {}).get("Image", "")
         ok, current = node._run(["docker", "image", "inspect", "--format", "{{.Id}}", image])
-        if ok and current.strip() != container.get("Image"):
+        if not ok:
+            differences.append(f"{service}: its image {image or '(unnamed)'} is no longer on this host to compare with")
+        elif current.strip() != container.get("Image"):
             differences.append(f"{service}: runs an older {image} than this host now holds")
     differences += [f"{service}: declared, and has no container" for service in sorted(set(declared) - seen)]
     return node_checks.drift(
@@ -213,10 +227,10 @@ def cstore(
         # The credential travels on stdin, never in argv, where the container's process list would show it.
         return node.exec(pod, f"{CURL_AUTH}\nread -r ocreds\n{ORTHANC_CURL} {args}", stdin=creds)
 
-    def lines(log: str) -> int:
-        # Only digits survive: the count comes from inside a container.
-        _, out = node.exec(pod, f"wc -l < {log} 2>/dev/null || echo 0")
-        return int("".join(c for c in out if c.isdigit()) or 0)
+    def lines(log: str) -> int | None:
+        # Only digits survive: the count comes from inside a container. None when the container could not be asked.
+        ok, out = node.exec(pod, f"wc -l < {log} 2>/dev/null || echo 0")
+        return int("".join(c for c in out if c.isdigit()) or 0) if ok else None
 
     ok, out = orthanc(f"'{ORTHANC_URL}/instances?since=0&limit=1'")
     try:
@@ -227,6 +241,8 @@ def cstore(
         return 1, "Orthanc has no instance to send (did seeding run?)", ""
 
     before, dicom_before = lines(RECEIVED_LOG), lines(DICOM_LOG)
+    if before is None or dicom_before is None:
+        return 1, "could not read XNAT's logs in its container before the store", ""
     body = json.dumps({"Resources": [instance], "Synchronous": True})
     ok, store = orthanc(f"-X POST --data-binary '{body}' {ORTHANC_URL}/modalities/XNAT/store")
     try:
@@ -238,12 +254,17 @@ def cstore(
     # XNAT records the receipt after the store has returned, so poll for it rather than read once.
     after = lines(RECEIVED_LOG)
     for _ in range(settle_seconds):
-        if after != before:
+        if after is None or after != before:
             break
         sleep(1)
         after = lines(RECEIVED_LOG)
-    _, errors = node.exec(pod, f"tail -n +{dicom_before + 1} {DICOM_LOG} 2>/dev/null | grep -cE '{IMPORTER_ERRORS}'")
-    if errors.strip().isdigit() and int(errors) > 0:
+    # grep -c exits 1 on a count of 0, which is an answer here and not a failure.
+    ok, errors = node.exec(
+        pod, f"tail -n +{dicom_before + 1} {DICOM_LOG} 2>/dev/null | grep -cE '{IMPORTER_ERRORS}' || true"
+    )
+    if after is None or not ok or not errors.strip().isdigit():
+        return 1, "could not read XNAT's logs in its container after the store", ""
+    if int(errors) > 0:
         return 1, f"XNAT's importer logged {errors.strip()} failure(s) in dicom.log", ""
     # XNAT starts a new received.log with the day's first object, so a count that fell is a receipt too.
     if after == before:
@@ -253,7 +274,7 @@ def cstore(
 
 def read_kit(path: Path) -> dict[str, str]:
     kit = {}
-    for line in path.read_text().splitlines() if path.is_file() else []:
+    for line in path.read_text().splitlines():
         key, sep, value = line.strip().partition("=")
         if sep and not key.startswith("#"):
             kit[key.strip()] = value
@@ -295,9 +316,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--conversion-timeout", type=int, default=600)
     args = parser.parse_args(argv)
 
-    kit = read_kit(args.kit_file)
+    # An empty kit would read as "sample data on": never send a study on the strength of a kit that is not there.
+    no_kit = "" if args.kit_file.is_file() else f"no kit file at {args.kit_file}, so no study is sent"
+    if no_kit and args.site:
+        print(f"❌ no kit file at {args.kit_file}: nothing was checked", file=sys.stderr)
+        return 2
+    kit = {} if no_kit else read_kit(args.kit_file)
     backend = args.backend
     seeded = trust_kit_lib.trust_data_seed(kit)
+    site_data = args.site and not seeded
     no_data = "" if seeded else "TRUST_DATA_SEED=false, so the node holds no sample data"
     node = DockerNode(args.project, args.xnat_stack)
     declared = read_declared(args.declared_hashes)
@@ -311,9 +338,8 @@ def main(argv: list[str] | None = None) -> int:
         smoke=lambda: cstore(node),
         no_omop=no_data,
         no_orthanc=no_data,
-        no_study="TRUST_DATA_SEED=false: the node holds the site's own data, so no study is sent"
-        if args.site and not seeded
-        else "",
+        no_study=no_kit
+        or ("TRUST_DATA_SEED=false: the node holds the site's own data, so no study is sent" if site_data else ""),
         no_hub="" if args.site else "a self-test stack is joined to no hub",
         find_drift=(lambda: check_drift(node, declared)) if declared is not None else None,
         conversion_timeout=args.conversion_timeout,
