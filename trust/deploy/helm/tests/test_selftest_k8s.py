@@ -879,12 +879,18 @@ def test_a_declared_endpoint_that_does_not_answer_is_a_failure_naming_it():
     assert check.detail == "FL server fl.hub.example:8002: TimeoutError: timed out"
 
 
-def test_a_hub_url_that_is_not_https_is_refused_before_anything_is_dialled():
-    cluster = FakeCluster(hub_url="http://hub.example/api")
+def test_a_trust_api_with_no_hub_url_is_a_failure_before_anything_is_dialled():
+    cluster = FakeCluster(hub_url="")
     check = selftest.node_checks.check_declared_reachable(cluster, "nvflare", fl_enabled=True)
     assert check.status.value == "fail"
-    assert "not an https URL" in check.detail
+    assert "not a URL (unset)" in check.detail
     assert not [1 for _, script, _ in cluster.exec_log if "urllib.error" in script]
+
+
+def test_a_development_hub_over_plain_http_is_asked_like_any_other():
+    cluster = FakeCluster(hub_url="http://flip-api:8000/api")
+    check = selftest.node_checks.check_declared_reachable(cluster, "nvflare", fl_enabled=True)
+    assert check.status.value == "pass", check
 
 
 def test_a_node_whose_network_blocks_the_sample_passes_and_says_it_is_a_sample():

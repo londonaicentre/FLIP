@@ -62,14 +62,14 @@ ROWS = (
 # A sample: a node that blocks both may still allow others. test_trust_endpoints.py keeps them off the declared list.
 UNDECLARED = ("example.com", "www.wikipedia.org")
 EGRESS_REFS = ("SATRE 5.5.01", "SATRE 2.2.11")
-# Run inside a container: says for each target whether anything answered. An HTTPS URL goes the way the
+# Run inside a container: says for each target whether anything answered. A URL goes the way the
 # container's own traffic does (its proxy settings included); a host:port is dialled directly with a TLS hello,
 # which is what a firewall that filters by server name judges. A certificate this container does not trust still
 # means the far side answered. Reads the targets as JSON on its last line; prints {target: "reached" | why not}.
 PROBE = r"""
 import json, socket, ssl, sys, urllib.error, urllib.request
 
-def https(url):
+def url(url):
     try:
         urllib.request.urlopen(url, timeout=8)
     except urllib.error.HTTPError:
@@ -95,7 +95,7 @@ def tls(target):
     return "reached"
 
 targets = json.loads(sys.stdin.readlines()[-1])
-print(json.dumps({t: https(t) if t.startswith("https://") else tls(t) for t in targets}))
+print(json.dumps({t: url(t) if t.startswith("http") else tls(t) for t in targets}))
 """
 
 
@@ -220,9 +220,10 @@ def check_declared_reachable(node: Node, backend: str, fl_enabled: bool) -> Chec
     if not api:
         return failed(name, "no running trust-api container")
     _, hub = node.exec(api, "printenv CENTRAL_HUB_API_URL")
-    if not hub.strip().startswith("https://"):
-        return failed(name, f"trust-api's CENTRAL_HUB_API_URL is not an https URL ({hub.strip()[:80] or 'unset'})")
-    answers = {f"hub API {hub.strip()}/health": probe(node, api, [f"{hub.strip()}/health"])[f"{hub.strip()}/health"]}
+    health = f"{hub.strip()}/health"
+    if not health.startswith("http"):
+        return failed(name, f"trust-api's CENTRAL_HUB_API_URL is not a URL ({hub.strip()[:80] or 'unset'})")
+    answers = {f"hub API {health}": probe(node, api, [health])[health]}
     client = node.pod("fl-client") if fl_enabled else None
     if client:
         target = fl_server(node, client, backend)
@@ -614,7 +615,8 @@ def run_checks(
 
     def record(check: Check) -> None:
         checks.append(check)
-        print(f"  ✅ {check.name}" if check.ok else f"  {check.status.glyph} {check.name}: {check.detail}")
+        is_pass = check.status is trust_checks.Status.PASS
+        print(f"  ✅ {check.name}" if is_pass else f"  {check.status.glyph} {check.name}: {check.detail}")
 
     def attempt(name: str, check: Callable[[], Check]) -> None:
         record(trust_checks.run(name, check))
