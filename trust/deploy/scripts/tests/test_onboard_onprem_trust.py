@@ -1119,9 +1119,9 @@ def test_52_log_level_debug_warns_a_development_kit() -> None:
     _assert(result.status == mod.Status.WARN, "development at DEBUG is a WARN, not a blocker", result.detail)
 
 
-def test_61_a_deployed_kit_is_judged_by_hub_not_by_its_file_name() -> None:
+def test_63_a_deployed_kit_is_judged_by_hub_not_by_its_file_name() -> None:
     """A prod kit under a pre-#1479 name, a bare name or a KIT_FILE= path is still a deployed kit (FLIP#2047)."""
-    print("\n[61] deployed kit: HUB decides, whatever the file is called")
+    print("\n[63] deployed kit: HUB decides, whatever the file is called")
     debug = {"TRUST_LOG_LEVEL": "DEBUG"}
     for name in ("trust/.env.GSTT.development", "trust/.env.GSTT", "/srv/kits/gstt.env"):
         for hub in ("prod", "stag"):
@@ -1137,10 +1137,10 @@ def test_61_a_deployed_kit_is_judged_by_hub_not_by_its_file_name() -> None:
     _assert(any("HUB=prod" in h and "run with HUB=" in h for h in check.hints), "says how it was judged", str(check))
 
 
-def test_62_an_unset_data_dir_fails_naming_the_shared_fallback() -> None:
+def test_64_an_unset_data_dir_fails_naming_the_shared_fallback() -> None:
     """The deployed fallback is real but one directory for every trust on the host, so the line stays required
     and the row names the path, which must be the prod compose's (FLIP#2047)."""
-    print("\n[62] unset OMOP / Orthanc dir -> FAIL naming the compose fallback")
+    print("\n[64] unset OMOP / Orthanc dir -> FAIL naming the compose fallback")
     compose = (SCRIPTS_DIR.parent / "compose" / "compose_trust.prod.yml").read_text()
     for var, label in (("OMOP_DATA_DIR", "OMOP data dir"), ("ORTHANC_STORAGE_DIR", "Orthanc storage dir")):
         fallback = mod.SHARED_DATA_DIR_FALLBACKS[var]
@@ -1170,9 +1170,11 @@ def test_60_log_level_passes_only_a_level_quieter_than_debug() -> None:
         result = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
         _assert(result.status == mod.Status.PASS, f"{level} passes", result.detail)
     for level in ("NOTSET", "0", "5", "TRACE"):
-        deployed = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
+        with mock.patch.dict(os.environ, {"HUB": "prod"}):
+            deployed = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
         _assert(deployed.status == mod.Status.FAIL, f"{level} on a deployed kit is a FAIL", deployed.detail)
-        dev = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.development")
+        with mock.patch.dict(os.environ, {"HUB": ""}):
+            dev = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.development")
         _assert(dev.status == mod.Status.WARN, f"{level} on a development kit is a WARN", dev.detail)
 
 
@@ -1406,8 +1408,8 @@ def main() -> None:
     test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list()
     test_51_log_level_debug_fails_a_deployed_kit()
     test_52_log_level_debug_warns_a_development_kit()
-    test_61_a_deployed_kit_is_judged_by_hub_not_by_its_file_name()
-    test_62_an_unset_data_dir_fails_naming_the_shared_fallback()
+    test_63_a_deployed_kit_is_judged_by_hub_not_by_its_file_name()
+    test_64_an_unset_data_dir_fails_naming_the_shared_fallback()
     test_53_log_level_info_passes_and_unset_warns()
     test_54_hub_shared_allows_the_other_backends_kit_date_empty()
     test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()
