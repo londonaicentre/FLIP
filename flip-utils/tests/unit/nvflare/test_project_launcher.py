@@ -26,8 +26,10 @@ import yaml
 
 from flip.nvflare.k8s_job_mode import POD_TEMPLATE, STUDY_RUNTIME, STUDY_RUNTIME_DEFAULT
 from flip.nvflare.project_launcher import ProjectK8sJobLauncher
+from flip.nvflare.project_studies import xnat_project_id
 
 PROJECT = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
+XNAT_PROJECT = "5f0c7a52-0e3a-4c55-9d4e-0f7a1b2c3d4e"
 IMAGE = "ghcr.io/londonaicentre/flare-fl-client:stag"
 OPERATOR_IMAGE = "ghcr.io/londonaicentre/flare-fl-client:operator"
 DEFAULT = {"container": {"image": IMAGE}, "pod_template": POD_TEMPLATE}
@@ -40,6 +42,13 @@ def constants(tmp_path):
         constants.IMAGES_DIR = str(tmp_path / "images")
         constants.NET_ID = "net-1"
         yield constants
+
+
+@pytest.fixture(autouse=True)
+def approved():
+    """imaging-api names the XNAT project it created when this trust approved the project; None = no such project."""
+    with patch("flip.nvflare.project_launcher.xnat_project_id", return_value=XNAT_PROJECT) as lookup:
+        yield lookup
 
 
 @pytest.fixture
@@ -132,9 +141,8 @@ def test_a_job_outside_a_project_runs_as_the_kits_default_study(tmp_path, launch
 
 
 def test_an_operators_entry_still_serves_a_study_that_is_not_a_project(tmp_path, launcher):
-    workspace = _workspace(
-        tmp_path, {"format_version": 2, "studies": {"other": {"container": {"image": OPERATOR_IMAGE}}}}
-    )
+    entry = {"container": {"image": OPERATOR_IMAGE}}
+    workspace = _workspace(tmp_path, {"format_version": 2, "studies": {"other": entry}})
 
     assert launcher._resolve_study_runtime(str(workspace), "other").container_image == OPERATOR_IMAGE
 
@@ -142,6 +150,32 @@ def test_an_operators_entry_still_serves_a_study_that_is_not_a_project(tmp_path,
 def test_a_kit_without_its_default_study_fails_naming_the_project(tmp_path, launcher):
     workspace = _workspace(tmp_path)
     (workspace / "local" / STUDY_RUNTIME_DEFAULT).unlink()
+    (workspace / "local" / STUDY_RUNTIME).write_text("{}")
 
     with pytest.raises(RuntimeError, match=PROJECT):
         launcher._resolve_study_runtime(str(workspace), PROJECT)
+
+
+def test_a_project_this_trust_never_approved_mounts_nothing_and_streams(tmp_path, launcher, approved):
+    """The trust's own gate: no XNAT project here, so no studies at rest, whatever the hub named (fail closed)."""
+    approved.return_value = None
+    workspace = _workspace(tmp_path)
+
+    runtime = launcher._resolve_study_runtime(str(workspace), PROJECT)
+
+    assert runtime.container_image == IMAGE
+    assert _mounts(runtime) == []
+    assert not (tmp_path / "images" / "net-1" / PROJECT).exists(), "no folder is made for it either"
+    approved.assert_called_once_with(PROJECT)
+
+
+def test_while_imaging_api_cannot_answer_a_projects_job_streams(tmp_path, launcher, constants):
+    """The real lookup, with imaging-api down: the job still starts, and mounts nothing."""
+    constants.IMAGING_API_URL = "http://127.0.0.1:9"  # nothing listens on the discard port
+    workspace = _workspace(tmp_path)
+
+    with patch("flip.nvflare.project_launcher.xnat_project_id", xnat_project_id):
+        runtime = launcher._resolve_study_runtime(str(workspace), PROJECT)
+
+    assert runtime.container_image == IMAGE
+    assert _mounts(runtime) == []

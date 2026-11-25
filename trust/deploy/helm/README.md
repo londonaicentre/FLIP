@@ -733,7 +733,10 @@ from its entry. The fl-client's launcher (`flip.nvflare.project_launcher`) build
 project's job starts: the template above, the kit's job image and, with `images: project`, a read-only mount of the
 project's own folder, or with `images: archive` of its directory of XNAT's archive once XNAT has archived one of its
 sessions (until then its jobs stream). Nothing is synced after an approval, an upgrade or a change of
-`jobPods.images`: every job gets the entry its project needs at that moment. The template itself mounts no images,
+`jobPods.images`: every job gets the entry its project needs at that moment. The trust keeps its own gate: the
+entry, with its mount, is built only for a project whose XNAT project imaging-api created when this trust approved
+it. Any other project's job, and any job while imaging-api cannot answer, mounts nothing and streams, through
+download routes that serve only the approved cohort. The template itself mounts no images,
 so a job from a hub that predates studies, which lands in the default study, streams its studies.
 
 `make sync-project-studies` still writes the operator's study file (the ConfigMap `<release>-fl-studies-<net>`,

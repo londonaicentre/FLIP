@@ -90,34 +90,50 @@ def _streams(project: str, reason: str) -> None:
     print(f"⚠️  project {project}: its job pods stream their studies, {reason}", file=sys.stderr)
 
 
-def xnat_project(project: str) -> str | None:
-    """The XNAT project holding the hub project's sessions, from imaging-api; None until it has archived one.
-
-    None as well when imaging-api cannot say: a job of a project with no imaging must still start while XNAT is
-    down, and a pod with no mount streams, which keeps it to its own project. Each None says why on stderr.
-    """
+def _get(path: str) -> Any:
+    """GET an imaging-api route with the trust-internal key and return its JSON."""
     url = str(FlipConstants.IMAGING_API_URL).rstrip("/")
     headers = {FlipConstants.TRUST_INTERNAL_SERVICE_KEY_HEADER: FlipConstants.TRUST_INTERNAL_SERVICE_KEY}
+    response = requests.get(f"{url}{path}", headers=headers, timeout=_REQUEST_TIMEOUT)
+    response.raise_for_status()
+    return response.json()
+
+
+def xnat_project_id(project: str) -> str | None:
+    """The XNAT project imaging-api created for the hub project when this trust approved it; None if there is none.
+
+    None as well when imaging-api cannot say, and each None says why on stderr: a pod with no mount streams, which
+    keeps it to its own project's approved studies.
+    """
     try:
-        projects = requests.get(f"{url}/projects/", headers=headers, timeout=_REQUEST_TIMEOUT)
-        projects.raise_for_status()
-        ids: list[str] = [p["ID"] for p in projects.json() if p.get("secondary_ID") == project]
-        if not ids:
-            _streams(project, "as XNAT holds no project for it (a tabular project, or no imaging pulled yet)")
-            return None
-        # FLIP names its XNAT projects with a UUID; anything else is not used as a folder name here.
-        if len(ids) != 1 or not is_project(ids[0]):
-            _streams(project, f"as more than one XNAT project, or one not named with a UUID, claims it: {ids}")
-            return None
-        experiments = requests.get(f"{url}/projects/{ids[0]}/experiments", headers=headers, timeout=_REQUEST_TIMEOUT)
-        experiments.raise_for_status()
-        if not experiments.json():
-            _streams(project, "as XNAT has archived nothing for it yet: sync again once its imaging is pulled")
-            return None
-        return ids[0]
+        ids: list[str] = [p["ID"] for p in _get("/projects/") if p.get("secondary_ID") == project]
     except (requests.RequestException, KeyError, TypeError, AttributeError) as e:
-        _streams(project, f"as imaging-api could not name its XNAT archive ({type(e).__name__}: {e})")
+        _streams(project, f"as imaging-api could not name its XNAT project ({type(e).__name__}: {e})")
         return None
+    if not ids:
+        _streams(project, "as XNAT holds no project for it (a tabular project, or not approved at this trust)")
+        return None
+    # FLIP names its XNAT projects with a UUID; anything else is not used as a folder name here.
+    if len(ids) != 1 or not is_project(ids[0]):
+        _streams(project, f"as more than one XNAT project, or one not named with a UUID, claims it: {ids}")
+        return None
+    return ids[0]
+
+
+def xnat_project(project: str) -> str | None:
+    """The XNAT project holding the hub project's sessions, from imaging-api; None until it has archived one."""
+    xnat_id = xnat_project_id(project)
+    if xnat_id is None:
+        return None
+    try:
+        archived = bool(_get(f"/projects/{xnat_id}/experiments"))
+    except (requests.RequestException, TypeError, AttributeError) as e:
+        _streams(project, f"as imaging-api could not list its XNAT sessions ({type(e).__name__}: {e})")
+        return None
+    if not archived:
+        _streams(project, "as XNAT has archived nothing for it yet: its jobs mount the archive once it has")
+        return None
+    return xnat_id
 
 
 def _apply_patch(pod: dict[str, Any], patch: dict[str, Any]) -> None:

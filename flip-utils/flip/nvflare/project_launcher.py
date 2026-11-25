@@ -23,9 +23,12 @@ template declares the images volume, a read-only mount of the project's own fold
 archive once XNAT holds one. Built at launch, it always carries the kit's current image and template. An entry in
 the operator's file is not used for a project.
 
-It keeps what the file guaranteed. The hub names a job's study and a researcher cannot pick one (``meta.json``
-``study`` is refused), and a project's folder holds only what imaging-api pulled for its approved cohort, so the
-study of a project this trust has not approved mounts nothing of anyone's.
+It keeps the trust-side gate the file was: an entry, and with it any mount of studies at rest, only for a project
+this trust approved. The hub names a job's study (a researcher cannot pick one: ``meta.json`` ``study`` is refused),
+but the trust does not take its word for it: a project gets its entry only once imaging-api names the XNAT project
+it created when the trust approved it (``xnat_project_id``). Any other project's job, a tabular one's or one the
+trust never approved, and any job while imaging-api cannot answer, runs as the default study, which mounts no
+images and streams them through imaging-api, whose download routes serve only the approved cohort.
 
 A job outside a project's study, which only a hub older than FLIP#1678 sends, runs as the kit's default study.
 """
@@ -40,7 +43,7 @@ from nvflare.app_opt.job_launcher.k8s_launcher import ClientK8sJobLauncher
 from nvflare.app_opt.job_launcher.study_runtime import StudyRuntime, load_study_runtime_file, resolve_study_runtime
 
 from flip.nvflare.k8s_job_mode import STUDY_RUNTIME, STUDY_RUNTIME_DEFAULT
-from flip.nvflare.project_studies import is_project, project_entry
+from flip.nvflare.project_studies import is_project, project_entry, xnat_project_id
 
 
 def default_study_file(local_dir: Path) -> Path:
@@ -57,13 +60,23 @@ class ProjectK8sJobLauncher(ClientK8sJobLauncher):
         if study is not None and is_project(study):
             return self._project_runtime(local_dir, study)
         runtime = super()._resolve_study_runtime(workspace_root, study)
-        default_file = default_study_file(local_dir)
-        if (runtime is not None and runtime.container_image) or not default_file.is_file():
+        if runtime is not None and runtime.container_image:
             return runtime
+        return self._default_runtime(local_dir) or runtime
+
+    def _default_runtime(self, local_dir: Path) -> StudyRuntime | None:
+        """The kit's default study, parsed beside its pod template; None if the kit has none."""
+        default_file = default_study_file(local_dir)
+        if not default_file.is_file():
+            return None
         runtime_map = load_study_runtime_file(str(default_file), launcher_mode="k8s", logger=self.logger)
         return resolve_study_runtime(runtime_map, "default", str(default_file), logger=self.logger)
 
-    def _project_runtime(self, local_dir: Path, project: str) -> StudyRuntime:
+    def _project_runtime(self, local_dir: Path, project: str) -> StudyRuntime | None:
+        if xnat_project_id(project) is None:
+            # Not approved for imaging here, or imaging-api cannot say: mount nothing at rest (fail closed).
+            self.logger.info(f"project {project}: no XNAT project at this trust, so its job streams")
+            return self._default_runtime(local_dir)
         try:
             document: dict[str, Any] = yaml.safe_load(default_study_file(local_dir).read_text(encoding="utf-8"))
             entry = project_entry(local_dir, document["studies"]["default"], project)
