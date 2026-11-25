@@ -843,7 +843,7 @@ def test_an_orthanc_holding_studies_is_stored_and_converted_whatever_the_seed_va
     """Orthanc's count decides, not the seed values: a broken DICOM import (FLIP#1411) on a trust whose Orthanc
     holds its own or otherwise-loaded studies must not hide behind a skip."""
     converted = selftest.passed("dcm2niix conversion", "converted")
-    monkeypatch.setattr(selftest, "check_conversion", lambda *args: converted)
+    monkeypatch.setattr(selftest.node_checks, "check_conversion", lambda *args: converted)
     checks = _checks(_values(**seed), smoke=lambda: (1, "❌ XNAT received nothing", ""))
     assert checks["xnat c-store"] == selftest.failed("xnat c-store", "❌ XNAT received nothing")
     assert checks["dcm2niix conversion"] is converted
@@ -879,7 +879,7 @@ def test_a_check_that_raises_could_not_run_and_the_rest_still_report(monkeypatch
     def broken_smoke():
         raise RuntimeError("kubectl is not on PATH")
 
-    monkeypatch.setattr(selftest, "check_conversion", lambda *args: selftest.passed("dcm2niix conversion"))
+    monkeypatch.setattr(selftest.node_checks, "check_conversion", lambda *args: selftest.passed("dcm2niix conversion"))
     checks = _checks(_values(orthanc=True), smoke=broken_smoke)
 
     assert checks["xnat c-store"].status is selftest.trust_checks.Status.ERROR
