@@ -132,7 +132,7 @@ jobs:
             TAG_FLAGS+=("-t" "$tag")
           done
           # The context is the repo root: the image ships scripts/trust_upgrade_agent.py itself, so
-          # the CronJob runs the same file as the host timer rather than a copy that can drift.
+          # the CronJob runs the same file the tests exercise rather than a copy that can drift.
           # shellcheck disable=SC2086
           docker build "${TAG_FLAGS[@]}" -f trust/deploy/helm/agent/Dockerfile .
 

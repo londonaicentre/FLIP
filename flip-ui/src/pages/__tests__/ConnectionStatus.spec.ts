@@ -485,6 +485,64 @@ describe("ConnectionStatus", () => {
         expect(byTrust.get(fixture[2].name)?.label).toBe("—");
     });
 
+    it("tells a trust the agent will move from one a person has to, and says what holds the agent back", async () => {
+        mockSwrvData.value = fixture;
+        mockUpgradeFleet.value = [
+            {
+                trust_id: fixture[0].id,
+                name: fixture[0].name,
+                code: fixture[0].code,
+                view: {
+                    enabled: true,
+                    state: "PENDING",
+                    targetRelease: "v0.13.0",
+                    currentRelease: "v0.12.0",
+                    blockers: ["OUTSIDE_WINDOW", "JOBS_RUNNING"],
+                    pendingSince: null,
+                    lastAttempt: null
+                }
+            },
+            {
+                trust_id: fixture[1].id,
+                name: fixture[1].name,
+                code: fixture[1].code,
+                view: {
+                    enabled: false,
+                    state: "PENDING",
+                    targetRelease: "v0.13.0",
+                    currentRelease: "v0.12.0",
+                    blockers: [],
+                    pendingSince: null,
+                    lastAttempt: null
+                }
+            }
+        ];
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        const byTrust = new Map<string, { label: string; title: string }>();
+        for (const row of wrapper.findAll("[data-test='trust-row']")) {
+            const pill = row.find("[data-test='trust-upgrade'] span");
+            byTrust.set(row.find("[data-test='trust-name']").text(), {
+                label: pill.exists() ? pill.text() : "",
+                title: pill.exists() ? (pill.attributes("title") ?? "") : ""
+            });
+        }
+        expect(byTrust.get(fixture[0].name)?.label).toBe("Pending");
+        expect(byTrust.get(fixture[0].name)?.title).toContain("outside the maintenance window");
+        expect(byTrust.get(fixture[0].name)?.title).toContain("a training job is running");
+        expect(byTrust.get(fixture[1].name)?.label).toBe("Behind (manual)");
+        expect(byTrust.get(fixture[1].name)?.title).toContain("upgraded by hand");
+    });
+
+    it("shows no Upgrade column to a viewer who is not an admin", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage({ permissions: [] });
+        await wrapper.vm.$nextTick();
+        expect(wrapper.findAll("th").map(th => th.text())).not.toContain("Upgrade");
+        expect(wrapper.find("[data-test='trust-upgrade']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='trust-upgrade-mobile']").exists()).toBe(false);
+    });
+
     it("shows an em dash when no fleet state is known", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
@@ -843,12 +901,12 @@ describe("ConnectionStatus", () => {
         expect(nameCell?.className).toContain("max-w-0");
     });
 
-    it("renders eight columns — Services dots, the fleet's upgrade state and the drawer chevron", async () => {
+    it("renders seven columns for a non-admin — Services dots and the drawer chevron, no admin-only ones", async () => {
         const wrapper = await mountLoaded(fixture, { permissions: [] });
 
-        expect(wrapper.findAll("th")).toHaveLength(8);
+        expect(wrapper.findAll("th")).toHaveLength(7);
         const row = wrapper.find("[data-test='trust-row']");
-        expect(row.findAll("td")).toHaveLength(8);
+        expect(row.findAll("td")).toHaveLength(7);
         // The placeholder 7d-uptime sparkline is gone (replaced by real service dots).
         expect(wrapper.find("[data-test='trust-uptime']").exists()).toBe(false);
         expect(row.find("polyline").exists()).toBe(false);
@@ -863,7 +921,7 @@ describe("ConnectionStatus", () => {
             await wrapper.vm.$nextTick();
 
             const headers = wrapper.findAll("th").map(th => th.text());
-            // Jobs (FLIP#1739) and Download are the two admin-only columns, on top of the eight everyone sees.
+            // Jobs (FLIP#1739), Upgrade and Download are the admin-only columns, on top of the seven everyone sees.
             expect(headers).toHaveLength(10);
             expect(wrapper.find("[data-test='trust-row']").findAll("td")).toHaveLength(10);
             // Before the drawer chevron's empty header.

@@ -22,7 +22,10 @@
 # Helm release records: HELM_DRIVER=configmap. Helm's Secret driver finds a release by LISTing
 # secrets with a label selector, and RBAC cannot scope a list to a name — a list returns contents.
 # ConfigMap records cost this identity configmap write access (it could rewrite the rendered
-# governance document), which is a smaller exposure than read-every-credential. The deploy side has
+# governance document). This is not a boundary around the credentials: the Role creates and patches
+# Deployments and Jobs, so the identity could start a pod that mounts any Secret in the namespace,
+# and permission to create workloads amounts to permission to read Secrets. What the driver buys is
+# that the credentials are not one `list` away and are not in `helm get values`. The deploy side has
 # to use the same driver, or it cannot see the release this agent upgrades.
 #
 # The trust's Secret must live outside the release (secrets.create=false). With secrets.create the AES

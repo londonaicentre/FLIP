@@ -226,6 +226,11 @@ How the agent behaves:
   Secrets means *listing* them, and a list returns their contents. That write access reaches the Trust's
   governance document too, so before reporting an upgrade as done the agent compares the live document with the
   one the release carries and reports **Failed** if they differ, leaving the release as it is.
+- **What the narrow identity does and does not buy.** The Role can create and patch Deployments and Jobs, and in
+  Kubernetes permission to create workloads amounts to permission to read Secrets: the agent's identity could start a
+  pod that mounts any Secret in the namespace. What it does buy is that the credentials are not one ``list`` away and
+  are not in ``helm get values``, so reading them takes a deliberate act that the cluster's audit log records, not a
+  side effect of finding the release. Treat the agent's ServiceAccount as one that can reach the namespace's Secrets.
 
 .. warning::
 
@@ -334,6 +339,9 @@ failed attempt reached a migration. So it does not move the Trust back by itself
   My Trust;
 - it refuses to try that release again until an operator has restored the Trust and **cleared the failure** in the
   portal — the *Try this release again* button on the card;
+- the hub assigns the Trust **no FL job** until the failure is cleared, the same as while an upgrade is running: a
+  half-upgraded site can still answer ``/health``, so nothing else would stop a job landing there. Queued jobs that
+  involve the Trust wait; jobs that do not involve it still run;
 - it treats every failure the same way, including one that never got as far as recreating anything: the upgrade is a
   single ``helm pull`` and ``helm upgrade``, so a chart that cannot be pulled, a rejected upgrade and a pod that dies
   on start all end as **Failed** on that release. The hub blocks that one release; other releases are unaffected.
@@ -357,12 +365,21 @@ The whole fleet at a glance
 My Trust is one Trust. A FLIP admin who runs several needs the other direction: who is behind, whose upgrade failed, and
 whose switch is off. **Connection status** carries that as an *Upgrade* column, one row per Trust, showing the same
 states the card shows — *Up to date*, *Pending*, *Upgrading*, *Upgraded*, *Failed* — with the release it is waiting for
-or failing on in the cell's tooltip. It is one hub call for the fleet, so the column costs nothing per row, and it is
+or failing on in the cell's tooltip. A Trust that is behind with automatic upgrades switched off (every Compose Trust,
+which upgrades by hand) shows *Behind (manual)* instead of *Pending*, so the column says whether the agent will move it
+or a person has to; the *Pending* tooltip lists what is holding the agent back (agent offline, outside the window,
+jobs running, an unhealthy site). It is one hub call for the fleet, so the column costs nothing per row, and it is
 admin-only: a Trust Admin's own Trust is on My Trust.
 
 ********************
 Turning it on or off
 ********************
+
+.. warning::
+
+   Until FLIP#2071 lands, the agent runs neither ``xnat-init``
+   nor the xnat-db dump that must precede a PostgreSQL major-version change. **Do not switch it on for a Trust that
+   runs XNAT** — which is every production Trust. Upgrade those by hand (:ref:`admin-upgrading-sites`).
 
 - **Defaults.** The agent is off in the chart and the switch is off on the hub, so every Trust starts **off** — no
   live site is surprised. The operator enables the agent at deploy time, then a Trust Admin opts in from My Trust,

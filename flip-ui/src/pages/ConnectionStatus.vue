@@ -267,13 +267,13 @@
                                     </template>
                                     <span class="flex-1" />
                                     <span
-                                        v-if="upgradeFor(t.id)"
+                                        v-if="isAdmin && upgradeFor(t.id)"
                                         data-test="trust-upgrade-mobile"
                                         class="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0"
-                                        :class="UPGRADE_CLASSES[upgradeFor(t.id)!.state]"
+                                        :class="upgradeClass(upgradeFor(t.id)!)"
                                         :title="upgradeTitle(upgradeFor(t.id)!)"
                                     >
-                                        {{ UPGRADE_LABELS[upgradeFor(t.id)!.state] }}
+                                        {{ upgradeLabel(upgradeFor(t.id)!) }}
                                     </span>
                                     <span
                                         data-test="trust-services-mobile"
@@ -416,14 +416,14 @@
                                             />
                                         </div>
                                     </td>
-                                    <td class="px-4 py-4 align-middle" data-test="trust-upgrade">
+                                    <td v-if="isAdmin" class="px-4 py-4 align-middle" data-test="trust-upgrade">
                                         <span
                                             v-if="upgradeFor(t.id)"
                                             class="inline-block px-2 py-0.5 rounded text-[11px] font-medium whitespace-nowrap"
-                                            :class="UPGRADE_CLASSES[upgradeFor(t.id)!.state]"
+                                            :class="upgradeClass(upgradeFor(t.id)!)"
                                             :title="upgradeTitle(upgradeFor(t.id)!)"
                                         >
-                                            {{ UPGRADE_LABELS[upgradeFor(t.id)!.state] }}
+                                            {{ upgradeLabel(upgradeFor(t.id)!) }}
                                         </span>
                                         <span v-else class="text-gray-400 dark:text-gray-300">—</span>
                                     </td>
@@ -805,7 +805,8 @@ import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
 import TrustKitSection from "@/partials/connection/TrustKitSection.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
-import { AutoUpgradeState,
+import { AutoUpgradeBlocker,
+    AutoUpgradeState,
     getAutoUpgradeFleet,
     IAutoUpgrade,
     IAutoUpgradeFleetRow,
@@ -875,10 +876,32 @@ const UPGRADE_CLASSES: Record<AutoUpgradeState, string> = {
     FAILED: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
 };
 
-// What the pill cannot say in two words: which release, and for a failure, what went wrong.
+// PENDING only says "behind the hub's release". With the switch off nothing will move the trust (every Compose
+// trust after every release), so that case gets its own label: the agent will do it vs a person has to.
+const isManual = (view: IAutoUpgrade): boolean => view.state === "PENDING" && !view.enabled;
+const MANUAL_CLASSES = "bg-gray-100 text-amber-700 dark:bg-dark-surface dark:text-amber-300";
+const upgradeLabel = (view: IAutoUpgrade): string => (isManual(view) ? "Behind (manual)" : UPGRADE_LABELS[view.state]);
+const upgradeClass = (view: IAutoUpgrade): string => (isManual(view) ? MANUAL_CLASSES : UPGRADE_CLASSES[view.state]);
+
+const BLOCKER_SHORT: Record<AutoUpgradeBlocker, string> = {
+    JOBS_RUNNING: "a training job is running",
+    OUTSIDE_WINDOW: "outside the maintenance window",
+    SITE_UNHEALTHY: "the site is not healthy",
+    AGENT_OFFLINE: "the agent has not checked in"
+};
+
+// What the pill cannot say in two words: which release, what holds it back, and for a failure, what went wrong.
 const upgradeTitle = (view: IAutoUpgrade): string => {
     if (view.state === "PENDING") {
-        return view.targetRelease ? `Waiting to move to ${view.targetRelease}` : "Waiting to move";
+        if (!view.enabled) {
+            const behind = view.targetRelease ? `Behind the hub's ${view.targetRelease}` : "Behind the hub's release";
+
+            return `${behind}; automatic upgrades are off, so it is upgraded by hand`;
+        }
+        const waiting = view.targetRelease ? `Waiting to move to ${view.targetRelease}` : "Waiting to move";
+        const blockers = (view.blockers ?? []).map(b => BLOCKER_SHORT[b] ?? b);
+
+        return blockers.length ? `${waiting}: ${blockers.join("; ")}` : waiting;
     }
     if (view.state === "FAILED") {
         return view.lastAttempt?.detail
@@ -977,8 +1000,8 @@ const BASE_COLUMNS: IColumn[] = [
         width: "w-px"
     },
     {
-        // Only an admin's fleet call fills this in; a Trust Admin sees the same status on My Trust
-        // instead, so everyone else gets an em dash rather than a column that is silently wrong.
+        // Only an admin's fleet call fills this in, so like Jobs it is shown to admins only; a Trust Admin
+        // sees the same status for their own trust on My Trust.
         label: "Upgrade",
         width: "w-px"
     },
@@ -1003,7 +1026,11 @@ const columns = computed<IColumn[]>(() => (showKitColumn.value
     : BASE_COLUMNS));
 
 // The Jobs counts span every project, so the hub sends them to hub admins only (FLIP#1739).
-const visibleColumns = computed(() => columns.value.filter(col => col.label !== "Jobs" || isAdmin.value));
+// The fleet's upgrade state likewise comes from an admin-only call.
+const ADMIN_ONLY_COLUMNS = ["Jobs", "Upgrade"];
+const visibleColumns = computed(() => columns.value.filter(
+    col => isAdmin.value || !ADMIN_ONLY_COLUMNS.includes(col.label)
+));
 
 // Severity-first is the default (design 1b): failing trusts surface on load;
 // admins can re-sort via the column headers when triaging.
