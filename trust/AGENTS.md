@@ -271,7 +271,10 @@ passes it) to create the read-only role on that first start. Adding a dataset me
 both agree before packaging). `prostate_project` (PI-CAI fold 0, 300 bpMRI studies, one center per
 `source_trust` — ZGT → 1, PCNN → 2, RUMC → 3 waiting for a third trust — in
 `fl-tutorials/datasets/prostate/`) publishes both halves but is not in the default `PROJECTS`: seed it
-with `make -C trust seed-trusts PROJECTS=prostate_project`; its masks reach a project via
+with `make -C trust seed-trusts PROJECTS=prostate_project`. `arkplus_project` (FLIP#2084, the Ark+
+tutorials' synthetic chest X-rays, `fl-tutorials/datasets/arkplus/`) is opt-in the same way, its
+`source_trust` the dataset's own site — `site1` → 1, `site2` → 2, two cohorts from different generators;
+`Chest X-ray` / `Chest X-ray (holdout)` in `procedure_source_value` separate training from evaluation rows. Prostate's masks reach a project via
 `upload_prostate_labels_to_xnat.py` (`make -C fl-tutorials upload-prostate-labels`), and
 `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` drives cohort → pull → enrichment → training of the
 `flower/image_segmentation/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate

@@ -43,6 +43,7 @@ from omop_db_tools.dataset import (
     DEFAULT_PROJECTS,
     OPTIONAL_TABLES,
     PARTITION_MODES,
+    TEXT_COLUMNS,
     split_for_trust,
 )
 
@@ -202,7 +203,7 @@ def load_project(
                     continue
                 raise FileNotFoundError(f"Required table CSV not found: {csv_file_path}")
 
-            full = pd.read_csv(csv_file_path)
+            full = pd.read_csv(csv_file_path, dtype=TEXT_COLUMNS)
             if full.empty and table_name not in OPTIONAL_TABLES:
                 raise ValueError(f"{csv_file_path} contains headers but no rows — refusing to load a truncated table")
             df = split_for_trust(full, num_trusts, trust_index, partition)

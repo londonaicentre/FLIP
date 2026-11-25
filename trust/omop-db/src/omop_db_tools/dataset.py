@@ -68,6 +68,10 @@ OPTIONAL_TABLES = frozenset({"measurement", "observation"})
 DEFAULT_PROJECTS = ["cxr_project", "spleen_project"]
 
 SOURCE_TRUST_COLUMN = "source_trust"
+# Identifier columns held as text in OMOP. Read them as str: otherwise pandas turns an all-digit value
+# such as the AccessionNumber "017355643737" into 17355643737, which no longer matches the DICOM
+# (FLIP#2084 — every arkplus_project accession is twelve digits, and about one in ten starts with 0).
+TEXT_COLUMNS = {"accession_id": str, "person_source_value": str}
 
 HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
 
@@ -186,7 +190,7 @@ def build_canonical(trust_dirs: list[Path], dest_dir: Path, projects: list[str] 
                 if not csv_path.is_file():
                     missing_from.append(str(trust_dir))
                     continue
-                frame = pd.read_csv(csv_path)
+                frame = pd.read_csv(csv_path, dtype=TEXT_COLUMNS)
                 frame[SOURCE_TRUST_COLUMN] = trust_number
                 frames.append(frame)
             if frames and missing_from:

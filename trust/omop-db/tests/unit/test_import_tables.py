@@ -147,6 +147,19 @@ class TestLoadProject:
 
         assert [name for name, _, _ in loaded] == required
 
+    def test_all_digit_accession_ids_are_inserted_as_text(self, tmp_path, monkeypatch):
+        """Read as a number, "017355643737" would be inserted as 17355643737 and never match its study (FLIP#2084)."""
+        required = [table for table in CANONICAL_TABLES if table not in {"measurement", "observation"}]
+        project_dir = _write_project(tmp_path, "arkplus_project", required)
+        image = project_dir / "image_occurrence.csv"
+        pd.read_csv(image).assign(accession_id=["017355643737", "000047445493"]).to_csv(image, index=False)
+        inserted = {}
+        monkeypatch.setattr(pd.DataFrame, "to_sql", lambda self_df, name, con, **kw: inserted.setdefault(name, self_df))
+
+        load_project(_FakeEngine(), tmp_path, "arkplus_project", num_trusts=1, trust_index=1, partition="source_trust")
+
+        assert inserted["image_occurrence"]["accession_id"].tolist() == ["017355643737", "000047445493"]
+
     def test_loads_inside_one_transaction_on_the_same_connection(self, tmp_path, monkeypatch):
         """Clean and every insert share the transaction, so a mid-project failure leaves nothing behind."""
         required = [table for table in CANONICAL_TABLES if table not in {"measurement", "observation"}]
