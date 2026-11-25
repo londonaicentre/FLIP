@@ -222,6 +222,38 @@ class SampleDataOff(unittest.TestCase):
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
 
 
+class SyntheaEhr(unittest.TestCase):
+    """load-synthea-ehr reads the trust's kit like the seed verbs (FLIP#2107): its OMOP login, port and half."""
+
+    KIT_DB = KIT + "OMOP_POSTGRES_USER=site_user\nOMOP_POSTGRES_PASSWORD=rotated pw\nOMOP_POSTGRES_DB=site_db\n"
+
+    def test_a_kit_hands_the_loader_its_login_port_and_slot(self):
+        """Without them the loader logs in with the dev template's password and loads half 1 on every trust."""
+        out = dry_run("load-synthea-ehr", kit=self.KIT_DB)
+        assert "load-synthea-ehr TRUST_INDEX=9 OMOP_DB_PORT=5499" in out, out
+        assert "OMOP_POSTGRES_USER=site_user OMOP_POSTGRES_PASSWORD='rotated pw'" in out, out
+        assert "OMOP_POSTGRES_DB=site_db" in out, out
+
+    def test_the_half_follows_source_trust_and_an_explicit_index_wins(self):
+        assert "TRUST_INDEX=1 " in dry_run("load-synthea-ehr", "SOURCE_TRUST=1", kit=self.KIT_DB)
+        assert "TRUST_INDEX=2 " in dry_run("load-synthea-ehr", "SOURCE_TRUST=1", "TRUST_INDEX=2", kit=self.KIT_DB)
+
+    def test_without_a_kit_the_dev_usage_is_unchanged(self):
+        """The documented dev call passes the index and port by hand and needs no kit file."""
+        out = dry_run("load-synthea-ehr", "KIT=", "TRUST_INDEX=2", "OMOP_DB_PORT=5436")
+        assert "load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436" in out, out
+        assert "OMOP_POSTGRES_" not in out, out
+        assert "TRUST_DATA_SEED" not in out, out
+
+    def test_a_trust_with_the_sample_data_off_is_refused_unless_forced(self):
+        """A working login could otherwise put synthetic persons into a trust's own data."""
+        result = run_target("load-synthea-ehr", kit=self.KIT_DB + "TRUST_DATA_SEED=false\n")
+        assert result.returncode != 0, result.stdout
+        assert "has TRUST_DATA_SEED=false" in result.stdout, result.stdout + result.stderr
+        out = dry_run("load-synthea-ehr", "FORCE_SEED=1", kit=self.KIT_DB + "TRUST_DATA_SEED=false\n")
+        assert "load-synthea-ehr TRUST_INDEX=9" in out, out
+
+
 class MonaiLabelArchive(unittest.TestCase):
     """up-xnat's xnat-reset recreates the archive under a running monailabel, whose mount keeps the deleted one."""
 
