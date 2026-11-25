@@ -26,6 +26,9 @@ on:
     paths:
       - "scripts/**"
       - "trust/deploy/scripts/**"
+      # test_trust_endpoints.py holds the docs' network tables to the one endpoint list (FLIP#2076).
+      - "trust/deploy/endpoints.toml"
+      - "docs/source/deploy-flip/*.rst"
       - ".github/workflows/test_trust_kit_scripts.yml"
       # test_trust_data_seed.py holds its TRUST_DATA_SEED readers to trust_kit_lib's.
       - "deploy/env_mode.mk"
