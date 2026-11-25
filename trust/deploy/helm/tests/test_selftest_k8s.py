@@ -818,6 +818,33 @@ def _checks(values, smoke=_no_smoke, **cluster):
     return {c.name: c for c in selftest.run_checks(FakeCluster(**cluster), values, smoke, 0, 0)}
 
 
+@pytest.mark.parametrize(
+    ("health", "status", "says"),
+    [
+        ('{"status":"ok","hub_version":"v0.16.0","hub_key_match":true}', "pass", "it runs v0.16.0"),
+        ('{"status":"ok","hub_key_match":false}', "fail", "key differs"),
+        ('{"status":"ok","hub_key_match":null}', "warn", "no heartbeat reply yet"),
+        ('{"status":"ok"}', "warn", "no heartbeat reply yet"),
+        (None, "warn", "no heartbeat reply yet"),
+    ],
+    ids=["matching key", "different key", "no reply yet", "older trust-api", "trust-api down"],
+)
+def test_the_hub_heartbeat_is_read_from_trust_apis_health(health, status, says):
+    check = selftest.node_checks.check_hub_heartbeat(FakeCluster(health=health))
+    assert check.status.value == status, check
+    assert says in check.detail
+
+
+def test_the_heartbeat_is_checked_only_when_asked_for():
+    skipped = _checks(_values(), smoke=lambda: (0, "ok", ""))["hub heartbeat"]
+    assert skipped.status.value == "skipped"
+    assert "--hub" in skipped.detail
+    cluster = FakeCluster(health='{"status":"ok","hub_key_match":true}')
+    asked = selftest.run_checks(cluster, _values(), lambda: (0, "ok", ""), 0, 0, hub=True)
+    assert asked[-1].name == "hub heartbeat"
+    assert asked[-1].status.value == "pass"
+
+
 def test_the_release_reports_the_rows_every_platform_reports():
     """The contract that keeps the platforms from drifting (FLIP#1449); Compose's half is in test_check_node.py."""
     checks = _checks(_values(), smoke=lambda: (0, "ok", ""))

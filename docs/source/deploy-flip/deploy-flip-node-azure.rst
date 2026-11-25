@@ -235,7 +235,8 @@ operator uploads it to the kit drop and installs it with ``join``:
 
 ``join`` fetches the kit with the node's identity, installs its kit file (owner-only) with the
 node's own settings appended, stages the FL kit for the client that reads it and runs
-``up-onprem-trust``, whose readiness checklist must pass before anything starts. The node's FL
+``up-onprem-trust``, whose readiness checklist must pass before anything starts and which ends by
+checking the running stack (``make check-onprem-trust KIT=<CODE>`` on the node repeats that check). The node's FL
 client dials the hub's FL edge outbound. The edge admits only declared trust addresses, so the FLIP
 team must have added the node's egress address first (see :ref:`deploy-flip-node-azure-network`).
 

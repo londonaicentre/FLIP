@@ -239,7 +239,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--site",
         action="store_true",
-        help="this is the site's own stack: send no study unless the kit loads the sample data",
+        help="this is the site's own stack: it should reach its hub, and no study is sent unless the kit "
+        "loads the sample data",
     )
     parser.add_argument("--earlier-rows", type=Path, help="rows recorded before these checks, to head the report")
     parser.add_argument("--fl-settle-seconds", type=int, default=45)
@@ -264,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         no_study="TRUST_DATA_SEED=false: the node holds the site's own data, so no study is sent"
         if args.site and not seeded
         else "",
+        no_hub="" if args.site else "a self-test stack is joined to no hub",
         conversion_timeout=args.conversion_timeout,
         fl_settle_seconds=args.fl_settle_seconds,
     )

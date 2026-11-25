@@ -273,6 +273,7 @@ def run_checks(
     smoke: Callable[[], tuple[int, str, str]],
     conversion_timeout: int,
     fl_settle_seconds: int,
+    hub: bool = False,
 ) -> list[Check]:
     """The shared node checks against this release; a check with no data to work on is skipped."""
     no_omop, no_orthanc = missing_sample_data(values)
@@ -284,6 +285,7 @@ def run_checks(
         smoke=smoke,
         no_omop=no_omop,
         no_orthanc=no_orthanc,
+        no_hub="" if hub else "not asked for: --hub checks the heartbeat of a release joined to a hub",
         conversion_timeout=conversion_timeout,
         fl_settle_seconds=fl_settle_seconds,
     )
@@ -296,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--context", default=None)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fl-settle-seconds", type=int, default=45)
+    parser.add_argument("--hub", action="store_true", help="also check trust-api's heartbeat to the hub")
     # A first conversion on a node pulls the dcm2niix image before it can start.
     parser.add_argument("--conversion-timeout", type=int, default=600)
     args = parser.parse_args(argv)
@@ -315,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         lambda: run_smoke(args.namespace, args.release, args.context),
         args.conversion_timeout,
         args.fl_settle_seconds,
+        args.hub,
     )
     write_report(checks, args.out, backend, started, now(), stamp)
     return trust_checks.exit_code(checks)

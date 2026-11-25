@@ -165,6 +165,7 @@ playbook; see :ref:`onprem-operator-access`):
 
    make upgrade-onprem-trust KIT=<CODE>                # e.g. KIT=GSTT; targets the hub's release
    make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z     # or pin the release explicitly
+   make check-onprem-trust KIT=<CODE>                  # the upgrade ends with this check; re-run it at any time
 
 .. list-table:: Options
    :header-rows: 1

@@ -101,8 +101,21 @@ a re-run.
 
 ## Node self-test
 
+- **`node_checks.py`** — the checks of a running trust node, written once for every platform
+  (FLIP#1449): services ready, FL kit delivered, the three APIs healthy, OMOP and Orthanc hold
+  data, Orthanc requires auth, a C-STORE reaches XNAT, dcm2niix converts it, the FL client stays
+  up, and the hub heartbeat. Each asks its question from inside a container the node already runs,
+  through a small interface (`Node`). `ROWS` is the list both platforms report, held by a test on
+  each side.
+- **`check_node.py`** (`make -C trust check-node KIT=<CODE>`, or `make check-onprem-trust
+  KIT=<CODE>` from the repo root) — the Compose answer to that interface, through `docker`. It
+  checks the stack that is running and starts nothing; `up-onprem-trust` and
+  `upgrade-onprem-trust` end with it, and its result never changes theirs. On a kit with
+  `TRUST_DATA_SEED=false` it sends no study. The Kubernetes answer is
+  `trust/deploy/helm/scripts/selftest_k8s.py`.
 - **`selftest_node.sh`** (`make -C trust selftest-node FL_BACKEND=<backend>`) — the trust-node
-  self-test checklist. It runs on the node itself, needs no hub ("hubless"), and writes a JSON +
-  markdown report (FLIP#1390, FLIP#1406).
+  self-test. It runs on the node itself, needs no hub ("hubless"): it brings a throwaway stack up
+  on a generated kit, runs `check_node.py` against it, and tears it down. JSON + markdown report
+  (FLIP#1390, FLIP#1406).
 - **`selftest_kit.py`** — called by `selftest_node.sh` to write a hubless kit file for the
   self-test: a hub URL under `.invalid`, fresh random keys, slot `Trust_1`.

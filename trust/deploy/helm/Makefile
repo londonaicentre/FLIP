@@ -470,9 +470,9 @@ xnat-db-remove-old-cluster: ## List the PostgreSQL cluster an xnat-db major upgr
 # FL client steady. Needs no hub.
 # Writes selftest-k8s-<backend>-<stamp>.{json,md} under SELFTEST_OUT; exits non-zero on a failure.
 SELFTEST_OUT ?= $(REPO_ROOT)/build/selftest
-selftest: ## Run the trust self-test against the deployed release and write a report
+selftest: ## Run the trust self-test against the deployed release and write a report (HUB_CHECK=1: also its hub heartbeat)
 	python3 $(CHART_DIR)/scripts/selftest_k8s.py --namespace $(NAMESPACE) --release $(RELEASE_NAME) \
-		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT)) --out $(SELFTEST_OUT)
+		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT)) --out $(SELFTEST_OUT) $(if $(HUB_CHECK),--hub)
 
 # NVFLARE's study file for job pods (FLIP#1678): the site maintains it, the fl-client only reads it. The
 # fl-client builds the file (it holds the job-pod template and creates each project's images folder) and this

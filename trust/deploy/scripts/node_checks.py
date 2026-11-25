@@ -54,6 +54,7 @@ ROWS = (
     "xnat c-store",
     "dcm2niix conversion",
     "fl client running",
+    "hub heartbeat",
 )
 
 
@@ -114,6 +115,34 @@ def check_health(node: Node, component: str) -> Check:
     return verdict(
         name, healthy, f"ok from :{port}/health" if healthy else f"no healthy answer from :{port}/health ({body[:120]})"
     )
+
+
+def check_hub_heartbeat(node: Node) -> Check:
+    """trust-api's last heartbeat reached the hub, and the hub holds the same key (its /health says both)."""
+    name = "hub heartbeat"
+    pod = node.pod("trust-api")
+    if not pod:
+        return failed(name, "no running trust-api container")
+    port = node.container_port(pod) or 8000
+    ok, body = node.exec(
+        pod,
+        'python3 -c "import urllib.request; '
+        f"print(urllib.request.urlopen('http://127.0.0.1:{port}/health', timeout=10).read().decode())\"",
+    )
+    try:
+        health = json.loads(body) if ok else {}
+    except json.JSONDecodeError:
+        health = {}
+    match = health.get("hub_key_match") if isinstance(health, dict) else None
+    if match is True:
+        return passed(
+            name, f"the hub answered (it runs {health.get('hub_version') or 'an unreported release'}), key matches"
+        )
+    if match is False:
+        return failed(
+            name, "the hub answered, but its key differs from this trust's: refresh the kit's hub-shared block"
+        )
+    return Check(name, trust_checks.Status.WARN, "no heartbeat reply yet; trust-api polls about once a minute")
 
 
 def check_omop_seeded(node: Node) -> Check:
@@ -447,6 +476,7 @@ def run_checks(
     no_omop: str = "",
     no_orthanc: str = "",
     no_study: str = "",
+    no_hub: str = "",
     conversion_timeout: int = 600,
     fl_settle_seconds: int = 45,
 ) -> list[Check]:
@@ -454,7 +484,8 @@ def run_checks(
 
     ``ready`` is the platform's own answer to "is every service up". ``no_omop`` and ``no_orthanc`` say why the node
     holds no sample data, and skip the rows that need it. ``no_study`` says why no study may be sent at all (a site
-    holding real data), and skips the C-STORE and the conversion whatever Orthanc holds.
+    holding real data), and skips the C-STORE and the conversion whatever Orthanc holds. ``no_hub`` says why the node
+    is not expected to reach a hub (a hubless self-test).
     """
     checks: list[Check] = []
 
@@ -507,4 +538,8 @@ def run_checks(
         attempt("dcm2niix conversion", conversion)
     if fl_enabled:
         attempt("fl client running", lambda: check_fl_client(node, fl_settle_seconds))
+    if no_hub:
+        skip("hub heartbeat", no_hub)
+    else:
+        attempt("hub heartbeat", lambda: check_hub_heartbeat(node))
     return checks

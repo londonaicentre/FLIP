@@ -321,6 +321,19 @@ and the FL endpoint reachable from this host (the image registries too, as a war
 ``FL_KIT_DIR`` and the FL kit contents, and GPU capacity. Fix every ❌ row; ``up-onprem-trust`` runs the same checks
 and will not start until they pass.
 
+Once the stack is up, ``up-onprem-trust`` checks it: every service is running, the three APIs answer, OMOP and
+Orthanc hold data, Orthanc refuses a request without credentials, a study sent from Orthanc reaches XNAT and is
+converted, the FL client stays up, and trust-api's heartbeat has reached the hub. It writes the result as a report
+under ``build/checks/``. The check never changes the outcome of the install: a service that is still starting shows
+as a ❌ row, and you run the check again when it has settled:
+
+.. code-block:: shell
+
+   make check-onprem-trust KIT=<CODE>
+
+It starts and changes nothing. On a kit with ``TRUST_DATA_SEED=false`` the node holds your own data, so no study is
+sent and those two rows are skipped.
+
 Then continue at step 6 of :doc:`onboarding-a-trust`.
 
 .. tip::
