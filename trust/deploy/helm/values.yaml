@@ -534,9 +534,8 @@ flClient:
       #   one of its sessions; until then, and for assessor resources, its jobs stream.
       # - stream: no images volume. Each job streams its studies from imaging-api into its own run
       #   directory (FLIP#1049), so job pods run on any node; size ephemeralStorage for them.
-      # With project or archive a project's jobs start only once the site has given it a study entry:
-      # `make sync-project-studies`, after the first deploy, each approval, each upgrade and each change
-      # of this setting, and with archive also after each project's first imaging pull.
+      # The fl-client's launcher gives each project's job its study entry, with this mode's mount, when
+      # the job starts (FLIP#1678): nothing to sync after an approval, an upgrade or a change of this.
       images: project
       # GPUs the site lends to jobs at once. NVFLARE queues a job asking for more, and the hub shows
       # why (FLIP#1423); 0 keeps every job on CPU. Set it to the GPU pool's maximum node count x GPUs

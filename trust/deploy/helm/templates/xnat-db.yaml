@@ -258,7 +258,8 @@ spec:
     - metadata:
         name: data
         labels:
-          {{- include "flip-trust.claimTemplateLabels" (list . (printf "%s-xnat-db" (include "flip-trust.fullname" .)) "data" "xnat-db") | nindent 10 }}
+          {{- include "flip-trust.claimTemplateLabels" . | nindent 10 }}
+          app.kubernetes.io/component: xnat-db
       spec:
         accessModes:
           - {{ .Values.xnat.db.persistence.accessMode }}

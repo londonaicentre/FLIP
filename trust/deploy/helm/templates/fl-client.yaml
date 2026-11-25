@@ -428,7 +428,7 @@ spec:
                 [ -f "{{ $ws }}/local/$cfg" ] || { echo "local/$cfg is missing: fl-client-init must run first" >&2; exit 1; }
               done
               {{- if $jobPods }}
-              # A link to the site's study file, which exists once the operator has run sync-project-studies.
+              # A link to the operator's study file, which need not exist: the launcher builds projects' entries.
               [ -L "{{ $ws }}/local/study_runtime.yaml" ] || { echo "local/study_runtime.yaml is not linked: fl-client-init must run first" >&2; exit 1; }
               {{- end }}
               python -m flip.nvflare.site_policy --assert-rendered {{ $ws }}/local/privacy.json
@@ -497,8 +497,8 @@ spec:
             # Writable root for the per-job directories; the kit's folders mount inside it.
             - name: fl-workspace
               mountPath: {{ $ws }}
-            # The site's NVFLARE study file, which the operator maintains (make sync-project-studies,
-            # FLIP#1678). Mounted as a folder, so a change reaches the client without a restart.
+            # The operator's NVFLARE study file (make sync-project-studies, FLIP#1678), if any. A project's
+            # entry is built at launch, so it serves only studies that are not projects. Mounted as a folder.
             - name: fl-studies
               mountPath: /app/studies
               readOnly: true
@@ -655,7 +655,7 @@ spec:
             name: {{ include "flip-trust.fullname" . }}-fl-job-pod-{{ .Values.flClient.netId }}
         - name: fl-studies
           configMap:
-            # Not the chart's: make sync-project-studies creates it, so a helm upgrade never resets it.
+            # Not the chart's, and optional: make sync-project-studies creates it; a helm upgrade never resets it.
             name: {{ include "flip-trust.fullname" . }}-fl-studies-{{ .Values.flClient.netId }}
             optional: true
         {{- end }}

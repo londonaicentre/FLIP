@@ -817,8 +817,8 @@ make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1
 # steady; writes a JSON + markdown report under build/selftest/ and needs no hub
 make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>
 
-# NVFLARE job pods: give each approved project its entry in the site's NVFLARE study file (FLIP#1678);
-# run after the first deploy, each project approval and each upgrade
+# NVFLARE job pods: not needed since v0.16, the launcher builds each project's study entry at launch
+# (FLIP#1678); this writes only the operator's study file
 make -C trust/deploy/helm sync-project-studies KUBE_CONTEXT=<ctx>
 ```
 

@@ -64,6 +64,18 @@ Create chart name and version as used by the chart label.
 {{- end }}
 
 {{/*
+Labels for a StatefulSet's volumeClaimTemplates. Kubernetes never lets that field change, so they must not
+carry the chart's version: they stay what every StatefulSet installed before the chart was versioned (FLIP#1752)
+was created with, chart 0.1.0 and app 1.0, or every upgrade to a new release is refused.
+*/}}
+{{- define "flip-trust.claimTemplateLabels" -}}
+helm.sh/chart: flip-trust-0.1.0
+{{ include "flip-trust.selectorLabels" . }}
+app.kubernetes.io/version: "1.0"
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
 Common labels
 */}}
 {{- define "flip-trust.labels" -}}
@@ -280,32 +292,4 @@ Deployment.
   value: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
 - name: FL_SITE_PRIVACY_GAMMA
   value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
-{{- end }}
-
-{{/*
-Labels for a StatefulSet's volumeClaimTemplate. Call with (list $ $stsName $claimName $component).
-
-volumeClaimTemplates is immutable, so these must not change between releases: no helm.sh/chart and
-no app.kubernetes.io/version, which every release bumps and which made every `helm upgrade` of a
-trust fail on omop-db (FLIP#1644, found on a kind cluster). A release installed before this fix
-still carries those labels in its live template; `lookup` keeps them verbatim so its next upgrade
-leaves the field untouched. `helm template` has no cluster, so it always renders the stable set.
-*/}}
-{{- define "flip-trust.claimTemplateLabels" -}}
-{{- $ctx := index . 0 -}}
-{{- $live := lookup "apps/v1" "StatefulSet" (include "flip-trust.namespace" $ctx) (index . 1) -}}
-{{- $kept := dict -}}
-{{- if $live -}}
-{{- range $live.spec.volumeClaimTemplates -}}
-{{- if eq .metadata.name (index $ 2) -}}
-{{- $kept = .metadata.labels | default dict -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- if $live -}}
-{{- toYaml $kept -}}
-{{- else -}}
-{{ include "flip-trust.selectorLabels" $ctx }}
-app.kubernetes.io/component: {{ index . 3 }}
-{{- end -}}
 {{- end }}

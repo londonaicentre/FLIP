@@ -106,7 +106,8 @@ spec:
     - metadata:
         name: storage
         labels:
-          {{- include "flip-trust.claimTemplateLabels" (list . (printf "%s-loki" (include "flip-trust.fullname" .)) "storage" "loki") | nindent 10 }}
+          {{- include "flip-trust.claimTemplateLabels" . | nindent 10 }}
+          app.kubernetes.io/component: loki
       spec:
         accessModes:
           - {{ .Values.observability.loki.persistence.accessMode }}
