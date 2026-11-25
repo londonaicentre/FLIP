@@ -481,7 +481,7 @@ selftest: ## Run the trust self-test against the deployed release and write a re
 FL_NET ?= net-1
 FL_STUDIES_POD = $(KUBECTL) get pod -n $(NAMESPACE) --field-selector=status.phase=Running -o name \
 	-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component
-sync-project-studies: ## Give each approved project its NVFLARE study entry for job pods; PROJECTS="<id> ..." names them
+sync-project-studies: ## Not needed since v0.16 (job pods build each project's study entry at launch): write the operator's study file
 	@set -e; \
 	client=$$($(FL_STUDIES_POD)=fl-client,flip/network=$(FL_NET) | head -1); \
 	[ -n "$$client" ] || { echo "❌ no running fl-client for $(FL_NET) in $(NAMESPACE)"; exit 1; }; \
