@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
@@ -196,14 +195,15 @@ def cstore(
     # XNAT records the receipt after the store has returned, so poll for it rather than read once.
     after = lines(RECEIVED_LOG)
     for _ in range(settle_seconds):
-        if after > before:
+        if after != before:
             break
         sleep(1)
         after = lines(RECEIVED_LOG)
     _, errors = node.exec(pod, f"tail -n +{dicom_before + 1} {DICOM_LOG} 2>/dev/null | grep -cE '{IMPORTER_ERRORS}'")
     if errors.strip().isdigit() and int(errors) > 0:
         return 1, f"XNAT's importer logged {errors.strip()} failure(s) in dicom.log", ""
-    if after <= before:
+    # XNAT starts a new received.log with the day's first object, so a count that fell is a receipt too.
+    if after == before:
         return 1, f"XNAT never recorded the object: received.log stayed at {before} lines", ""
     return 0, f"1 instance received (received.log {before}->{after}); no importer error in dicom.log", ""
 
@@ -233,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", required=True, help="the trust's Compose project, e.g. trust1")
     parser.add_argument("--xnat-stack", required=True, help="the trust's XNAT swarm stack, e.g. xnat1")
     parser.add_argument("--kit-file", type=Path, required=True)
+    parser.add_argument("--backend", choices=("nvflare", "flower"), required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--stem", help="report file name without its extension (default node-<project>-<stamp>)")
     parser.add_argument("--latest", help="name of the copy that is overwritten each run (default latest-<project>)")
@@ -243,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     kit = read_kit(args.kit_file)
-    backend = kit.get("FL_BACKEND") or os.environ.get("FL_BACKEND") or "nvflare"
+    backend = args.backend
     seeded = trust_kit_lib.trust_data_seed(kit)
     no_data = "" if seeded else "TRUST_DATA_SEED=false, so the node holds no sample data"
     node = DockerNode(args.project, args.xnat_stack)
