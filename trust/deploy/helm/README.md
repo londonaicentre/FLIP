@@ -1349,9 +1349,8 @@ XNAT is configured for the same PACS, schedule and image tag as the deploy that 
 Anything else you pass is applied over the release's values and wins: a `VALUES_FILE`,
 `PLATFORM_VALUES` (with `KIT`, the kit's `K8S_PLATFORM_VALUES`), then `TAG`. Add `KUBE_CONTEXT`,
 `NAMESPACE` or `RELEASE_NAME` if the deploy named them; the failure messages print the command with
-them. If the release's values cannot be read the target stops rather than render from the chart
-defaults, which would point XNAT at the mocked PACS; only when no such release exists does it use
-the defaults. With `OVERRIDES_FILE` (as `deploy-trust-k8s` and `upgrade-trust-k8s` call it) the
+them. If the release's values cannot be read, or there is no such release, the target stops rather
+than render from the chart defaults, which would point XNAT at the mocked PACS. With `OVERRIDES_FILE` (as `deploy-trust-k8s` and `upgrade-trust-k8s` call it) the
 release is not read and the job is rendered from that file and the rest of what was passed.
 
 Two things worth knowing now that `make deploy` calls this target itself:

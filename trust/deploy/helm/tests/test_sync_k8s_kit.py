@@ -592,3 +592,26 @@ def test_the_next_step_names_the_cluster_namespace_and_release_it_was_given(tmp_
 
 def test_patch_kit_secrets_does_not_end_by_recommending_the_deploy_it_is_the_last_step_of(tmp_path, capsys):
     assert "deploy-trust-k8s" not in _next_step(tmp_path, capsys, write_override=False)
+
+
+def test_no_next_step_prints_no_deploy_command(tmp_path, capsys):
+    assert "deploy-trust-k8s" not in _next_step(tmp_path, capsys, next_step=False)
+
+
+@pytest.mark.parametrize(
+    ("target", "printed"),
+    [("sync-kit", True), ("sync-kit-override", False), ("_upgrade-trust-k8s-apply", False)],
+)
+def test_only_a_standalone_sync_kit_prints_the_deploy_command(target, printed):
+    """deploy-trust-k8s runs sync-kit-override and upgrade-trust-k8s runs sync-kit: neither should tell
+    the operator, mid-run, to run a deploy."""
+    if shutil.which("make") is None:
+        pytest.skip("make is not installed")
+    chart = Path(__file__).resolve().parents[1]
+    out = subprocess.run(
+        ["make", "-n", "-C", str(chart), target, "KIT=Trust_K8s", "HUB=stag"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    ).stdout
+    assert ("--no-next-step" not in out) is printed, out

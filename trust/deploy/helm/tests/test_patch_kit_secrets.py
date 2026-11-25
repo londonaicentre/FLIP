@@ -304,6 +304,15 @@ def test_no_secret_after_the_patch_stops_the_target(tmp_path):
     assert _restarted(calls) == []
 
 
+def test_a_release_with_no_trust_api_fails(tmp_path):
+    """A mistyped RELEASE_NAME: the patch creates a stray Secret and the listing finds nothing."""
+    result, calls = _make(tmp_path, "patch-kit-secrets", "RELEASE_NAME=typo", entries_before=None, DEPLOYMENTS="")
+
+    assert result.returncode != 0
+    assert "no trust API Deployment for release typo" in result.stdout
+    assert _restarted(calls) == []
+
+
 def test_an_unreadable_cluster_fails_before_any_restart(tmp_path):
     result, calls = _make(tmp_path, "patch-kit-secrets", GET_RC="1")
 

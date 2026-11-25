@@ -253,23 +253,15 @@ def test_the_charts_default_values_file_is_not_laid_over_the_releases_values(tmp
     assert not any(arg.endswith("/values.yaml") for arg in template[template.index(release_values) :])
 
 
-def test_xnat_init_with_no_release_keeps_the_chart_defaults(tmp_path):
-    result, calls = _make(tmp_path, "xnat-init", HELM_GET_ERR="Error: release: not found")
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "helm template" in calls
-    assert "template read the release values" not in calls
-    assert "no release trust-release" in result.stdout
-
-
-def test_xnat_init_refuses_to_guess_when_the_release_cannot_be_read(tmp_path):
-    """An unreachable cluster is not "no release": falling back to the defaults there is the same
-    wrong Job, so nothing is rendered or applied."""
-    result, calls = _make(tmp_path, "xnat-init", HELM_GET_ERR="Error: Kubernetes cluster unreachable")
+@pytest.mark.parametrize("error", ["Error: release: not found", "Error: Kubernetes cluster unreachable"])
+def test_xnat_init_stops_when_the_release_cannot_be_read(tmp_path, error):
+    """Rendered from the chart defaults, the Job reads a Secret no release created and waits on it
+    until HELM_TIMEOUT; an unreachable cluster is the same wrong Job. Nothing is rendered or applied."""
+    result, calls = _make(tmp_path, "xnat-init", HELM_GET_ERR=error)
 
     assert result.returncode != 0, result.stdout + result.stderr
-    assert "could not read the values of release trust-release" in result.stdout
-    assert "Kubernetes cluster unreachable" in result.stdout
+    assert "no release trust-release in flip-trust" in result.stdout
+    assert error in result.stderr
     assert "helm template" not in calls
     assert "kubectl" not in calls
 

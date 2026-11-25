@@ -409,7 +409,7 @@ upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upg
 # kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG / DOCKER_FL_TAG) reach Helm — re-patch the
 # Secret from the same kit, then a plain `helm upgrade` at that tag.
 _upgrade-trust-k8s-apply:
-	$(MAKE) sync-kit KIT=$(KIT)
+	$(MAKE) sync-kit KIT=$(KIT) NO_NEXT_STEP=1
 	$(MAKE) xnat-db-migrate-dump
 	$(MAKE) deploy-release OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
 	  || { $(MAKE) xnat-db-drop-unused-dump AFTER_FAILED_DEPLOY=1; exit 1; }
@@ -575,22 +575,17 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	@# none), the Job is rendered from the values the release was deployed with: from the chart
 	@# defaults it would configure XNAT for the mocked PACS on the default image tag and report
 	@# success (FLIP#2047). Whatever else the caller passed (VALUES_FILE, PLATFORM_VALUES, TAG) is
-	@# applied over them. A release that cannot be read stops here for the same reason; only one
-	@# that does not exist falls back to the defaults.
+	@# applied over them. A release that cannot be read, or does not exist, stops it here: rendered
+	@# without one, the Job waits until HELM_TIMEOUT on a Secret no release created.
 	@echo "▶  Rendering XNAT init job from chart templates..."
 	@tmp=$$(mktemp); vals=$$(mktemp); \
 	trap 'rm -f "$$tmp" "$$vals"' EXIT; \
 	opts="$(VALUES_OPTS)"; \
 	if [ -z "$(strip $(OVERRIDES_FILE))" ]; then \
-		if $(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o yaml > $$vals 2> $$tmp; then \
-			opts="-f $$vals $(VALUES_OPTS_OVER_RELEASE)"; \
-			echo "   with the values release $(RELEASE_NAME) was deployed with."; \
-		elif grep -q 'release: not found' $$tmp; then \
-			echo "ⓘ  no release $(RELEASE_NAME) in $(NAMESPACE) — rendering from the chart defaults."; \
-		else \
-			cat $$tmp; \
-			echo "❌  could not read the values of release $(RELEASE_NAME) — xnat-init not run."; exit 1; \
-		fi; \
+		$(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o yaml > $$vals \
+			|| { echo "❌  no release $(RELEASE_NAME) in $(NAMESPACE) — pass RELEASE_NAME/NAMESPACE."; exit 1; }; \
+		opts="-f $$vals $(VALUES_OPTS_OVER_RELEASE)"; \
+		echo "   with the values release $(RELEASE_NAME) was deployed with."; \
 	fi; \
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
@@ -640,7 +635,8 @@ sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit 
 		--output-dir $(CHART_DIR) \
 		$(if $(NO_VOCAB_LOAD),--no-vocab-load) \
 		$(KUBE_CONTEXT_ARG) \
-		--no-apply-secret
+		--no-apply-secret \
+		--no-next-step
 
 patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s HUB=stag"; exit 1)
@@ -657,6 +653,7 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 	@# Deployments are listed as <component>=<name>=<ready replicas>=<recorded>; one the release does
 	@# not render is not restarted, and a client that was not ready is not waited on: awaiting its
 	@# kit or a free GPU it stays Pending, and the wait could only time out (scripts/rollout_wait.py).
+	@# No trust API at all means the wrong release or namespace, whose Secret the patch just created.
 	@secret=$(RELEASE_NAME)-flip-trust-secrets; mark=flip/internal-service-key-sha256; \
 	fingerprint() { \
 		v=$$($(KUBECTL) get secret $$secret -n $(NAMESPACE) --ignore-not-found \
@@ -695,6 +692,7 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 			fi ;; \
 		esac; \
 	done; \
+	[ -n "$$apis" ] || { echo "❌  no trust API Deployment for release $(RELEASE_NAME) in $(NAMESPACE) — pass RELEASE_NAME/NAMESPACE."; exit 1; }; \
 	for name in $$apis; do \
 		$(KUBECTL) rollout restart deployment/$$name -n $(NAMESPACE) || exit 1; \
 	done; \
@@ -727,4 +725,5 @@ sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writ
 		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR) \
 		$(if $(NO_VOCAB_LOAD),--no-vocab-load) \
+		$(if $(NO_NEXT_STEP),--no-next-step) \
 		$(KUBE_CONTEXT_ARG)
