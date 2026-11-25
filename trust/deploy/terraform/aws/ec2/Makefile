@@ -39,7 +39,7 @@ endif
 KIT_FILE = $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
 kit_get = $(shell sed -n 's/^$(1)=//p' $(KIT_FILE) 2>/dev/null | tail -1)
 KIT_SLOT = $(call kit_get,FL_KIT_SLOT_NUMBER)
-FL_PORT = $(call kit_get,FL_EDGE_PORT)
+FL_PORT = $(or $(call kit_get,FL_EDGE_PORT_OVERRIDE),$(call kit_get,FL_EDGE_PORT))
 FL_BACKEND = $(call kit_get,FL_BACKEND)
 lower = $(shell printf '%s' '$(1)' | tr '[:upper:]_' '[:lower:]-')
 

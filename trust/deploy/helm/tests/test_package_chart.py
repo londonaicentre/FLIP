@@ -125,7 +125,9 @@ class TestPublishing:
     def _chart_on_disk(self) -> "object":
         with tempfile.TemporaryDirectory() as tmp:
             self.tmp = Path(tmp)
-            self.chart = self.tmp / "flip-trust"
+            # The real tree's folder name, not the chart's: the .tgz is named after Chart.yaml's `name:`
+            # (flip-trust), and a fixture named like the chart hid that the script used the folder (v0.16.0).
+            self.chart = self.tmp / CHART_DIR.name
             self.chart.mkdir()
             (self.chart / "Chart.yaml").write_text(REAL_CHART)
             (self.chart / "values.yaml").write_text(REAL_VALUES)
@@ -147,6 +149,18 @@ class TestPublishing:
         assert calls[1][:2] == ["helm", "push"]
         assert calls[1][3] == DEFAULT_REGISTRY
         assert package.name == "flip-trust-0.13.0.tgz"
+
+    def test_the_package_is_named_after_the_chart_not_its_folder(self) -> None:
+        """v0.16.0's release failed here: it pushed `helm-0.16.0.tgz`, a file `helm package` never wrote."""
+        assert self.chart.name != "flip-trust"
+        package, calls = self._publish()
+        assert package == self.chart / "flip-trust-0.13.0.tgz"
+        assert calls[1][2] == str(package)
+
+    def test_a_chart_yaml_without_one_name_is_refused(self) -> None:
+        (self.chart / "Chart.yaml").write_text(REAL_CHART.replace("name: flip-trust", "# no name"))
+        with pytest.raises(StampError, match="exactly one `name:`"):
+            self._publish()
 
     def test_the_default_registry_is_the_projects_namespace(self) -> None:
         assert DEFAULT_REGISTRY == "oci://ghcr.io/londonaicentre/charts"

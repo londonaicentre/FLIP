@@ -284,6 +284,10 @@ services:
       - CHOWN
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      # No calls home: a trust's firewall drops them (FLIP#1784).
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
     volumes:
       - ${GRAFANA_DATA_VOLUME:-trust-local-grafana-data}:/var/lib/grafana
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/grafana/provisioning:/etc/grafana/provisioning:ro

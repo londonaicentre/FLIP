@@ -1022,7 +1022,8 @@ The FL client gets ``Connection refused [Errno 111]`` connecting to the FL serve
 Other pods in the namespace can reach the FL server address.
 
 **Cause.** The egress policy does not open the FL server's port. By default it allows only DNS, HTTP and HTTPS;
-``sync-kit`` adds the kit's FL port (``FL_EDGE_PORT``, else ``FL_SERVER_PORT``) to ``networkPolicies.allowedEgressPorts``.
+``sync-kit`` adds the kit's FL port (``FL_EDGE_PORT_OVERRIDE``, else ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``) to
+``networkPolicies.allowedEgressPorts``.
 
 **Check:**
 
@@ -1070,8 +1071,12 @@ nothing read back once the TLS handshake starts.
 
 **Cause.** An application-aware firewall at the site's perimeter rejecting TLS on a non-default port. Nothing in the
 cluster changes it. Confirm with the ``openssl`` check on :ref:`deploy-trust-node-network`, from a pod or the admin
-host, then ask the network team to allow the ``ssl`` application to the FL endpoint on its port, or use a site-to-site
-VPN (:ref:`site-to-site-vpn`).
+host.
+
+**Fix.** Dial 443, the production default: the kit's hub-shared block must carry ``FL_EDGE_PORT=443`` (ask the FLIP
+team to refresh an older kit) and no ``FL_EDGE_PORT_OVERRIDE``. Then redeploy with
+``make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>``. A trust that must dial another port needs the
+network team to allow the ``ssl`` application to the FL endpoint on it.
 
 **********
 Governance

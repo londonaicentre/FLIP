@@ -211,10 +211,9 @@ The node only ever connects outwards. No port is opened to the internet, and the
 into the trust. The firewall must allow a short list of outbound destinations. The full list, noting which destinations
 have been tested behind a deny-everything firewall, is on :ref:`deploy-trust-node-network`.
 
-- ☐ **Outbound HTTPS to the Central Hub**, and to the hub's separate federated-learning endpoint on its own port.
-  The addresses and port come with the trust's kit. The federated-learning connection is TLS on a
-  non-standard port (8002 on the production hub) and must be exempt from TLS inspection. It is the one rule that
-  differs from the usual "outbound 443"; the questions below settle how the site can allow it.
+- ☐ **Outbound HTTPS to the Central Hub**, and to the hub's separate federated-learning endpoint. The addresses and
+  port come with the trust's kit. On the production hub both are TLS on port 443, so the usual "outbound 443" rule
+  covers them. The federated-learning connection must also be exempt from TLS inspection.
 - ☐ **Outbound access to the container registries and package sources** the node installs and updates from, as
   listed on :ref:`deploy-trust-node-network`. A trust with no route to the registries needs a mirror; see
   :doc:`deploy-flip-node-in-tre`.
@@ -227,16 +226,18 @@ have been tested behind a deny-everything firewall, is on :ref:`deploy-trust-nod
 
 .. rubric:: Questions for your network team
 
-Whether the federated-learning rule is a five-minute change or a months-long project depends on answers only the
-network team has. Settle them before the node is built:
+Most sites need only the usual outbound 443 rule. These answers, which only the network team has, show whether
+yours needs more. Settle them before the node is built:
 
 - **How does the node reach the internet?** Directly, through a firewall with an allow-list, is the normal case and
   needs one rule. A site whose only route is an explicit web proxy is not supported yet. A site with no internet
   route for this traffic needs a site-to-site VPN (:ref:`site-to-site-vpn`).
 - **Does the firewall classify traffic by application?** Palo Alto, Fortinet and Check Point devices do. A rule that
-  allows ``ssl`` only on its default port passes 443 and resets the federated-learning connection on its port: the
-  TCP connection opens, the TLS handshake starts, and the connection is reset with nothing read back. Ask for the
-  ``ssl`` application to be allowed to the FL endpoint on its port, or for an application override for it.
+  allows ``ssl`` only on its default port resets TLS on any other port, whatever the protocol: the TCP connection
+  opens, the TLS handshake starts, and the connection is reset with nothing read back. The FL endpoint listens on
+  443 for this reason. The FL traffic is not gRPC: NVIDIA FLARE carries a WebSocket inside mutual TLS, and Flower
+  carries HTTPS. A trust that dials another port needs the ``ssl`` application allowed on it, or an application
+  override.
 - **Is outbound TLS decrypted?** Then the FL endpoint needs an exemption. The FL client accepts only the hub's
   own certificate, so a re-signed connection fails its check.
 - **Can rules name a host, or only an address?** The FL endpoint has a fixed address, so either works; give both.
@@ -247,12 +248,27 @@ network team has. Settle them before the node is built:
 
 The request itself, in a form a firewall team can copy:
 
-   From the FLIP node to the FL endpoint host, at its fixed address, TCP on the FL port,
-   TLS, exempt from decryption, allowed as the ``ssl`` application on that non-default port.
+   From the FLIP node to the FL endpoint host, at its fixed address, TCP 443,
+   TLS, exempt from decryption.
+
+.. _readiness-fl-port-check:
+
+.. rubric:: Check the firewall before the address is admitted
+
+The hub's FL edge admits only declared trust addresses, so the FL endpoint cannot be tested until the FLIP team has
+added yours. These two commands use public test servers instead, and can run from the node at any time:
+
+.. code-block:: shell
+
+   openssl s_client -connect tls-v1-2.badssl.com:1012 </dev/null   # TLS on a non-standard port
+   openssl s_client -connect badssl.com:443 </dev/null              # TLS on 443
+
+If the first is reset (``errno=104``, no certificate) and the second returns a certificate, the firewall passes TLS
+only on 443. Keep the kit's default FL port, 443. Once the address is admitted, the check on
+:ref:`deploy-trust-node-network` tests the FL endpoint itself.
 
 On a Compose node, the trust operator can run ``make onboard-onprem-trust KIT=<CODE>`` to probe every destination
-from the host and list what it cannot reach. :ref:`deploy-trust-node-network` has the check that tells a blocked
-port from a firewall that resets the handshake.
+from the host and list what it cannot reach.
 
 .. _readiness-hardware:
 
