@@ -113,7 +113,8 @@ class UpgradeTrust(unittest.TestCase):
         """Make and compose parse a kit line differently (make keeps quotes and does not expand ~), and the
         shell environment beats --env-file: handing compose make's reading could move a live site's mount."""
         quoted = kit_with("OMOP_DATA_DIR=/nonexistent/omop", 'OMOP_DATA_DIR="/srv/flip/omop"')
-        for kit in (KIT, quoted, kit_with("ORTHANC_STORAGE_DIR=/nonexistent/orthanc", "ORTHANC_STORAGE_DIR=~/pacs")):
+        pacs = "ORTHANC_STORAGE_DIR=/nonexistent/orthanc"  # pragma: allowlist secret
+        for kit in (KIT, quoted, kit_with(pacs, "ORTHANC_STORAGE_DIR=~/pacs")):
             for target in ("up-trust", "_upgrade-trust-apply"):
                 out = dry_run(target, kit=kit)
                 up = next(line for line in out.splitlines() if "docker compose" in line and " up -d" in line)
@@ -138,7 +139,8 @@ class UpgradeTrust(unittest.TestCase):
             assert "OMOP_DATA_DIR_TRUST_9=/opt/flip/omop/db_data" in out, (target, out)
         for target in ("seed-orthanc", "unseed-orthanc"):
             out = dry_run(target, "PROJECTS=cxr_project", "FORCE_SEED=1", kit=DATA_DIRS_UNSET)
-            assert "ORTHANC_STORAGE_DIR_TRUST_9=/opt/flip/orthanc/orthanc-storage" in out, (target, out)
+            pacs = "ORTHANC_STORAGE_DIR_TRUST_9=/opt/flip/orthanc/orthanc-storage"  # pragma: allowlist secret
+            assert pacs in out, (target, out)
 
     def test_build_without_a_kit_gets_no_kit_data_dirs(self):
         result = run_target("build", "KIT=", dry=True, hub="")
