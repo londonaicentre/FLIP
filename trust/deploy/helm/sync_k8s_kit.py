@@ -1040,8 +1040,8 @@ def main(
         print()
 
     print("─" * 64)
-    print("📦 Deploy the chart with the generated override:")
-    print(f"     make -C trust/deploy/helm up OVERRIDES_FILE={rel_override}")
+    print("📦 Deploy the chart from the kit:")
+    print(f"     make -C trust/deploy/helm deploy-trust-k8s KIT={code}{hub}")
     print("─" * 64)
 
 

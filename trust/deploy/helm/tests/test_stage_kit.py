@@ -180,6 +180,14 @@ def test_a_destination_the_wipe_must_not_touch_is_refused(tmp_path, nvflare_kit,
     assert "stage-to-node.sh" not in result.stdout
 
 
+def test_a_kit_whose_file_is_missing_is_refused(tmp_path, nvflare_kit):
+    """Without it the path would be the default, and stage-kit would wipe and fill that instead."""
+    result = make_n_stage_kit(nvflare_kit, "KIT=SITE", f"KIT_FILE={tmp_path / '.env.SITE.development'}")
+    assert result.returncode != 0
+    assert "pass HUB=<env>" in result.stderr
+    assert "stage-to-node.sh" not in result.stdout
+
+
 def test_kit_dest_is_refused_naming_the_kit_file(nvflare_kit):
     result = make_n_stage_kit(nvflare_kit, "KIT_DEST=/srv/kit")
     assert result.returncode != 0

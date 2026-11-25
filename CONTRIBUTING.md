@@ -782,7 +782,7 @@ make -C trust/deploy/helm template-all-backends
 make -C trust/deploy/helm validate
 
 # Place this trust's FL participant kit onto the node, BEFORE deploying
-make -C trust/deploy/helm stage-kit KIT=<CODE> KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
 # The OMOP core vocabulary (FLIP#923): download it on this host (AI Centre bucket access, your
 # AWS CLI profile; otherwise an OHDSI Athena export), then place the folder onto the node and set

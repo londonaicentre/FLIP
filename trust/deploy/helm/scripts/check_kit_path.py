@@ -60,7 +60,7 @@ def main() -> int:
         f"❌ The release mounts the FL kit from {mounted}, but this deploy would mount {args.kit_path}.\n"
         f"   The path comes from FL_KIT_DIR in {kit_file}. Nothing has been changed.\n"
         f"   If the kit is at {mounted}: set FL_KIT_DIR={mounted} in {kit_file} and run this again.\n"
-        f"   If you are moving it to {args.kit_path}: stage it there first (make stage-kit KIT=<CODE> ...),\n"
+        f"   If you are moving it to {args.kit_path}: stage it there first (make stage-kit KIT=<CODE> HUB=<env> ...),\n"
         "   then run this again with KIT_MOVED=1.",
         file=sys.stderr,
     )

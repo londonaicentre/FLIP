@@ -151,6 +151,12 @@ ifneq ($(filter command environment override,$(origin KIT_DEST) $(origin FL_CLIE
 $(error ❌  KIT_DEST and FL_CLIENT_KIT_HOST_PATH are gone (FLIP#2042): the kit's path on the node is FL_KIT_DIR in the kit file. Set it there and pass KIT=<CODE>)
 endif
 ifneq ($(filter stage-kit,$(MAKECMDGOALS)),)
+# Without the kit file the path would fall back to the default and stage-kit would wipe that.
+ifneq ($(KIT),)
+ifeq ($(wildcard $(KIT_FILE)),)
+$(error ❌  $(KIT_FILE) not found: pass HUB=<env> for a stag or prod kit)
+endif
+endif
 # stage-kit empties the path before copying, so it must be a directory of its own: a relative one
 # would be wiped under the node's working directory, and / is the node's root filesystem.
 ifeq ($(filter-out /,$(filter /%,$(KIT_PATH))),)
@@ -158,9 +164,10 @@ $(error ❌  FL_KIT_DIR in $(KIT_FILE) is '$(KIT_PATH)': it must be an absolute 
 endif
 endif
 # The chart requires flClient.kitHostPath, and an override file (sync-kit's always) carries it. A
-# render with none (make test, a plain `make template` or `make deploy`) gets the default here.
+# render with none (make test, a plain `make template`, `make deploy [KIT=]`) gets KIT_PATH here,
+# the same path CHECK_KIT_PATH compares against.
 ifeq ($(strip $(OVERRIDES_FILE)),)
-	VALUES_OPTS := $(VALUES_OPTS) --set flClient.kitHostPath=$(DEFAULT_KIT_PATH)
+	VALUES_OPTS := $(VALUES_OPTS) --set flClient.kitHostPath=$(KIT_PATH)
 endif
 # Before `helm upgrade`: a release that mounts another path than the one this deploy renders is
 # refused (scripts/check_kit_path.py). Only where that path is known here: a kit, or no override.
@@ -221,7 +228,7 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## kit arrives out-of-band (trust/README.md). This copies an already-obtained kit
 	## from KIT_SRC onto the node at the path the chart mounts (flClient.kitHostPath).
 	##
-	##   make stage-kit KIT=<CODE> KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
+	##   make stage-kit KIT=<CODE> HUB=<env> KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
 	##
 	## The destination is the kit file's FL_KIT_DIR (pass KIT=<CODE>), which `make sync-kit`
 	## renders as flClient.kitHostPath; without KIT it is /opt/flip/fl-kit.
@@ -638,7 +645,7 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 #   make sync-trust-kit KIT=<KIT> HUB=<env>           # fills the Hub-shared block
 # This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
-# `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
+# `make deploy-trust-k8s KIT=<KIT> HUB=<env>`. Env from $(HUB).
 sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s HUB=stag"; exit 1)
 	@uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \

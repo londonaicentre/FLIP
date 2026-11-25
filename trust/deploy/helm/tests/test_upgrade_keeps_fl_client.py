@@ -171,6 +171,18 @@ def test_kit_moved_confirms_a_deliberate_move(tmp_path):
 
 
 @needs_make
+def test_a_deploy_from_a_kit_file_alone_mounts_the_path_it_checked(tmp_path):
+    """KIT= with no override: the path rendered is the one compared with the release, the kit file's."""
+    kit_file = tmp_path / ".env.SITE.prod"
+    kit_file.write_text("FL_KIT_DIR=/data/flip/fl-kit\n")
+    result, upgrade = _deploy(
+        tmp_path, "KIT=SITE", f"KIT_FILE={kit_file}", fl_ready_before=False, HELM_VALUES=MOUNTS_DATA
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--set flClient.kitHostPath=/data/flip/fl-kit" in upgrade
+
+
+@needs_make
 def test_a_render_with_no_kit_gets_the_default_path(tmp_path):
     result, upgrade = _deploy(tmp_path, fl_ready_before=False)
     assert result.returncode == 0, result.stderr
