@@ -170,7 +170,7 @@ def save_mask(flip: FLIP, project_id: str, item: dict, mask: nib.Nifti1Image, ta
 def infer(flip: FLIP, project_id: str, images: list[dict], config: dict) -> dict[str, float]:
     """Predict and store a mask for every image. Returns the counts sent to the hub."""
     options = config.get("totalsegmentator", {})
-    predicted = failed = saved = 0
+    predicted = failed = saved = empty = 0
     for index, item in enumerate(images, start=1):
         started = time.monotonic()
         try:
@@ -180,11 +180,22 @@ def infer(flip: FLIP, project_id: str, images: list[dict], config: dict) -> dict
             logger.warning("Study %d of %d failed: %s", index, len(images), err)
             continue
         predicted += 1
+        if not np.any(np.asanyarray(mask.dataobj)):
+            # None of the structures asked for is in this scan (a chest CT and pelvic muscles, say): there is
+            # nothing to store, and that is not a failure to store it.
+            empty += 1
+            logger.info("Study %d of %d holds none of the structures asked for", index, len(images))
+            continue
         saved += save_mask(flip, project_id, item, mask, options.get("task", "total"))
         logger.info("Study %d of %d done in %.0f s", index, len(images), time.monotonic() - started)
     if not predicted:
         raise RuntimeError(f"none of the {len(images)} studies could be predicted")
-    return {"studies_predicted": float(predicted), "studies_failed": float(failed), "masks_saved": float(saved)}
+    return {
+        "studies_predicted": float(predicted),
+        "studies_failed": float(failed),
+        "masks_saved": float(saved),
+        "masks_empty": float(empty),
+    }
 
 
 def main() -> None:
