@@ -41,6 +41,9 @@ on:
       - "deploy/env_mode.mk"
       # sync_k8s_kit.py reads the kit's TRUST_DATA_SEED through it.
       - "trust/deploy/scripts/trust_kit_lib.py"
+      # The chart's self-test imports these, and its tests are where they are tested (FLIP#1449).
+      - "trust/deploy/scripts/node_checks.py"
+      - "trust/deploy/scripts/trust_checks.py"
       # xnat-db-migrate-dump reads the PostgreSQL major from .env and pipes these scripts in
       # (tests/test_makefile.py, FLIP#1812).
       - "trust/xnat/.env"
@@ -65,6 +68,9 @@ on:
       - "deploy/env_mode.mk"
       # sync_k8s_kit.py reads the kit's TRUST_DATA_SEED through it.
       - "trust/deploy/scripts/trust_kit_lib.py"
+      # The chart's self-test imports these, and its tests are where they are tested (FLIP#1449).
+      - "trust/deploy/scripts/node_checks.py"
+      - "trust/deploy/scripts/trust_checks.py"
       - "trust/xnat/.env"
       - "trust/xnat/scripts/xnat_db_*.sh"
       - "fl-services/nvflare/fl-client/fl-client/init.sh"

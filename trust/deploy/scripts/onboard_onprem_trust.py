@@ -27,7 +27,8 @@ absent so a first-time operator can run `make onboard-onprem-trust`
 straight after cloning the repo and see what they need to ask the FLIP
 admin for.
 
-Exits 0 when every check passes, 1 otherwise. The root Makefile's
+Exits 0 when ready (warnings allowed), 1 when a check failed or is pending, 2 when
+the checklist itself could not run. The root Makefile's
 `up-onprem-trust` target wraps this script as a precheck so an operator
 gets diagnostics instead of a cryptic compose / pydantic failure deeper
 in the stack.
@@ -1514,8 +1515,14 @@ def main() -> None:
     parts = [f"{n_pass} pass", f"{n_fail} fail", f"{n_pending} pending"]
     if n_warn:
         parts.append(f"{n_warn} warn")
+    n_error = sum(1 for c in checks if c.status == Status.ERROR)
+    if n_error:
+        parts.append(f"{n_error} could not run")
     heading(f"Status: NOT READY  ({', '.join(parts)})")
-    print(f"  Fix the {RED}❌{RESET} items and resolve the {YELLOW}⏳{RESET} pending steps above.")
+    if n_error:
+        print(f"  The checklist itself broke ({Status.ERROR.glyph} above): that says nothing about this host yet.")
+    if n_fail or n_pending:
+        print(f"  Fix the {RED}❌{RESET} items and resolve the {YELLOW}⏳{RESET} pending steps above.")
     print()
     sys.exit(trust_checks.exit_code(checks))
 

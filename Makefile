@@ -288,10 +288,10 @@ upgrade-onprem-trust:
 	$(MAKE) -C trust upgrade-trust KIT=$(KIT) HUB=$(or $(HUB),prod) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 	@$(MAKE) --no-print-directory check-onprem-trust KIT=$(KIT) HUB=$(HUB) || echo "$(CHECK_LATER)"
 
-# The running-stack half of the checklist (FLIP#1449): what onboard-onprem-trust checks before
-# anything starts, this checks after. The two verbs above end with it, and its result never changes
+# The checks of the running stack (FLIP#1449): onboard-onprem-trust checks the host before anything
+# starts, this checks the stack after. The two verbs above end with it, and its result never changes
 # theirs: the stack is up either way, and a service still starting is not a failed install.
-CHECK_LATER = ⚠️  The node check did not pass. Re-run it once the stack has settled: make check-onprem-trust KIT=$(KIT)
+CHECK_LATER = ⚠️  The node check did not pass (its rows above say why). To run it again: make check-onprem-trust KIT=$(KIT)$(if $(HUB), HUB=$(HUB))
 check-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) --no-print-directory -C trust check-node KIT=$(KIT) HUB=$(or $(HUB),prod)
