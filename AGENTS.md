@@ -615,6 +615,19 @@ not on `main` fails the build, pre-release `v<X.Y.Z>-rc.N` tags pass (the releas
 CONTRIBUTING "Testing a release candidate"). Who may create `v*` tags is left to write access by
 decision (no tag ruleset — GitHub cannot exempt the built-in Actions app from one).
 
+Every image workflow also runs `.github/actions/publish-ref-guard` beside the release-tag guard
+(FLIP-SR-055, #1743): a dispatch at any ref publishes `:<sanitised ref name>` with
+`packages: write`, so the step fails the job *before any build or push* when that tag is one a
+deploy resolves — `stag`, `prod`, `latest`, `dev`, `sha-<short7>` or `v<X.Y.Z>` (the raw ref name
+and the sanitised tag are both checked, case-insensitively; on a `workflow_run` build it judges the
+branch that was tested). Every other branch-named tag still publishes — pinning one for prod
+testing is the workflow below. `main` and `develop` are deliberately not refused: no deploy
+resolves `:main` / `:develop`, and dispatching a rebuild on them is the documented path. Tag refs
+are left to `release-tag-guard`. `.github/tests/actions/test_publish_ref_guard.py` runs the guard's
+own script and holds every image workflow to it. `release-pypi.yml` carries the same idea as a
+job-level `if:` — the PyPI publish, tag push and GitHub release run only when `github.ref` is
+`refs/heads/main`, whatever trigger the file grows later (`.github/tests/workflows/test_release_pypi.py`).
+
 Branch pushes do NOT build images. If you pin a branch-named tag in a compose file for prod testing,
 trigger the build manually (`workflow_dispatch` bypasses the test gate) and wait for green before
 redeploying:

@@ -77,6 +77,11 @@ jobs:
       - name: Release tag guard
         uses: ./.github/actions/release-tag-guard
 
+      # A branch build must not publish a tag a deploy resolves (stag/prod/latest/dev,
+      # sha-<short7>, v<X.Y.Z>) — see AGENTS.md "Docker image builds".
+      - name: Publish ref guard
+        uses: ./.github/actions/publish-ref-guard
+
       # Single source for the XNAT version: trust/xnat/.env — the same pin the
       # Makefile build reads — so a version bump there flows through the WAR and
       # plugin downloads and the image build without editing this workflow.

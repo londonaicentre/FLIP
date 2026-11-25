@@ -26,7 +26,15 @@ jobs:
     # Skip on forks: they cannot publish to PyPI (OIDC trusted publishing), push
     # tags, or create releases in the upstream repo, so this job would otherwise
     # show a spurious CI failure on a fork's main push. Upstream is unchanged.
-    if: github.repository == 'londonaicentre/FLIP'
+    #
+    # The ref clause is the publish gate (FLIP#1743): this job has `contents: write` and
+    # PyPI trusted publishing, and a PyPI release is irreversible — a version number can
+    # never be re-used. The push trigger below is filtered to main, so today the clause
+    # only restates it; it is here so that adding any other trigger (a workflow_dispatch
+    # to re-run a failed publish, a workflow_run) cannot reach `uv publish`, `git push`
+    # the tag or `gh release create` from a branch. Held by
+    # .github/tests/workflows/test_release_pypi.py.
+    if: github.repository == 'londonaicentre/FLIP' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: flip
     defaults:
