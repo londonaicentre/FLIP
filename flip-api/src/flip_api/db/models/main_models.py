@@ -160,6 +160,9 @@ class Model(SQLModel, table=True):
     project_id: UUID | None = Field(default=None, foreign_key="projects.id")
     owner_id: UUID = Field()
     creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    # The model of the same project this one was built from, e.g. the fingerprint job whose result
+    # planned this training job (FLIP#2060). Provenance only: nothing is dispatched or chained on it.
+    derived_from_model_id: UUID | None = Field(default=None, foreign_key="model.id")
 
 
 class ModelTrustIntersect(SQLModel, table=True):

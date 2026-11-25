@@ -69,6 +69,11 @@ PAIRS=(
   "fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery/app/config.json:fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/app_files/config.json"
   "fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery/query.sql:fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/query.sql"
   "fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery/summarise_results.py:fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/summarise_results.py"
+  # The nnU-Net fingerprint job must read a study exactly as the prostate training app does (series
+  # selection, affine-matched masks), or the plan describes other data than the one trained on.
+  # The segmentation tutorial is the reference; resync by copying it over the fingerprint copy.
+  "fl-tutorials/flower/image_segmentation/3d_prostate_nnunet_fingerprint/app/dataset.py:fl-tutorials/flower/image_segmentation/3d_prostate_segmentation/app/dataset.py"
+  "fl-tutorials/flower/image_segmentation/3d_prostate_nnunet_fingerprint/app/data_loading.py:fl-tutorials/flower/image_segmentation/3d_prostate_segmentation/app/data_loading.py"
   # The two Ark+ evaluation apps differ only in how many checkpoints they score; their data
   # loading and their flattened model definitions are meant to be the same file -- and they have
   # already drifted once (the Client-API port landed in the baseline copy days before the

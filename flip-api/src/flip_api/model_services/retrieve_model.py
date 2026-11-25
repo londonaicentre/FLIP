@@ -227,6 +227,8 @@ def retrieve_model(
             trusts=trusts,
             resources=resources,
             queue_position=queue_position,
+            derived_from_model_id=result.get("derived_from_model_id"),
+            derived_from_model_name=result.get("derived_from_model_name"),
         )  # type: ignore[call-arg]
 
     except SQLAlchemyError:

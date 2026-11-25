@@ -165,7 +165,7 @@ const stubs = {
     },
     EditModelDrawer: {
         name: "EditModelDrawer",
-        props: ["id", "show", "name", "description", "modelPending", "updating", "ownerId"],
+        props: ["id", "show", "name", "description", "modelPending", "updating", "ownerId", "derivedFromModelId"],
         emits: ["close", "save"],
         template: "<div data-test='edit-model-drawer' :data-show='show' />"
     },
@@ -559,6 +559,28 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
 
         expect(wrapper.find("[data-test='initiate-training-btn']").exists()).toBe(false);
         expect(wrapper.find("[data-test='training-actions-menu']").exists()).toBe(true);
+    });
+
+    it("names the model this one was derived from, and hands it to the edit drawer", async () => {
+        mockSwrvData.value = makeModel([], {
+            derivedFromModelId: "fingerprint-model",
+            derivedFromModelName: "Fingerprint"
+        });
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='derived-from']").text()).toContain("Fingerprint");
+        expect(wrapper.findComponent({ name: "EditModelDrawer" }).props("derivedFromModelId")).toBe("fingerprint-model");
+    });
+
+    it("shows no derived-from line for a model without one", async () => {
+        mockSwrvData.value = makeModel([]);
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='derived-from']").exists()).toBe(false);
     });
 
     it("openEditModelDrawer click flips the drawer's show prop; @close flips it back", async () => {

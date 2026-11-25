@@ -37,9 +37,10 @@ file set:
 
 1. **Backend(s).** New tutorials usually ship on both, under the same `<name>`; single-backend is
    fine when the user says so (prostate is Flower-only; the image-generation tutorials are NVFLARE-only).
-2. **Job type** — one of the three `fl-apps` templates: `standard` (FedAvg training), `evaluation`
-   (no training, an uploaded checkpoint), `fed_opt`. It fixes the required files and the recipe /
-   template.
+2. **Job type** — one of the `fl-apps` templates: `standard` (FedAvg training), `evaluation`
+   (no training, an uploaded checkpoint), `fed_opt`, and on Flower `fingerprint` (the pooled nnU-Net
+   dataset fingerprint; the client is FLIP's and the tutorial uploads only `cases.py`). It fixes the
+   required files and the recipe / template.
 3. **Data.** 2-D DICOM through MONAI, 3-D NIfTI converted by XNAT with labels as enrichment, or
    tabular / OMOP-only (`has_imaging=false` project, CPU is enough).
 4. **Dataset.** Reuse one under `fl-tutorials/datasets/` when the cohort fits. A new dataset is a

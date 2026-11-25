@@ -29,6 +29,9 @@ on:
       - "fl-tutorials/flower/image_classification/xray_classification/**"
       - "fl-tutorials/nvflare/image_segmentation/**"
       - "fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/**"
+      # The nnU-Net fingerprint job loads studies with the prostate segmentation app's own files.
+      - "fl-tutorials/flower/image_segmentation/3d_prostate_segmentation/**"
+      - "fl-tutorials/flower/image_segmentation/3d_prostate_nnunet_fingerprint/**"
       # The biomarker causal-discovery pairs, same shape (nvflare reference, flower copy).
       - "fl-tutorials/nvflare/tabular_causal_discovery/**"
       - "fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery/**"
@@ -48,6 +51,9 @@ on:
       - "fl-tutorials/flower/image_classification/xray_classification/**"
       - "fl-tutorials/nvflare/image_segmentation/**"
       - "fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/**"
+      # The nnU-Net fingerprint job loads studies with the prostate segmentation app's own files.
+      - "fl-tutorials/flower/image_segmentation/3d_prostate_segmentation/**"
+      - "fl-tutorials/flower/image_segmentation/3d_prostate_nnunet_fingerprint/**"
       # The biomarker causal-discovery pairs, same shape (nvflare reference, flower copy).
       - "fl-tutorials/nvflare/tabular_causal_discovery/**"
       - "fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery/**"

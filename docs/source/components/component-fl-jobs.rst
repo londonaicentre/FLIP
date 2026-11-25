@@ -52,9 +52,17 @@ training loop, model architecture); for the server side, you choose a **job type
      - Federated optimisation. Same client contract as ``standard``; only the server-side optimiser differs.
      - Yes
      - No
+   * - ``fingerprint``
+     - Pools a description of each Trust's images (nnU-Net's dataset fingerprint, as histograms) so one network
+       can be planned for all of them. Nothing is trained.
+     - No
+     - Yes
 
 Every FLARE job type runs your code through the **FLARE Client API**: a plain training or evaluation script
-that uses ``nvflare.client``. Every Flower job type runs your ``client_app.py``.
+that uses ``nvflare.client``. The Flower ``standard`` and ``evaluation`` job types run your ``client_app.py``.
+``fingerprint`` is the exception: its ``client_app.py`` is FLIP's own, and you upload only ``cases.py``, which
+loads each Trust's cases. What leaves a Trust, and the minimum counts applied to it, are therefore decided by
+platform code and not by the upload.
 
 How to choose a job type
 ========================
@@ -95,7 +103,11 @@ a tabular one only ``flip.get_dataframe``). Nor does the job have to train: the 
 tutorial (:gh:`fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
 <fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery>`) federates a bootstrapped FCI (Fast
 Causal Inference) analysis through ``standard`` by choosing what the sites send so that the weighted average
-*is* the analysis.
+*is* the analysis. The federated nnU-Net fingerprint tutorial
+(:gh:`fl-tutorials/flower/image_segmentation/3d_prostate_nnunet_fingerprint
+<fl-tutorials/flower/image_segmentation/3d_prostate_nnunet_fingerprint>`) does the same for imaging: a first
+job, of the ``fingerprint`` type, pools histograms of each site's scans, and the network that a second job trains is
+planned from the result.
 
 Evaluation metrics
 ==================

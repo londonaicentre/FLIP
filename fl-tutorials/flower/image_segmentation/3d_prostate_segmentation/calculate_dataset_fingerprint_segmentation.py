@@ -37,6 +37,7 @@
 import argparse
 import multiprocessing
 import os
+import shutil
 import warnings
 from copy import deepcopy
 from pathlib import Path
@@ -364,7 +365,6 @@ class ExperimentPlanner:
         self,
         fingerprint_dir: str,
         output_folder: str,
-        dataloader: Any,
         num_channels: int = 1,
         num_output_channels: int = 3,
         gpu_memory_target_in_gb: float = 8,
@@ -380,7 +380,6 @@ class ExperimentPlanner:
         """
         self.fingerprint_dir = fingerprint_dir
         self.output_folder = output_folder
-        self.dataloader = dataloader
         self.num_channels = num_channels
         # Output channels of the planned network (whole gland, PZ, TZ) — the VRAM estimate's
         # segmentation-head width. Upstream nnU-Net passes the label count here; passing the case
@@ -394,6 +393,8 @@ class ExperimentPlanner:
             raise RuntimeError("Fingerprint missing for this dataset. Please run data fingerprint extraction first")
 
         self.dataset_fingerprint = load_json(join(self.fingerprint_dir, "dataset_fingerprint.json"))
+        # Upstream reads dataset.json's numTraining; here the fingerprint holds one row per case.
+        self.num_cases = len(self.dataset_fingerprint["spacings"])
 
         self.anisotropy_threshold = ANISO_THRESHOLD
 
@@ -879,20 +880,24 @@ class ExperimentPlanner:
         fullres_spacing_transposed = fullres_spacing[transpose_forward]
 
         # get transposed new median shape (what we would have after resampling)
-        new_shapes = [
-            compute_new_shape(j, i, fullres_spacing)
-            for i, j in zip(
-                self.dataset_fingerprint["spacings"],
-                self.dataset_fingerprint["shapes_after_crop"],
-            )
-        ]
+        extents = self.dataset_fingerprint.get("physical_extents")
+        if extents is not None:
+            # A pooled federated fingerprint (3d_prostate_nnunet_fingerprint): its rows are sorted per
+            # axis, so spacing and shape of one row are not one case's. A case's resampled shape is
+            # round(shape * spacing / target), and shape * spacing is what "physical_extents" pools.
+            new_shapes = np.round(np.asarray(extents) / fullres_spacing)
+        else:
+            new_shapes = [
+                compute_new_shape(j, i, fullres_spacing)
+                for i, j in zip(
+                    self.dataset_fingerprint["spacings"],
+                    self.dataset_fingerprint["shapes_after_crop"],
+                )
+            ]
         new_median_shape = np.median(new_shapes, 0)
         new_median_shape_transposed = new_median_shape[transpose_forward]
 
-        # Upstream multiplies by dataset.json's numTraining; here the case count is the dataloader's length.
-        approximate_n_voxels_dataset = float(
-            np.prod(new_median_shape_transposed, dtype=np.float64) * len(self.dataloader)
-        )
+        approximate_n_voxels_dataset = float(np.prod(new_median_shape_transposed, dtype=np.float64) * self.num_cases)
         # only run 3d if this is a 3d dataset
         if new_median_shape_transposed[0] != 1:
             plan_3d_fullres = self.get_plans_for_configuration(
@@ -930,7 +935,7 @@ class ExperimentPlanner:
                         [round(i) for i in plan_3d_fullres["spacing"] / lowres_spacing * new_median_shape_transposed]
                     ),
                     self.generate_data_identifier("3d_lowres"),
-                    float(np.prod(median_num_voxels) * len(self.dataloader)),
+                    float(np.prod(median_num_voxels) * self.num_cases),
                     _tmp,
                 )
                 num_voxels_in_patch = np.prod(plan_3d_lowres["patch_size"], dtype=np.int64)
@@ -1073,12 +1078,18 @@ def run_fingerprint_extractor() -> None:
     """Run the fingerprint extractor and the experiment planner over one or more sites."""
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--fingerprint",
+        type=Path,
+        help="Plan from this pooled dataset_fingerprint.json (export_fingerprint.py's output for a federated "
+        "fingerprint job) instead of extracting one from site folders.",
+    )
+    source.add_argument(
         "-s",
         "--site-dir",
         type=Path,
         nargs="+",
-        required=True,
         help="One or more data/prostate/sites/<CENTER> folders (each holding manifest.csv, nifti/, "
         "labels/, zonal_labels/). Passing several pools their studies into a single fingerprint, "
         "so every client can be given the same plan.",
@@ -1102,47 +1113,50 @@ def run_fingerprint_extractor() -> None:
     )
     args = parser.parse_args()
 
-    site_datasets = []
-    for site_dir in args.site_dir:
-        site_dataset = PicaiDataset(
-            site_dir,
-            modality=args.modality,
-            fingerprint=True,
+    if args.fingerprint is not None:
+        os.makedirs(args.output_dir, exist_ok=True)
+        shutil.copyfile(args.fingerprint, args.output_dir / "dataset_fingerprint.json")
+    else:
+        site_datasets = []
+        for site_dir in args.site_dir:
+            site_dataset = PicaiDataset(
+                site_dir,
+                modality=args.modality,
+                fingerprint=True,
+            )
+            if args.limit is not None:
+                site_dataset.df = site_dataset.df.iloc[: args.limit]
+            print(f"{site_dir.name}: {len(site_dataset)} studies")
+            site_datasets.append(site_dataset)
+
+        picai_dataset = ConcatDataset(site_datasets)
+        print(f"Fingerprinting {len(picai_dataset)} studies across {len(site_datasets)} site(s)")
+
+        dataloader = monai.data.DataLoader(
+            picai_dataset,
+            batch_size=1,
+            collate_fn=patch_collate_fingerprint,
+            num_workers=args.num_processes,
+            pin_memory=True,
+            shuffle=False,
         )
-        if args.limit is not None:
-            site_dataset.df = site_dataset.df.iloc[: args.limit]
-        print(f"{site_dir.name}: {len(site_dataset)} studies")
-        site_datasets.append(site_dataset)
 
-    picai_dataset = ConcatDataset(site_datasets)
-    print(f"Fingerprinting {len(picai_dataset)} studies across {len(site_datasets)} site(s)")
+        fingerprint_extractor = DatasetFingerprintExtractor(
+            output_folder=str(args.output_dir),
+            dataloader=dataloader,
+            channels=1,
+            num_processes=args.num_processes,
+            verbose=args.verbose,
+        )
 
-    dataloader = monai.data.DataLoader(
-        picai_dataset,
-        batch_size=1,
-        collate_fn=patch_collate_fingerprint,
-        num_workers=args.num_processes,
-        pin_memory=True,
-        shuffle=False,
-    )
+        fingerprint_extractor.run(overwrite_existing=True)
 
-    fingerprint_extractor = DatasetFingerprintExtractor(
-        output_folder=str(args.output_dir),
-        dataloader=dataloader,
-        channels=1,
-        num_processes=args.num_processes,
-        verbose=args.verbose,
-    )
-
-    fingerprint_extractor.run(overwrite_existing=True)
-
-    print("Fingerprint extraction complete")
+        print("Fingerprint extraction complete")
 
     print("Planning experiment")
     planner = ExperimentPlanner(
         fingerprint_dir=str(args.output_dir),
         output_folder=str(args.output_dir),
-        dataloader=dataloader,
         num_channels=1,
         num_output_channels=3,
         gpu_memory_target_in_gb=args.gpu_memory_GB,

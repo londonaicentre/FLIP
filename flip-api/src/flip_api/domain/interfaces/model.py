@@ -29,6 +29,9 @@ class ModelStatusEdit(StrEnum):
 class IModelDetails(BaseModel):
     name: str = Field(..., max_length=75)
     description: str = Field("", max_length=250)
+    derived_from_model_id: UUID | None = Field(default=None, alias="derivedFromModelId")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ISaveModel(IModelDetails):
@@ -181,6 +184,8 @@ class IModelResponse(BaseModel):
     # The model's 1-based place in the FL training queue (position 1 = next to
     # be picked up); None unless the model has a QUEUED job waiting for a net.
     queue_position: int | None = Field(default=None, alias="queuePosition")
+    derived_from_model_id: UUID | None = Field(default=None, alias="derivedFromModelId")
+    derived_from_model_name: str | None = Field(default=None, alias="derivedFromModelName")
 
     model_config = ConfigDict(
         populate_by_name=True,

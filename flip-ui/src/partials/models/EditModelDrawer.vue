@@ -99,6 +99,12 @@
                                                     }"
                                                 />
                                             </div>
+                                            <DerivedFromSelect
+                                                v-model="derivedFrom"
+                                                :project-id="route.params['projectId']?.toString() ?? ''"
+                                                :exclude-id="id"
+                                                :disabled="!modelPending"
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -170,7 +176,7 @@
 <script lang="ts" setup>
 import { Dialog, DialogTitle, TransitionChild, TransitionRoot } from "@headlessui/vue";
 import { Form } from "vee-validate";
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
@@ -178,6 +184,7 @@ import AiButton from "@/components/AiButton/AiButton.vue";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { usePermissions } from "@/composables/usePermissions";
+import DerivedFromSelect from "@/partials/models/DerivedFromSelect.vue";
 import router from "@/router";
 import { deleteModel } from "@/services/model-service";
 import { useAuthStore } from "@/store/auth";
@@ -189,6 +196,7 @@ import { Snackbar } from "@/utils/snackbar";
 export interface IEditModel {
     name: string;
     description: string;
+    derivedFromModelId: string | null;
 }
 
 interface IEditModelDrawerProps {
@@ -199,6 +207,7 @@ interface IEditModelDrawerProps {
     modelPending: boolean;
     updating: boolean;
     ownerId: string;
+    derivedFromModelId?: string | null;
 }
 
 const authStore = useAuthStore();
@@ -213,6 +222,9 @@ const props = defineProps<IEditModelDrawerProps>();
 
 const emit = defineEmits(["close", "save"]);
 
+const derivedFrom = ref<string | null>(props.derivedFromModelId ?? null);
+watch(() => props.derivedFromModelId, value => { derivedFrom.value = value ?? null; });
+
 const confirmDeleteOpen = ref(false);
 const submittingDeleteModel = ref(false);
 
@@ -221,7 +233,10 @@ const closeDrawer = () => {
 };
 
 const update = (values: unknown) => {
-    emit("save", { ...values as IEditModel });
+    emit("save", {
+        ...values as IEditModel,
+        derivedFromModelId: derivedFrom.value
+    });
 };
 
 const confirmDeleteModel = async () => {

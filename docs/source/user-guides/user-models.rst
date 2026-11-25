@@ -36,7 +36,9 @@ Create a model
 1. Open the project page.
 2. Click **Create Model**.
 3. Enter a name and a short description.
-4. Click **Create Model**.
+4. If this model was built from the result of another model in the project, choose that model under
+   **Derived from**. The field appears once the project has another model.
+5. Click **Create Model**.
 
 .. figure:: ../assets/generated/gifs/flip/create-model.gif
    :width: 600
@@ -52,8 +54,12 @@ You can edit a model until its training starts.
 
 1. Open the model from the project page.
 2. Click **Edit Model**.
-3. Update the model's name or description.
+3. Update the model's name, description or **Derived from** model.
 4. Click **Update Model**.
+
+**Derived from** records where a model came from, for example a training model whose network was planned
+from the result of a fingerprint model. The model page then links to the source model. It is a record only:
+FLIP does not run the two models in sequence or check that one's files came from the other.
 
 .. figure:: ../assets/generated/gifs/flip/edit-model.gif
    :width: 600

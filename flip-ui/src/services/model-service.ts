@@ -100,17 +100,24 @@ export interface IModelDashboard {
     // The model's 1-based place in the FL training queue (1 = next to be picked
     // up); null/absent unless the model has a queued job waiting for a net.
     queuePosition?: number | null;
+    // The model of the same project this one was built from (e.g. the fingerprint job that
+    // planned a training job); null/absent when none is recorded or that model was deleted.
+    derivedFromModelId?: string | null;
+    derivedFromModelName?: string | null;
 }
 
 export interface IModelCreate {
     name: string;
     description: string;
     projectId: string;
+    derivedFromModelId?: string | null;
 }
 
 export interface IModelUpdate {
     name: string;
     description: string;
+    // Sent on every edit: the API stores what it is given, so leaving it out clears the link.
+    derivedFromModelId?: string | null;
 }
 
 export interface ICreateModelResponse {

@@ -17,6 +17,10 @@ SELECT
     model.project_id,
     model.status,
 
+    -- The model this one was built from, while that model still exists
+    source.id AS derived_from_model_id,
+    source.name AS derived_from_model_name,
+
     -- Latest query and its results as JSON
     (
         SELECT
@@ -63,6 +67,7 @@ SELECT
 -- Main source: model table
 FROM model
 LEFT JOIN projects ON model.project_id = projects.id
+LEFT JOIN model AS source ON source.id = model.derived_from_model_id AND source.deleted = false
 
 -- Main filters:
 -- - Return only the model requested by ID

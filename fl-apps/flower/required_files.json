@@ -4,6 +4,10 @@
     "config.json",
     "models.py"
   ],
+  "fingerprint": [
+    "cases.py",
+    "config.json"
+  ],
   "standard": [
     "client_app.py",
     "config.json",

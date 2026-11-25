@@ -30,7 +30,7 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
 # Tutorials = <category>/<name> dirs carrying an app/ — the same two-level layout as
 # fl-tutorials/nvflare/ (#1500): image_classification/xray_classification,
-# image_segmentation/{3d_spleen_segmentation,3d_prostate_segmentation},
+# image_segmentation/{3d_spleen_segmentation,3d_prostate_segmentation,3d_prostate_nnunet_fingerprint},
 # image_evaluation/3d_spleen_segmentation_evaluation, tabular_classification/ehr_risk_prediction.
 # Depth two ONLY: a checkout that pulled the move keeps ignored leftovers (__pycache__, .ruff_cache,
 # .venv, a downloaded model.pt) at the old flat fl-tutorials/flower/<name>/app, and a depth-one
