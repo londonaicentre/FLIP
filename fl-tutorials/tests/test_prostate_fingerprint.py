@@ -96,22 +96,27 @@ def test_pooled_histograms_give_the_planner_what_the_pooled_cases_would(fp, conf
     """Three unequal sites, one with finer and thicker scans: every planner input survives the pooling."""
     rng = np.random.default_rng(0)
 
-    def site(n, in_plane, slice_spacings):
+    def site(n, in_plane, slice_spacings, in_plane_shapes):
+        # Values cycle, so every (site, value) holds enough cases to pass the small-cell rule untouched.
         return [
             _case(
                 fp,
-                (rng.choice(slice_spacings), in_plane, in_plane),
-                (rng.integers(15, 40), rng.integers(300, 1025), rng.integers(300, 1025)),
-                relative_size=rng.uniform(0.6, 1.0),
+                (slice_spacings[i % len(slice_spacings)], in_plane, in_plane),
+                (
+                    (19, 21, 23, 27)[i % 4],
+                    in_plane_shapes[i % len(in_plane_shapes)],
+                    in_plane_shapes[i % len(in_plane_shapes)],
+                ),
+                relative_size=(0.7, 0.9, 1.0)[i % 3],
                 intensities=rng.integers(0, 900, size=500).astype(float),
             )
-            for _ in range(n)
+            for i in range(n)
         ]
 
     cases_by_site = {
-        "Trust_1": site(76, 0.5, [3.0, 3.6]),
-        "Trust_2": site(69, 0.3438, [3.0, 3.3, 4.0]),
-        "Trust_3": site(155, 0.5, [3.0]),
+        "Trust_1": site(76, 0.5, [3.0, 3.6], [383, 384]),
+        "Trust_2": site(69, 0.3438, [3.0, 3.3, 4.0], [640, 1024]),
+        "Trust_3": site(155, 0.5, [3.0], [320, 383, 400]),
     }
     cases = [case for site_cases in cases_by_site.values() for case in site_cases]
 
@@ -163,6 +168,32 @@ def test_picai_fold0_geometry_gives_the_committed_plans_inputs(fp, config):
         np.testing.assert_array_equal(actual[key], value, err_msg=key)
     np.testing.assert_array_equal(actual["median_spacing"], [3.0, 0.5, 0.5])
     np.testing.assert_array_equal(actual["median_shape"], [21, 383, 383])
+
+
+def test_no_released_bin_holds_fewer_cases_than_the_small_cell_floor(fp, config):
+    """One study with 17 slices among 30: its bin is not released, the count still adds up."""
+    cases = [_case(fp, (3.0, 0.5, 0.5), (21, 383, 383))] * 20 + [_case(fp, (3.0, 0.5, 0.5), (19, 383, 383))] * 9
+    state = fp.site_statistics([*cases, _case(fp, (3.6, 0.5, 0.5), (17, 383, 383), relative_size=0.4)], config, "s")
+
+    for key in ("spacing", "shape", "extent", "relative_size"):
+        counts = np.rint(state[key] * 30)
+        assert not np.any((counts > 0) & (counts < fp.HARD_MIN_CELL_COUNT)), key
+    np.testing.assert_array_equal(np.flatnonzero(state["shape"][0]), [19, 21])  # 17 joined its nearest neighbour
+    assert np.rint(state["shape"][0][19] * 30) == 10
+    assert len(fp.pooled_fingerprint(state, config)["spacings"]) == 30
+    # config.json can raise the floor, never lower it: at 10 the nine 19-slice studies fold too.
+    raised = fp.site_statistics(cases, {**config, "MIN_CELL_COUNT": 10}, "s")
+    np.testing.assert_array_equal(np.flatnonzero(raised["shape"][0]), [21])
+    lowered = fp.site_statistics(
+        [*cases, _case(fp, (3.0, 0.5, 0.5), (17, 383, 383))], {**config, "MIN_CELL_COUNT": 1}, "s"
+    )
+    np.testing.assert_array_equal(np.flatnonzero(lowered["shape"][0]), [19, 21])
+
+
+def test_a_site_whose_cases_all_differ_releases_only_its_median(fp, config):
+    cases = [_case(fp, (3.0, 0.5, 0.5), (20 + i, 383, 383)) for i in range(11)]
+    state = fp.site_statistics(cases, config, "s")
+    np.testing.assert_array_equal(np.flatnonzero(state["shape"][0]), [25])
 
 
 def test_a_site_below_the_floor_refuses_without_saying_how_many(fp, config):

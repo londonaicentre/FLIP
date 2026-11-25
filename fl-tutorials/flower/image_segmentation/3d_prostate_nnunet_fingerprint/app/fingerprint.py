@@ -21,7 +21,9 @@ those shares over the sites is the pooled dataset's own histogram (FedAvg, uncha
 
 Values are binned by rounding to a fixed grid from ``config.json`` (bin ``k`` holds ``k * width``),
 so a spacing of exactly 0.5 mm or an integer shape survives the round trip unchanged; anything else
-is accurate to half a bin. Axes are in nnU-Net's ``(d, h, w)`` order throughout.
+is accurate to half a bin. Axes are in nnU-Net's ``(d, h, w)`` order throughout. Before release a
+site folds every bin holding fewer than five of its cases into the nearest well-populated one, so
+the pooled quantiles are those of the pooled cases only up to that rule.
 
 No site knows the pooled case count, which the planner needs. Each site writes its own count into
 one slot of ``site_cases``; after size-weighted averaging slot ``j`` holds ``n_j^2 / N``, and
@@ -47,6 +49,9 @@ MAX_SITES = 64
 RELATIVE_SIZE_BINS = 1001
 #: No site releases a fingerprint of fewer cases than this; ``MIN_SITE_CASES`` can only raise it.
 HARD_MIN_SITE_CASES = 10
+#: No site releases a spacing, shape, extent or crop-ratio bin holding fewer cases than this (a
+#: small cell in the statistical-disclosure-control sense); ``MIN_CELL_COUNT`` can only raise it.
+HARD_MIN_CELL_COUNT = 5
 
 
 @dataclass(frozen=True)
@@ -123,12 +128,31 @@ def assert_site_may_release(num_cases: int, config: dict, site_name: str = "") -
         raise ValueError("this site has too few usable cases to release a fingerprint (see the site's own log)")
 
 
+def fold_small_cells(counts: np.ndarray, minimum: int) -> np.ndarray:
+    """Move the cases of every bin holding fewer than ``minimum`` into the nearest bin holding at least that.
+
+    Every released bin then holds no case or at least ``minimum``, so no bin describes one or a few
+    studies. The quantiles the planner reads sit in well-populated bins and normally do not move.
+    When no bin reaches ``minimum`` the site's cases all go to its median bin.
+    """
+    occupied = np.flatnonzero(counts)
+    kept = occupied[counts[occupied] >= minimum]
+    if kept.size == 0:
+        kept = occupied[[np.searchsorted(np.cumsum(counts[occupied]), counts.sum() / 2)]]
+    folded = np.zeros_like(counts)
+    for index in occupied:
+        folded[kept[np.abs(kept - index).argmin()]] += counts[index]
+    return folded
+
+
 def site_statistics(cases: list[CaseFingerprint], config: dict, site_name: str) -> dict[str, np.ndarray]:
     """One site's arrays: its case count in its slot, and the share of its cases in every bin.
 
     A spacing, shape or extent beyond the configured range is refused, since clipping it would
     move the quantiles the plan is built from. Intensities are clipped into the end bins: MR
-    outliers are common and only shift the reported extremes.
+    outliers are common and only shift the reported extremes. The per-case counts then pass the
+    small-cell rule (:func:`fold_small_cells`); the intensity histogram is a mean over all the
+    site's cases and is released as it is.
     """
     shapes = state_shapes(config)
     stats = {key: np.zeros(shape, dtype=np.float64) for key, shape in shapes.items()}
@@ -154,6 +178,10 @@ def site_statistics(cases: list[CaseFingerprint], config: dict, site_name: str) 
                 counts = np.bincount(np.clip(indices, 0, intensity_bins - 1), minlength=intensity_bins)
                 stats["intensity"][channel] += counts / len(values)
 
+    minimum = max(HARD_MIN_CELL_COUNT, int(config.get("MIN_CELL_COUNT", 0)))
+    for key in ("spacing", "shape", "extent"):
+        stats[key] = np.stack([fold_small_cells(axis, minimum) for axis in stats[key]])
+    stats["relative_size"] = fold_small_cells(stats["relative_size"], minimum)
     for key in ("spacing", "shape", "extent", "intensity", "relative_size"):
         stats[key] /= len(cases)
     return {key: value.astype(np.float32) for key, value in stats.items()}

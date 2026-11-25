@@ -61,6 +61,11 @@ Values are binned by rounding to a grid fixed in `app/config.json`. A spacing of
 shape in voxels comes back unchanged; anything else is accurate to half a bin (0.0005 mm of spacing,
 0.05 mm of extent, half an intensity unit).
 
+Before it replies, a site applies a **small-cell rule**: a bin holding fewer than five of its cases is
+not released, and those cases are counted in the nearest bin that holds at least five. The pooled
+quantiles are therefore those of the pooled cases only up to that rule. The planner reads medians and
+one 10th percentile, which sit in well-populated bins, and on PI-CAI the rule changes none of them.
+
 One round is enough: what a site sends does not depend on what it receives.
 
 ## Folder structure
@@ -129,7 +134,7 @@ asks.
 PI-CAI fold 0, 300 studies (ZGT 76, PCNN 69, RUMC 155), `t2w`, 24 GB budget. "Committed" is the
 segmentation tutorial's plan. "Pooled" is `make plan` over the three site folders on one host, and
 "federated" is this app in the simulator followed by `make plan FINGERPRINT=`, both on the same
-`prepare-prostate-local-data` tree (run of 2026-11-24).
+`prepare-prostate-local-data` tree (runs of 2026-11-24 and 2026-11-25).
 
 | | committed | pooled | federated |
 | --- | --- | --- | --- |
@@ -148,8 +153,9 @@ fourth digit because nnU-Net pools a random sample of each case's foreground vox
 sample at each run) and this app pools every one; it is a normalisation constant and changes no
 shape. So the federated plan is as close to the committed one as a second pooled run is.
 
-The simulator split the 300 studies 127 / 173 over two sites, not by centre: the pooled result does
-not depend on how the cases are divided. The job took 69 seconds on CPU.
+The simulator split the 300 studies 127 / 173 over two sites, not by centre, and the federated column
+is with the small-cell rule on: the plan file is byte for byte the one the job produced before the
+rule existed. The job took 72 seconds on CPU.
 
 `fl-tutorials/tests/test_prostate_fingerprint.py` holds the geometry half of this without the
 dataset: it pools `docs/picai_fold0_geometry.csv` (each site's count of cases per spacing and cropped
@@ -170,10 +176,13 @@ identifier or per-case record is sent.
 
 What this does and does not protect:
 
-- **The shares are exact.** At a site of twelve studies a bin holding one twelfth is one study's slice
-  thickness or matrix size. That is acquisition geometry, not image content, but it is per-study
-  information about a small site, and there is no small-cell suppression: suppressing a bin would move
-  the quantiles the plan is built from.
+- **No bin describes one or a few studies.** Each spacing, shape, extent and crop-ratio bin a site
+  releases holds none of its cases or at least five (the small-cell rule above). Without it most bins
+  would be small: on PI-CAI fold 0, 103 of the 163 occupied bins across the three centres hold fewer
+  than five studies, and several hold one. What remains is acquisition geometry per axis, with the
+  three axes unlinked and no identifier.
+- **The intensity histogram is released as computed.** It is the mean of at least ten per-case
+  histograms, so no bin of it is a count of studies, but it is not covered by the small-cell rule.
 - **The hub sees each site's arrays in the clear.** FLIP has no secure aggregation, so the pooling
   hides a site from the researcher who downloads the result, not from the server.
 - **Local differential privacy is off, and the app refuses to run with it on.** The platform's
@@ -181,15 +190,16 @@ What this does and does not protect:
   any error. `app/config.toml` sets `dp-enabled = false`; a run without that file is refused, because
   a missing key means on.
 
-Two floors apply, enforced in different places:
+Three floors apply, enforced in different places:
 
 | Floor | Enforced by | Value |
 | --- | --- | --- |
 | The trust's disclosure floor on the cohort (`COHORT_QUERY_THRESHOLD`, distinct patients) | the trust's own data-access-api, before the app sees a row | set by each trust, default 10 |
 | A minimum number of usable studies before a site releases its histograms | this app (`app/fingerprint.py`) | 10; `MIN_SITE_CASES` in `app/config.json` can raise it, not lower it |
+| A minimum number of studies in any released geometry bin | this app (`app/fingerprint.py`) | 5; `MIN_CELL_COUNT` can raise it, not lower it |
 
-The second floor is researcher-uploaded code: a trust reviewing the upload can read it, but the
-platform does not enforce it. A refusal says only that the site has too few usable cases; the count
+The last two floors are researcher-uploaded code: a trust reviewing the upload can read them, but the
+platform does not enforce them. A refusal says only that the site has too few usable cases; the count
 goes to the site's own log, since Flower forwards a client's error text to the hub.
 
 ## Configuration
@@ -200,6 +210,7 @@ goes to the site's own log, since Flower forwards a client's error text to the h
 | --- | --- |
 | `MODALITY` | which of the study's series to fingerprint (`t2w`, `adc`, `hbv`); must match the training app's |
 | `MIN_SITE_CASES` | the case floor above; values below 10 are ignored |
+| `MIN_CELL_COUNT` | the small-cell floor above; values below 5 are ignored |
 | `SPACING_BIN_MM`, `MAX_SPACING_MM` | spacing grid. A case beyond the maximum is refused, not clipped |
 | `MAX_SHAPE` | largest cropped shape, in voxels, on any axis. Refused beyond it |
 | `EXTENT_BIN_MM`, `MAX_EXTENT_MM` | physical-extent grid. Refused beyond the maximum |
@@ -229,16 +240,28 @@ a mismatch fails at the first round with a shape error. The intensity grid suits
   the planner are nnU-Net v2's.
 - Skorupko G, et al. Federated nnU-Net for privacy-preserving medical image segmentation.
   *Scientific Reports* (2025). [doi:10.1038/s41598-025-22239-0](https://doi.org/10.1038/s41598-025-22239-0),
-  [arXiv:2503.02549](https://arxiv.org/abs/2503.02549). Its Federated Fingerprint Extraction is the
-  closest prior work: each site computes nnU-Net's fingerprint and the server merges them key by key.
-  This tutorial differs in what a site sends (histograms, so that the pooled quantiles are those of
-  the pooled cases and the platform's unmodified weighted average does the merging) and in where the
-  plan is made (by the researcher, from the downloaded result).
-- Hindawi S, et al. Federated learning for lesion
-  segmentation in multiple sclerosis: a real-world multi-center feasibility study. *Frontiers in
-  Neurology* (2025). [doi:10.3389/fneur.2025.1620469](https://doi.org/10.3389/fneur.2025.1620469). A
-  three-site nnU-Net federation on Kaapana that ran a fingerprint step before training; the paper does
-  not say how the site fingerprints were merged.
+  [arXiv:2503.02549](https://arxiv.org/abs/2503.02549); code at
+  [faildeny/FednnUNet](https://github.com/faildeny/FednnUNet). Its Federated Fingerprint Extraction is
+  the closest prior work. Each site sends its whole nnU-Net fingerprint; the server concatenates the
+  per-case spacing and shape lists, takes case-weighted means of the intensity statistics, and returns
+  the result to every site, which plans locally.
+- Hindawi S, et al. Federated learning for lesion segmentation in multiple sclerosis: a real-world
+  multi-center feasibility study. *Frontiers in Neurology* (2025).
+  [doi:10.3389/fneur.2025.1620469](https://doi.org/10.3389/fneur.2025.1620469). A three-site nnU-Net
+  federation on Kaapana that shared "image sizes, voxel spacings, and intensity characteristics"
+  before training; the paper does not say how they were merged.
+- Kaapana's federated nnU-Net workflow,
+  [`run_nnunet_federated.py`](https://github.com/kaapana/kaapana/blob/develop/data-processing/processing-pipelines/nnunet-federated/processing-containers/nnunet-federated/files/run_nnunet_federated.py)
+  (read November 2026). It also concatenates the sites' per-case spacing and shape lists and writes
+  the combined fingerprint back to every site; intensity statistics are estimated from the sites'
+  summaries or, in its "accurate" mode, recomputed from sampled voxel values the sites send.
+
+This tutorial departs from all three in what leaves a site. There, every case's spacing and shape goes
+to the server and on to the other sites. Here a site sends per-axis histograms with small cells folded
+away, so no per-case record leaves, the platform's unmodified weighted average does the merging, and
+the pooled intensity median and percentiles are those of the pooled data, not an average of site
+values. The plan is made by the researcher from the downloaded result, not at each site.
+
 - Saha A, et al. Artificial intelligence and radiologists in prostate cancer detection on MRI
   (PI-CAI): an international, paired, non-inferiority, confirmatory study. *The Lancet Oncology* 25,
   879–887 (2024). The dataset.
