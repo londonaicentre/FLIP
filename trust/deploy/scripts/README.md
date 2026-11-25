@@ -109,7 +109,9 @@ a re-run.
 - **`node_checks.py`** — the checks of a running trust node, written once for every platform
   (FLIP#1449): services ready, FL kit delivered, the three APIs healthy, OMOP and Orthanc hold
   data, Orthanc requires auth, a C-STORE reaches XNAT, dcm2niix converts it, the FL client stays
-  up, and the hub heartbeat. Each asks its question from inside a container the node already runs,
+  up, the hub heartbeat, and the two egress rows (FLIP#2077): the hub API and FL server answer
+  from the containers that use them, and a sample of destinations no trust needs does not (one
+  that answers is a warning for the site's IT team, never a failure). Each asks its question from inside a container the node already runs,
   through a small interface (`Node`). `ROWS` is the list both platforms report, held by a test on
   each side.
 - **`check_node.py`** (`make -C trust check-node KIT=<CODE>`, or `make check-onprem-trust
