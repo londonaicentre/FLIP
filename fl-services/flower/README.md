@@ -54,6 +54,33 @@ service — the `flower-supernode` entrypoint does no chmod/chown at all, so no 
 back in either environment. See [`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)
 for the full per-service capability table.
 
+### The import path is read-only to the user apps run as (FLIP#1573)
+
+The ServerApp and the ClientApps run in the image's own environment (see the next section), and
+nothing installs their dependencies at run time, so that environment is the only one a run gets —
+and it must survive the run. `flwr/base` ships `/python/venv` owned by `app` and ends `USER app`, so
+without a further step the install in `fl-base` leaves `flip`, `flwr` and `torch` writable by the
+very user app code executes as, and a rewritten package would be imported by every later run in that
+container. After the install, `fl-base` therefore switches to `root`, precompiles the bytecode, and
+hands `sys.prefix` and `sys.base_prefix` back to `root` with group/other write stripped, before
+returning to `app`. Everything a run writes stays under `$HOME` (`/app`, mode 1777 so any kit
+`FLIP_UID` can use it): `~/.flwr`, `~/.cache/torch`, the run's own working dir.
+
+[`scripts/check_image_env_readonly.py`](scripts/check_image_env_readonly.py) asserts it inside a
+built image — every `sys.path` entry, both interpreter prefixes and every installed distribution
+non-writable, `flip` imported from site-packages, caches resolving under `$HOME`, bytecode cached.
+[`scripts/check_image_env_readonly.sh`](scripts/check_image_env_readonly.sh) runs it per image and
+per runtime uid (`app`'s 49999, plus an arbitrary kit `FLIP_UID`); the image workflow runs it after
+each build and before the push, so a regressed image is never published. Locally:
+
+```bash
+make -C fl-services/flower check-env-readonly                     # over the local :dev images
+make -C fl-services/flower check-env-readonly DOCKER_FL_TAG=rc    # or another tag
+```
+
+A consequence worth knowing when debugging: `pip install` inside a running SuperLink or SuperNode
+container now fails on permissions. Install into the image (flip-utils' `full` extra) and rebuild.
+
 ## Runtime dependency installation (and where flip-utils comes from)
 
 Flower ≥1.32 can install an app's declared dependencies **at run time**: the app process runs

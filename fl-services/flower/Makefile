@@ -46,7 +46,7 @@ APP              ?= xray_classification
 export WORKING_DIR := $(REPO_ROOT)/fl-services/flower/runs
 
 .PHONY: build provision provision-add-supernode upload-creds-to-s3 generate-tls-certificates-net-1 generate-tls-certificates-net-2 \
-        up up-secure down submit _ensure-dev-dirs
+        up up-secure down submit check-env-readonly _ensure-dev-dirs
 
 # Build the flower-* images, tagged $(FL_BUILD_TAG) (:dev unless DOCKER_FL_TAG is given). flwr-base builds first (own invocation) — a plain
 # FROM flower-fl-base in the derived Dockerfiles is invisible to Compose's build graph.
@@ -56,6 +56,16 @@ build:
 	@echo "🛠️  Building flower-{fl-api,superlink,supernode,fleet-proxy}:$(FL_BUILD_TAG)..."
 	$(DEV_COMPOSE) build fl-api superlink supernode-1
 	$(SECURE_COMPOSE) build fleet-proxy
+
+# Assert that the user apps run as cannot write the images' import path (FLIP#1573). CI runs the
+# same script per image, after each build and before the push; this is the local equivalent over the
+# images `build` just produced. Only the images that execute app code are checked: the fleet proxy
+# ships no interpreter and the FL API image runs FLIP's own service code only.
+check-env-readonly:
+	@bash $(REPO_ROOT)/fl-services/flower/scripts/check_image_env_readonly.sh \
+		flower-fl-base:$(FL_BUILD_TAG) \
+		flower-superlink:$(FL_BUILD_TAG) \
+		flower-supernode:$(FL_BUILD_TAG)
 
 # How many SuperNode credentials a provisioning run mints. Defaults to the size of
 # FL_KIT_SLOT_NAMES, the dev slot pool, so a dev kit covers every slot the hub can hand
