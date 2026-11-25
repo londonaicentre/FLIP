@@ -325,6 +325,11 @@ spec:
             - name: LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
             {{- include "flip-trust.flSitePrivacyEnv" . | nindent 12 }}
+            {{- with .Values.flClient.nvflare.serverPort }}
+            # The FL server port to write into the kit's fed_client.json (FLIP#2051).
+            - name: FL_EDGE_PORT
+              value: {{ . | quote }}
+            {{- end }}
             {{- if $governed }}
             # The extract governance-extract wrote (see ACCESS_POLICY_FILE on the client).
             - name: ACCESS_POLICY_FILE
