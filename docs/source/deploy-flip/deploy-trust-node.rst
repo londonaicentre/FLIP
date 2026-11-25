@@ -240,25 +240,30 @@ different load balancers, so allow both. This is everything a node connects out 
      - FLIP's sample trust data, which the first install loads by default. Downloads redirect to ``*.hf.co``, so
        ``huggingface.co`` alone fails. Not needed with ``TRUST_DATA_SEED=false`` in the kit, unless you load the
        DICOM vocabulary (:ref:`onprem-core-vocabulary`).
-     - Not yet
+     - Yes, Nov 2026
    * - ``pypi.org``, ``files.pythonhosted.org``
      - 443
      - First install
      - The Python packages the sample-data loaders run. The same exceptions apply as for Hugging Face; a Kubernetes
        deployment host also fetches PyYAML for ``sync-kit``
-     - Not yet
+     - Yes, Nov 2026
    * - Ubuntu's package mirrors, or your own
      - 80
      - Provisioning and updates
      - OS packages and their security updates. ``esm.ubuntu.com`` is not expected to be needed
-     - Not yet
+     - Yes, Nov 2026
    * - ``download.docker.com``
      - 443
      - Provisioning and updates
      - Docker Engine and its updates, where FLIP's provisioning installs it
-     - Not yet
+     - Yes, Nov 2026
 
-*Measured* means a node ran behind a firewall that denied everything not listed (an Azure node, October 2026).
+*Measured* means a node ran behind a firewall that denied everything not listed: an Azure node in October 2026,
+and an EC2 node in the hub's own Landing Zone Accelerator account in November 2026, which installed from scratch and
+completed an FL round. That firewall also dropped the host's own background calls, none of which a
+node needs: Ubuntu's (``api.snapcraft.io``, ``motd.ubuntu.com``, ``changelogs.ubuntu.com``, ``entropy.ubuntu.com``,
+``contracts.canonical.com``, ``cdn.fwupd.org``), the EC2 Instance Connect agent's, and XNAT's JavaMelody usage
+report to ``javamelody.org``. Expect them in your firewall's log, and leave them blocked.
 
 A registry allowlist works by host name, so it admits every public package on GHCR, not only FLIP's. What the
 node runs is fixed by the image references instead: FLIP's images by release tag, the third-party ones by digest
