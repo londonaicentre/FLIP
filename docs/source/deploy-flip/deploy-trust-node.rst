@@ -262,8 +262,9 @@ different load balancers, so allow both. This is everything a node connects out 
 and an EC2 node in the hub's own Landing Zone Accelerator account in November 2026, which installed from scratch and
 completed an FL round. That firewall also dropped the host's own background calls, none of which a
 node needs: Ubuntu's (``api.snapcraft.io``, ``motd.ubuntu.com``, ``changelogs.ubuntu.com``, ``entropy.ubuntu.com``,
-``contracts.canonical.com``, ``cdn.fwupd.org``), the EC2 Instance Connect agent's, and XNAT's JavaMelody usage
-report to ``javamelody.org``. Expect them in your firewall's log, and leave them blocked.
+``contracts.canonical.com``, ``cdn.fwupd.org``) and the EC2 Instance Connect agent's. Expect them in your
+firewall's log, and leave them blocked. Grafana and XNAT's JavaMelody also called home in that run; the trust
+now turns both off.
 
 A registry allowlist works by host name, so it admits every public package on GHCR, not only FLIP's. What the
 node runs is fixed by the image references instead: FLIP's images by release tag, the third-party ones by digest
