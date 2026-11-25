@@ -1459,7 +1459,10 @@ def main() -> None:
     print()
 
     started = datetime.now(timezone.utc)
-    checks = run_checks(kit, repo_root, kit_file, args.upgrade)
+    try:
+        checks = run_checks(kit, repo_root, kit_file, args.upgrade)
+    except Exception as error:  # noqa: BLE001 — a checklist that broke says nothing about the host
+        checks = [trust_checks.could_not_run("Checklist", error)]
     label_width = max(len(c.name) + 1 for c in checks)  # +1 for the trailing ":"
     for c in checks:
         render_check(c, label_width)
@@ -1472,7 +1475,7 @@ def main() -> None:
     n_warn = sum(1 for c in checks if c.status == Status.WARN)
     # Warnings are advisory — they don't block readiness, but they DO count
     # toward the summary so the operator can see them in the headline.
-    is_ready = n_fail == 0 and n_pending == 0
+    is_ready = trust_checks.exit_code(checks) == 0
 
     print()
     if is_ready:
@@ -1516,7 +1519,7 @@ def main() -> None:
     heading(f"Status: NOT READY  ({', '.join(parts)})")
     print(f"  Fix the {RED}❌{RESET} items and resolve the {YELLOW}⏳{RESET} pending steps above.")
     print()
-    sys.exit(1)
+    sys.exit(trust_checks.exit_code(checks))
 
 
 if __name__ == "__main__":

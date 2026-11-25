@@ -459,6 +459,21 @@ def test_63_out_writes_the_checklist_as_a_report_and_never_fails_on_it() -> None
             _assert((out / "latest-checklist-Trust_9.md").is_file(), "latest-checklist-<kit>.md is written")
 
 
+def test_64_a_checklist_that_breaks_is_not_ready_and_exits_2() -> None:
+    print("▶ a checklist that raises: could not run, NOT READY, exit 2")
+    out = io.StringIO()
+    with (
+        mock.patch.object(sys, "argv", ["prog", "Trust_9"]),
+        mock.patch.object(sys, "stdout", out),
+        mock.patch.object(mod, "run_checks", side_effect=RuntimeError("docker info hung")),
+    ):
+        try:
+            mod.main()
+        except SystemExit as e:
+            _assert(e.code == 2, "exits 2", str(e.code))
+    _assert("NOT READY" in out.getvalue() and "docker info hung" in out.getvalue(), "says why", out.getvalue()[-300:])
+
+
 def test_19_hub_on_its_release_sha_build_is_not_behind() -> None:
     """A CI-applied hub reports the sha build of its release commit; from that release's checkout the
     kit pinning the release is current, not "behind"."""
@@ -1411,6 +1426,7 @@ def main() -> None:
     test_61_an_empty_trust_local_password_is_not_a_rotated_one()
     test_62_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked()
     test_63_out_writes_the_checklist_as_a_report_and_never_fails_on_it()
+    test_64_a_checklist_that_breaks_is_not_ready_and_exits_2()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
