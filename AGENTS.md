@@ -262,6 +262,7 @@ make capture-demo-project EXTRA_ARGS="--project-id <uuid> --slug <name>"  # Capt
                                            # public-demo fixtures under flip-ui/mocks/demo/projects/<name>/ (FLIP#1746)
 make -C trust seed-trusts PROJECTS="cxr_project"   # Seed the RUNNING dev trusts with a published DICOM set (#1100)
 make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
+make -C trust remove-stray-studies KIT=BDMS PROJECTS=arkplus_project DRY_RUN=1  # before seeding Ark+ on a trust the pre-#2084 loader filled (AICP, BDMS)
 make -C fl-tutorials seed-spleen KIT=GSTT      # spleen / brain_mri: DICOMs regenerate locally (#1221), so their
 make -C fl-tutorials seed-brain-mri KIT=GSTT   # seeding runs from fl-tutorials (CANONICAL_DIR / DICOM_SOURCE / TABLES_DIR)
 ```

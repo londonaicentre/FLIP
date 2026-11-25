@@ -178,6 +178,16 @@ unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
 		--trust-index $(SOURCE_TRUST) --remove-only --projects $(PROJECTS) --data-dir $(SEED_DATA_SOURCE)
 	@echo "✅ Unseeded $(PROJECTS) from trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) ($(SEED_PROVENANCE))"
 
+# Remove strays: the persons holding the listed projects' studies (by accession_id) under person
+# ids the project's tables do not give — rows another loader wrote, such as the pre-FLIP#2084 Ark+
+# loader on AICP and BDMS, which the seed's clean (by the project's person ids) never finds.
+# Loads nothing; DRY_RUN=1 only counts. Mock-data trusts only.
+#   make remove-stray-studies PROJECTS=arkplus_project DRY_RUN=1
+remove-stray-studies: $(if $(CANONICAL_DIR),,fetch-dataset)
+	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.import_tables \
+		--trust-index $(SOURCE_TRUST) --remove-strays --projects $(PROJECTS) --data-dir $(SEED_DATA_SOURCE) \
+		$(if $(filter 1 true,$(DRY_RUN)),--dry-run,)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Snowflake-hosted OMOP (FLIP#1580)
 # ─────────────────────────────────────────────────────────────────────────────

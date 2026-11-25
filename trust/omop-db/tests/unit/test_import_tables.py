@@ -21,6 +21,7 @@ from omop_db_tools.import_tables import (
     load_project,
     project_person_ids,
     remove_projects,
+    remove_strays,
     validate_data_dir,
     validate_identifier,
 )
@@ -147,6 +148,19 @@ class TestLoadProject:
 
         assert [name for name, _, _ in loaded] == required
 
+    def test_all_digit_accession_ids_are_inserted_as_text(self, tmp_path, monkeypatch):
+        """Read as a number, "017355643737" would be inserted as 17355643737 and never match its study (FLIP#2084)."""
+        required = [table for table in CANONICAL_TABLES if table not in {"measurement", "observation"}]
+        project_dir = _write_project(tmp_path, "arkplus_project", required)
+        image = project_dir / "image_occurrence.csv"
+        pd.read_csv(image).assign(accession_id=["017355643737", "000047445493"]).to_csv(image, index=False)
+        inserted = {}
+        monkeypatch.setattr(pd.DataFrame, "to_sql", lambda self_df, name, con, **kw: inserted.setdefault(name, self_df))
+
+        load_project(_FakeEngine(), tmp_path, "arkplus_project", num_trusts=1, trust_index=1, partition="source_trust")
+
+        assert inserted["image_occurrence"]["accession_id"].tolist() == ["017355643737", "000047445493"]
+
     def test_loads_inside_one_transaction_on_the_same_connection(self, tmp_path, monkeypatch):
         """Clean and every insert share the transaction, so a mid-project failure leaves nothing behind."""
         required = [table for table in CANONICAL_TABLES if table not in {"measurement", "observation"}]
@@ -224,6 +238,62 @@ class TestLoadProject:
             load_project(_FakeEngine(), tmp_path, "cxr_project", 1, 1, "source_trust")
 
 
+class _StrayEngine(_FakeEngine):
+    """A database where the stray lookup finds ``strays``: every other statement records as before."""
+
+    def __init__(self, strays):
+        super().__init__()
+        conn, executed = self.conn, self.conn.executed
+
+        class _Result(list):
+            rowcount = 0
+
+        def execute(statement, params=None):
+            executed.append((str(statement), params or {}))
+            return _Result((person_id,) for person_id in strays) if str(statement).startswith("SELECT") else _Result()
+
+        conn.execute = execute
+
+
+class TestRemoveStrays:
+    """Rows of a project's studies that another loader wrote under its own person ids (FLIP#2084)."""
+
+    @staticmethod
+    def _project(tmp_path):
+        project_dir = _write_project(tmp_path, "arkplus_project", ["person", "image_occurrence"])
+        image = project_dir / "image_occurrence.csv"
+        pd.read_csv(image).assign(accession_id=["017355643737", "000047445493"]).to_csv(image, index=False)
+
+    def test_looks_up_by_the_projects_accessions_excluding_its_own_persons(self, tmp_path):
+        self._project(tmp_path)
+        engine = _StrayEngine([7001, 7002])
+
+        remove_strays(engine, tmp_path, ["arkplus_project"])
+
+        select, params = engine.conn.executed[0]
+        assert "accession_id = ANY(:accessions) AND NOT person_id = ANY(:ours)" in select
+        assert params == {"accessions": ["017355643737", "000047445493"], "ours": [1, 2]}
+        deletes = [p for sql, p in engine.conn.executed if sql.startswith("DELETE")]
+        assert deletes == [{"ids": [7001, 7002]}] * len(CANONICAL_TABLES)
+        assert engine.begun == 1
+
+    def test_dry_run_counts_and_deletes_nothing(self, tmp_path):
+        self._project(tmp_path)
+        engine = _StrayEngine([7001])
+
+        remove_strays(engine, tmp_path, ["arkplus_project"], dry_run=True)
+
+        assert not [sql for sql, _ in engine.conn.executed if sql.startswith("DELETE")]
+
+    def test_refuses_before_the_transaction_when_the_image_table_is_missing(self, tmp_path):
+        _write_project(tmp_path, "arkplus_project", ["person"])
+        engine = _StrayEngine([])
+
+        with pytest.raises(FileNotFoundError, match="image_occurrence.csv"):
+            remove_strays(engine, tmp_path, ["arkplus_project"])
+        assert engine.begun == 0
+
+
 class TestMain:
     """The CLI: which of clean / load / remove-only it dispatches to, without a database."""
 
@@ -260,6 +330,18 @@ class TestMain:
 
         assert removed == [(fake_engine, tmp_path, ["spleen_project"])]
         assert fake_engine.begun == 0, "the sanity count after a load must not run on an unseed"
+
+    def test_remove_strays_dispatches_with_dry_run_and_loads_nothing(self, tmp_path, monkeypatch, fake_engine):
+        called = []
+        monkeypatch.setattr(import_tables_module, "remove_strays", lambda *a, **k: called.append((a, k)))
+        monkeypatch.setattr(import_tables_module, "load_project", lambda *a, **k: pytest.fail("must not load"))
+
+        import_tables_module.main(
+            ["--trust-index", "2", "--remove-strays", "--dry-run", "--projects", "arkplus_project",
+             "--data-dir", str(tmp_path)]
+        )  # fmt: skip
+
+        assert called == [((fake_engine, tmp_path, ["arkplus_project"]), {"dry_run": True})]
 
     def test_default_run_loads_each_project_with_the_scoped_clean(self, tmp_path, monkeypatch, fake_engine):
         for project in ("cxr_project", "spleen_project"):

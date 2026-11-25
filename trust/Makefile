@@ -13,7 +13,7 @@
 .PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
-	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
+	seed-omop seed-orthanc seed seed-trusts remove-stray-studies ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance prepare-host-dirs \
 	reconvert-nifti install-kit rotate-internal-service-key
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
@@ -416,7 +416,8 @@ endef
 
 # Guard: the explicit (un)seed verbs refuse a trust whose kit turns the sample data off, unless FORCE_SEED=1:
 # its own name, as a plain FORCE=1 given to an outer make (upgrade-onprem-trust, release-instance) reaches every
-# sub-make. A DRY_RUN=1 of the two that honour it (seed-orthanc, unseed-orthanc) writes nothing, so it passes.
+# sub-make. A DRY_RUN=1 of the ones that honour it (seed-orthanc, unseed-orthanc, remove-stray-studies) writes
+# nothing, so it passes.
 # They need the kit file to tell, not a complete one: without it, or with a mistyped value, the setting would
 # read as true.
 define refuse_seed_when_off
@@ -424,7 +425,7 @@ define refuse_seed_when_off
 	@[ -f "$(KIT_FILE)" ] || { echo "❌ Kit file $(KIT_FILE_LABEL) not found: $@ reads TRUST_DATA_SEED from it."; exit 1; }
 	$(require_trust_data_seed)
 	@if [ "$(TRUST_DATA_SEED_EFFECTIVE)" = false ] && [ "$(FORCE_SEED)" != 1 ] && \
-	    [ "$(if $(filter seed-orthanc unseed-orthanc,$@),$(DRY_RUN))" != 1 ]; then \
+	    [ "$(if $(filter seed-orthanc unseed-orthanc remove-stray-studies,$@),$(DRY_RUN))" != 1 ]; then \
 	    echo "❌ $(KIT) has TRUST_DATA_SEED=false: its OMOP and PACS hold its own data, which $@ would change. FORCE_SEED=1 runs it anyway."; \
 	    exit 1; \
 	fi
@@ -1190,6 +1191,19 @@ unseed-orthanc:
 	  $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 unseed: unseed-orthanc unseed-omop
+
+# Before seeding arkplus_project on a trust the pre-FLIP#2084 loader filled (AICP, BDMS): remove
+# those rows, which carry other person ids, or every Ark+ study is in OMOP twice. PACS needs
+# nothing: the published DICOMs are the same instances. DRY_RUN=1 first; it only counts.
+#   make -C trust remove-stray-studies KIT=BDMS PROJECTS=arkplus_project DRY_RUN=1
+remove-stray-studies:
+	$(refuse_seed_when_off)
+	$(OMOP_DB_CMD) remove-stray-studies TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
+	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
+	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
+	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN)) \
+	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
 
 # Publish a new data version to aicentreflip/trust-data (FLIP#1100): ONE commit on
 # main that replaces exactly the artefacts passed, then ONE tag = VERSION. The

@@ -92,6 +92,9 @@ tolerate the DICOM vocab the seed has already loaded):
   records `source=<dir>` in place of a version. `unseed-omop` (`import_tables --remove-only`) deletes
   the listed projects' rows by the person ids in the given tables and loads nothing — the surgical
   move off a re-cut project (point `HF_TRUST_DATA_REVISION` at the cut the trust holds).
+  `remove-stray-studies` (`import_tables --remove-strays`, FLIP#2084) deletes the persons holding a
+  project's studies (by `accession_id`) under person ids its tables do not give — rows another loader
+  wrote, which no person-id clean reaches; `DRY_RUN=1` only counts.
 - **Seeding a Snowflake trust** (#1580): `omop_db_tools.snowflake_seed` is the twin of `import_tables`,
   reached by `make -C trust/omop-db seed-omop-snowflake KIT=<CODE>` (and `ensure-seeded-snowflake` /
   `unseed-omop-snowflake`). Same canonical source, same `source_trust` selection (it calls

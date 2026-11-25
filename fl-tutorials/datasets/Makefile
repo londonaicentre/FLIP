@@ -70,7 +70,10 @@ PROSTATE_UV := uv run --project prostate
 	download-prostate-data convert-prostate-to-dicom convert-prostate-to-nifti partition-prostate-data \
 	prepare-prostate-local-data upload-prostate-labels \
 	create-prostate-metadata-table fetch-prostate-metadata-table build-prostate-omop-tables \
-	verify-prostate-omop-tables reproduce-prostate-omop build-prostate-canonical package-prostate-dicom
+	verify-prostate-omop-tables reproduce-prostate-omop build-prostate-canonical package-prostate-dicom \
+	create-arkplus-metadata-table fetch-arkplus-metadata-table build-arkplus-omop-tables \
+	verify-arkplus-omop-tables reproduce-arkplus-omop build-arkplus-canonical prepare-arkplus-dicom \
+	package-arkplus-dicom seed-arkplus
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
@@ -567,3 +570,73 @@ package-prostate-dicom:
 	@cd ../../trust/orthanc && uv run publish_dicom.py --project prostate_project \
 		--tables-dir $(PROSTATE_DATA)/canonical --source $(PROSTATE_DATA)/dicom \
 		--out $(PROSTATE_DATA)/dist/dicom/prostate_project.tar.gz
+
+# ---------------------------------------------------------------------------------------------
+# arkplus_project OMOP tables + DICOM set (FLIP#2084)
+#
+# The Ark+ chest X-ray cohorts (the preprint's UK and Thai synthetic sets) as a seedable project, so a
+# trust loads them with `make -C trust seed PROJECTS=arkplus_project` like any other. source_trust is
+# the dataset's own site: site1 (+ holdout) -> 1, site2 (+ holdout) -> 2 — non-IID by design. Full
+# chain, from the two downloads above:
+#   download-arkplus-finetuning-data download-arkplus-eval-data -> create-arkplus-metadata-table
+#     -> build-arkplus-omop-tables -> build-arkplus-canonical -> prepare-arkplus-dicom
+#     -> package-arkplus-dicom -> make -C trust publish-trust-data VERSION=... OMOP_CSV=... DICOM=...
+# Reproducible path, the same shape as cxr's and prostate's:
+#   fetch-arkplus-metadata-table -> build-arkplus-omop-tables -> verify-arkplus-omop-tables
+# or `reproduce-arkplus-omop` for the three. Everything lands under DATA_DIR/arkplus/.
+ARKPLUS_DATA := $(abspath $(DATA_DIR))/arkplus
+ARKPLUS_UV := uv run --project arkplus
+ARKPLUS_OMOP_UV := uv run --project datasets/arkplus
+ARKPLUS_METADATA_URL := $(HF_TRUST_DATA_BASE)/omop-csv/arkplus_project/source/dicom_metadata.csv
+
+# The four downloaded site folders -> source/dicom_metadata.csv (one row per accession, its labels and
+# source_trust). This is the published input of the conversion.
+create-arkplus-metadata-table:
+	@$(ARKPLUS_UV) python arkplus/create_arkplus_metadata_table.py --data-dir $(ARKPLUS_DATA) \
+		--output $(ARKPLUS_DATA)/source/dicom_metadata.csv
+
+# Reproducible path: the published input at the pinned data version.
+fetch-arkplus-metadata-table:
+	@mkdir -p $(ARKPLUS_DATA)/source && curl -fsSL "$(ARKPLUS_METADATA_URL)" -o $(ARKPLUS_DATA)/source/dicom_metadata.csv
+	@echo "✅ arkplus metadata table at $(ARKPLUS_DATA)/source (revision $(TRUST_DATA_REVISION))"
+
+# source/ -> omop/arkplus_project/*.csv (every row, trust column) + omop/<trust>/arkplus_project/.
+build-arkplus-omop-tables:
+	@cd .. && PYTHONPATH=datasets $(ARKPLUS_OMOP_UV) python datasets/arkplus/omop_convert_arkplus.py \
+		--metadata $(ARKPLUS_DATA)/source/dicom_metadata.csv --omop-root $(ARKPLUS_DATA)
+
+verify-arkplus-omop-tables:
+	@cd .. && $(ARKPLUS_OMOP_UV) python datasets/utils/verify_omop_tables.py --project arkplus_project \
+		--generated-dir $(ARKPLUS_DATA)/omop --revision $(TRUST_DATA_REVISION)
+
+reproduce-arkplus-omop: fetch-arkplus-metadata-table build-arkplus-omop-tables verify-arkplus-omop-tables
+
+# The canonical (source_trust) form publish-trust-data's OMOP_CSV= takes, with the metadata table beside it.
+build-arkplus-canonical:
+	@cd ../../trust/omop-db && uv run python -m omop_db_tools.dataset build \
+		--trust-dirs $(ARKPLUS_DATA)/omop/trust_1 $(ARKPLUS_DATA)/omop/trust_2 \
+		--dest $(ARKPLUS_DATA)/canonical --projects arkplus_project
+	@mkdir -p $(ARKPLUS_DATA)/canonical/arkplus_project/source \
+		&& cp $(ARKPLUS_DATA)/source/dicom_metadata.csv $(ARKPLUS_DATA)/canonical/arkplus_project/source/
+	@echo "✅ canonical tables at $(ARKPLUS_DATA)/canonical/arkplus_project"
+
+# The downloaded DICOMs with the tags the platform requires filled (prepare_arkplus_dicom.py says which).
+prepare-arkplus-dicom:
+	@$(ARKPLUS_UV) python arkplus/prepare_arkplus_dicom.py --data-dir $(ARKPLUS_DATA) \
+		--metadata $(ARKPLUS_DATA)/source/dicom_metadata.csv --out $(ARKPLUS_DATA)/dicom
+
+# Verified both ways against the canonical tables, then packaged as dicom/arkplus_project.tar.gz.
+package-arkplus-dicom:
+	@cd ../../trust/orthanc && uv run publish_dicom.py --project arkplus_project \
+		--tables-dir $(ARKPLUS_DATA)/canonical --source $(ARKPLUS_DATA)/dicom \
+		--out $(ARKPLUS_DATA)/dist/dicom/arkplus_project.tar.gz
+
+# Seed a running trust from the LOCAL tree — proves the pull before a data version is tagged. Once
+# published, `make -C trust seed KIT=<CODE> PROJECTS=arkplus_project` replaces it.
+seed-arkplus:
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-arkplus KIT=GSTT [DRY_RUN=1] [CLEAR=1]"; exit 1)
+	$(if $(DRY_RUN),@echo "DRY_RUN: skipping seed-omop",$(MAKE) -C ../../trust seed-omop KIT=$(KIT) PROJECTS=arkplus_project \
+		CANONICAL_DIR=$(ARKPLUS_DATA)/canonical)
+	$(MAKE) -C ../../trust seed-orthanc KIT=$(KIT) PROJECTS=arkplus_project \
+		DICOM_SOURCE=$(ARKPLUS_DATA)/dicom TABLES_DIR=$(ARKPLUS_DATA)/canonical \
+		$(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
