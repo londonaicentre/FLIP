@@ -220,7 +220,7 @@ if [ "$CLUSTER_OK" = "true" ]; then
     # right stops the deploy part-way: the built-in `admin` role cannot write ResourceQuotas, and
     # the chart creates one for XNAT's conversion jobs (FLIP#1986).
     MISSING_KINDS=""
-    for kind in $(printf '%s\n' Secret ${CHART_KINDS:-Deployment} | sort -u); do
+    for kind in $(printf '%s\n' Secret ${CHART_KINDS:-} | sort -u); do
         resource="$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')"
         case "$resource" in
             *y) resource="${resource%y}ies" ;;
@@ -230,7 +230,9 @@ if [ "$CLUSTER_OK" = "true" ]; then
         kctl auth can-i create "$resource" --namespace "$NAMESPACE" >/dev/null 2>&1 \
             || MISSING_KINDS="${MISSING_KINDS:+$MISSING_KINDS, }${kind}"
     done
-    if [ -z "$MISSING_KINDS" ]; then
+    if [ -z "${CHART_KINDS:-}" ]; then
+        fail "The chart does not render with these values — run 'make template' to see why"
+    elif [ -z "$MISSING_KINDS" ]; then
         pass "RBAC: can create every kind the chart renders in '${NAMESPACE}'"
     else
         fail "RBAC: cannot create ${MISSING_KINDS} in '${NAMESPACE}' — the deploy would stop part-way"

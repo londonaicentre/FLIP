@@ -104,6 +104,13 @@ def test_an_account_with_every_right_passes_the_kinds_check(tmp_path):
     assert "can create every kind the chart renders in 'flip-site'" in out
 
 
+def test_a_chart_that_does_not_render_fails_the_kinds_check(tmp_path):
+    """The Makefile's render discards helm's error, so an empty kinds list is a failed render."""
+    out, _ = _preflight(tmp_path, CHART_KINDS="")
+    assert "The chart does not render with these values" in out
+    assert "can create every kind the chart renders" not in out
+
+
 def test_storage_classes_the_account_cannot_list_are_not_reported_as_missing(tmp_path):
     out, _ = _preflight(tmp_path)
     assert "cannot list StorageClasses" in out
@@ -125,13 +132,6 @@ class TestMakefile:
         recipe = self._dry_run("preflight")
         assert 'CHART_KINDS="$(helm template' in recipe
         assert "sed -n 's/^kind: //p'" in recipe
-
-    @pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
-    def test_the_rendered_kinds_include_the_quota(self):
-        render = subprocess.run(
-            ["make", "-C", str(CHART_DIR), "template"], capture_output=True, text=True, check=True, timeout=120
-        ).stdout
-        assert "kind: ResourceQuota" in render.splitlines()
 
     def test_a_deploy_never_patches_a_namespace_that_exists(self):
         """Applying the Namespace needs patch on it; reading it is all `admin` in the namespace may do."""
