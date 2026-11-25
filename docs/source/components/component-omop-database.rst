@@ -459,6 +459,14 @@ Run it once per Trust, with the stack up:
    make -C trust load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
    make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
 
+On a site's own Trust, name its kit instead. The loader then logs in with the kit's OMOP credentials, takes
+the Trust's half from its slot (or ``SOURCE_TRUST=``, as the seed does), and refuses a Trust whose kit sets
+``TRUST_DATA_SEED=false``:
+
+.. code-block:: shell
+
+   make -C trust load-synthea-ehr KIT=<CODE> HUB=prod
+
 - Each Trust gets a disjoint slice by ``person_id``, so the federated run sees genuinely partitioned cohorts.
 - The loader is safe to re-run: it tags its rows in ``person_source_value`` and replaces only those, leaving the
   imaging cohorts untouched.

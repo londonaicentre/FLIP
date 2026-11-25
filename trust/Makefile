@@ -1089,11 +1089,18 @@ endif
 
 # Load the public Synthea-in-OMOP EHR cohort into a running trust omop-db — the populate step for
 # the EHR risk-prediction tutorial (fl-tutorials/.../ehr_risk_prediction; the shipped mock OMOP has
-# no condition rows). Run once per trust with that trust's index + published OMOP port, e.g.
+# no condition rows). On any trust, from its kit: the kit's OMOP port and credentials, and its
+# SOURCE_TRUST (the slot unless given) as the Synthea half, so two sites never load the same people;
+# refused where the kit turns the sample data off, as the seed verbs are (FLIP#2107):
+#   make -C trust load-synthea-ehr KIT=BDMS HUB=prod
+# Without KIT, a dev trust by its index + published OMOP port, as before:
 #   make -C trust load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
 #   make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
 load-synthea-ehr:
-	$(OMOP_DB_CMD) load-synthea-ehr TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT)
+	$(if $(KIT),$(refuse_seed_when_off))
+	$(OMOP_DB_CMD) load-synthea-ehr TRUST_INDEX=$(or $(TRUST_INDEX),$(SOURCE_TRUST),1) OMOP_DB_PORT=$(OMOP_DB_PORT) \
+	  $(if $(KIT),OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
+	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB))
 
 # Load a licence holder's converted ADNI biomarker cohort into a running trust omop-db — the populate
 # step for the biomarker causal-discovery tutorial on a LOCAL dev stack (nothing ADNI-derived may be
