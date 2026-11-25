@@ -247,7 +247,7 @@ different load balancers, so allow both. This is everything a node connects out 
      - The Python packages the sample-data loaders run. The same exceptions apply as for Hugging Face; a Kubernetes
        deployment host also fetches PyYAML for ``sync-kit``
      - Not yet
-   * - Ubuntu's package mirrors, or your own
+   * - Ubuntu's package mirrors (``archive.ubuntu.com``, ``security.ubuntu.com``), or your own
      - 80
      - Provisioning and updates
      - OS packages and their security updates. ``esm.ubuntu.com`` is not expected to be needed

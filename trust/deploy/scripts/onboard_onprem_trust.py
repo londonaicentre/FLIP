@@ -61,6 +61,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import site_upgrade  # noqa: E402 — resolves a CI-deployed hub's sha build to this checkout's release
+import trust_endpoints  # noqa: E402 — the one list of what a trust node connects out to
 import trust_kit_lib  # noqa: E402 — the one Python reader of TRUST_DATA_SEED
 
 WIDTH = 71
@@ -358,10 +359,7 @@ def fetch_local_trust_health(port: str, timeout: float = 3.0) -> dict:
 PROBE_TIMEOUT_SECONDS = 4.0
 # Both hosts of the one registry a trust pulls from (FLIP#1721): ghcr.io alone passes while every
 # pull fails on the layer host.
-REGISTRY_HOSTS: tuple[str, ...] = (
-    "ghcr.io",
-    "pkg-containers.githubusercontent.com",
-)
+REGISTRY_HOSTS: tuple[str, ...] = trust_endpoints.hosts("image-registry")
 EGRESS_DOC = "the egress list on docs → Deploy a trust node → Network requirements"
 EGRESS_IP_URL = "https://checkip.amazonaws.com"
 

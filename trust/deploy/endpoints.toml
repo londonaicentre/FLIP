@@ -1,0 +1,94 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Everything a trust node connects out to (FLIP#2076). The one list: the onboarding checklist
+# probes from it, and trust/deploy/scripts/tests/test_trust_endpoints.py holds the tables in
+# docs/source/deploy-flip/ to it. Read with trust/deploy/scripts/trust_endpoints.py.
+#
+#   hosts           literal host names; "*.x" is a wildcard a firewall rule must cover
+#   host_from_kit   the kit variable that names the host, for the two hub endpoints
+#   port            a number, or port_from_kit for the FL port
+#   when            always | first-install | provisioning
+#   platform        omitted: every node. Otherwise the one platform that also needs it
+#                   (azure-vm, aks, kubernetes)
+
+[[endpoint]]
+name = "hub-api"
+host_from_kit = "CENTRAL_HUB_API_URL"
+port = 443
+when = "always"
+why = "Task polling, heartbeats and results (HTTPS, API key)"
+
+[[endpoint]]
+name = "fl-server"
+host_from_kit = "NLB_SUBDOMAIN"
+port_from_kit = "FL_EDGE_PORT"
+when = "always"
+why = "Federated training, over mutual TLS"
+
+[[endpoint]]
+name = "image-registry"
+hosts = ["ghcr.io", "pkg-containers.githubusercontent.com"]
+port = 443
+when = "always"
+why = "Every container image the node runs; the second host serves the layers"
+
+[[endpoint]]
+name = "sample-data"
+hosts = ["huggingface.co", "*.hf.co"]
+port = 443
+when = "first-install"
+why = "FLIP's sample trust data, unless TRUST_DATA_SEED=false"
+
+[[endpoint]]
+name = "python-packages"
+hosts = ["pypi.org", "files.pythonhosted.org"]
+port = 443
+when = "first-install"
+why = "The Python packages the sample-data loaders run"
+
+[[endpoint]]
+name = "os-packages"
+hosts = ["archive.ubuntu.com", "security.ubuntu.com"]
+port = 80
+when = "provisioning"
+why = "OS packages and security updates; a site's own mirror replaces these"
+
+[[endpoint]]
+name = "docker-engine"
+hosts = ["download.docker.com"]
+port = 443
+when = "provisioning"
+why = "Docker Engine and its updates, where FLIP's provisioning installs it"
+
+[[endpoint]]
+name = "azure-vm-first-boot"
+platform = "azure-vm"
+hosts = ["github.com", "astral.sh", "releases.astral.sh"]
+port = 443
+when = "provisioning"
+why = "First boot clones FLIP at a pinned commit and installs uv"
+
+[[endpoint]]
+name = "kubernetes-seed-job"
+platform = "kubernetes"
+hosts = ["github.com", "codeload.github.com", "raw.githubusercontent.com"]
+port = 443
+when = "first-install"
+why = "The sample-data seed job fetches its scripts from FLIP's repository"
+
+[[endpoint]]
+name = "aks-platform"
+platform = "aks"
+hosts = []
+port = 443
+when = "always"
+why = "Microsoft's outbound rules for AKS: the AzureKubernetesService FQDN tag, and AzureCloud.<region> on TCP/UDP 443, 1194, 9000 plus NTP"
