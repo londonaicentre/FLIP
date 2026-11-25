@@ -231,7 +231,8 @@ class SyntheaEhr(unittest.TestCase):
         """Without them the loader logs in with the dev template's password and loads half 1 on every trust."""
         out = dry_run("load-synthea-ehr", kit=self.KIT_DB)
         assert "load-synthea-ehr TRUST_INDEX=9 OMOP_DB_PORT=5499" in out, out
-        assert "OMOP_POSTGRES_USER=site_user OMOP_POSTGRES_PASSWORD='rotated pw'" in out, out
+        login = "OMOP_POSTGRES_USER=site_user OMOP_POSTGRES_PASSWORD='rotated pw'"  # pragma: allowlist secret
+        assert login in out, out
         assert "OMOP_POSTGRES_DB=site_db" in out, out
 
     def test_the_half_follows_source_trust_and_an_explicit_index_wins(self):
