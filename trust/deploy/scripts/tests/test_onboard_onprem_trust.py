@@ -695,8 +695,10 @@ def test_32_hub_reachable_reports_the_release_or_the_failure() -> None:
 
 
 def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
-    """FLARE: the kit slice's fed_client.json target when on disk, else the kit's NLB_SUBDOMAIN;
-    Flower: the kit's NLB_SUBDOMAIN with FL_EDGE_PORT over FL_SERVER_PORT. Probed by a plain TCP connect."""
+    """FLARE: the kit slice's fed_client.json host when on disk, else the kit's NLB_SUBDOMAIN;
+    Flower: the kit's NLB_SUBDOMAIN. The port is FL_EDGE_PORT_OVERRIDE, else FL_EDGE_PORT (fl-client-init
+    writes it into FLARE's fed_client.json, FLIP#2051), else the slice's or FL_SERVER_PORT. Probed by a
+    plain TCP connect."""
     print("\n[33] FL endpoint reachable: source per backend, TCP probe, TLS-inspection hint on FAIL")
     with tempfile.TemporaryDirectory() as tmp:
         kit_dir = Path(tmp)
@@ -715,9 +717,17 @@ def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
         }
         from_slice = mod.fl_endpoint(flare)
         _assert(
-            from_slice == ("fl.hub.example", 8002, "startup/fed_client.json"),
-            "FLARE with the slice on disk dials fed_client.json's target",
+            from_slice == ("fl.hub.example", 8012, "startup/fed_client.json"),
+            "FLARE with the slice on disk dials fed_client.json's host on the kit's FL_EDGE_PORT",
             str(from_slice),
+        )
+        no_edge = {k: v for k, v in flare.items() if k != "FL_EDGE_PORT"}
+        _assert(mod.fl_endpoint(no_edge)[1] == 8002, "FLARE without FL_EDGE_PORT keeps the slice's port")
+        pinned = mod.fl_endpoint({**flare, "FL_EDGE_PORT_OVERRIDE": "8002"})
+        _assert(pinned[1] == 8002, "the site's FL_EDGE_PORT_OVERRIDE beats the hub's port", str(pinned))
+        _assert(
+            mod.fl_endpoint({**flare, "FL_BACKEND": "flower", "FL_EDGE_PORT_OVERRIDE": "443"})[1] == 443,
+            "Flower honours the override too",
         )
         no_slice = mod.fl_endpoint({**flare, "FL_KIT_SLOT": "Trust_6"})
         _assert(
@@ -736,14 +746,14 @@ def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
         with mock.patch.object(mod, "probe_tcp", return_value=None) as probe:
             ok = mod.check_fl_endpoint_reachable(flare, True)
         _assert(ok.status == mod.Status.PASS, "connects -> PASS", str(ok))
-        _assert(probe.call_args.args == ("fl.hub.example", 8002), "probed the dialled host:port", str(probe.call_args))
+        _assert(probe.call_args.args == ("fl.hub.example", 8012), "probed the dialled host:port", str(probe.call_args))
         with (
             mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"),
             mock.patch.object(mod, "lookup_egress_ip", return_value="203.0.113.7"),
         ):
             bad = mod.check_fl_endpoint_reachable(flare, True)
         _assert(bad.status == mod.Status.FAIL, "cannot connect -> FAIL", str(bad))
-        _assert("fl.hub.example:8002" in bad.detail, "FAIL names host:port", bad.detail)
+        _assert("fl.hub.example:8012" in bad.detail, "FAIL names host:port", bad.detail)
         _assert(any("TLS-inspection" in h for h in bad.hints), "hint covers the TLS-inspection proxy case")
         _assert("leaves from: 203.0.113.7." in bad.hints[-1], "timeout hint names this host's egress address")
         pending = mod.check_fl_endpoint_reachable({"FL_BACKEND": "flower"}, True)

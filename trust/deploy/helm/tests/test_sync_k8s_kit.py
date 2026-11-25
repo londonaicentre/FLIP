@@ -106,6 +106,34 @@ def test_render_override_points_a_flower_supernode_at_the_edge():
     assert "superlink" not in nvflare
 
 
+def test_render_override_gives_an_nvflare_client_its_server_port():
+    """NVFLARE reads the port only from the kit's fed_client.json, which fl-client-init rewrites (FLIP#2051)."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "FL_EDGE_PORT": "443"}, "Trust_K8s", "eu-west-2")
+    assert yaml.safe_load(out)["flClient"]["nvflare"] == {"serverPort": "443"}
+    flower = sync_k8s_kit.render_override({**_FL_KIT, "FL_BACKEND": "flower"}, "Trust_K8s", "eu-west-2")
+    assert "serverPort" not in flower
+
+
+@pytest.mark.parametrize("backend", ["nvflare", "flower"])
+def test_render_override_the_sites_override_beats_the_hub_port(backend):
+    """A trust that must keep its port (a VPN site behind an 8002-only edge) sets FL_EDGE_PORT_OVERRIDE."""
+    kit = {**_FL_KIT, "FL_BACKEND": backend, "FL_EDGE_PORT": "443", "FL_EDGE_PORT_OVERRIDE": "8002"}
+    values = yaml.safe_load(sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2"))
+    assert {"port": 8002, "protocol": "TCP"} in values["networkPolicies"]["allowedEgressPorts"]
+    if backend == "flower":
+        assert values["flClient"]["flower"]["superlink"] == "fl.stag.flip.aicentre.co.uk:8002"
+    else:
+        assert values["flClient"]["nvflare"]["serverPort"] == "8002"
+
+
+def test_render_override_writes_one_nvflare_block_with_privacy_and_port():
+    """Both nvflare values in one mapping: a second `nvflare:` key would silently replace the first."""
+    kit = {**_FL_KIT, "FL_EDGE_PORT": "443", "FL_SITE_PRIVACY_POLICY": "percentile"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert out.count("\n  nvflare:\n") == 1
+    assert yaml.safe_load(out)["flClient"]["nvflare"] == {"sitePrivacy": {"policy": "percentile"}, "serverPort": "443"}
+
+
 def test_render_override_blank_edge_port_falls_back_to_server_port():
     """A blank FL_EDGE_PORT line in the kit must not drop the egress rule."""
     out = sync_k8s_kit.render_override({**_FL_KIT, "FL_EDGE_PORT": "  "}, "Trust_K8s", "eu-west-2")

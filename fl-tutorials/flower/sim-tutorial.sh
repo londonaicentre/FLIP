@@ -39,6 +39,11 @@ FLIP_UV=(uv run --project "$REPO_ROOT/flip-utils" --extra flower --extra full)
 # nothing listens on it, so it is neither probed nor waited on here.
 CONTROL_PORT="${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}"
 CONTROL_ADDRESS="127.0.0.1:$CONTROL_PORT"
+# flwr keeps that SuperLink's state under FLWR_HOME (default ~/.flwr): its database, log, config
+# and the runs' Python environments. Shared, a SuperLink another checkout started on ANOTHER port
+# reads the same database and runs this checkout's job with its own app (FLIP#2069), which the
+# port check below cannot see. Each checkout keeps its own.
+export FLWR_HOME="$REPO_ROOT/.flwr"
 
 # flwr keeps a long-lived local SuperLink and Ray workers inherit ITS environment, not what we
 # export — so a SuperLink left over from an earlier run silently ignores the DEV_* and
