@@ -25,6 +25,7 @@ on:
     paths:
       - "trust/deploy/helm/agent/**"
       - "scripts/trust_upgrade_agent.py"
+      - "trust/deploy/helm/scripts/rollout_wait.py"
       - ".github/workflows/docker_build_trust_upgrade_agent.yml"
   # PR runs build + the smoke only — the push steps are gated below, so nothing is published
   # from a pull request.
@@ -32,6 +33,7 @@ on:
     paths:
       - "trust/deploy/helm/agent/**"
       - "scripts/trust_upgrade_agent.py"
+      - "trust/deploy/helm/scripts/rollout_wait.py"
       - ".github/workflows/docker_build_trust_upgrade_agent.yml"
 
 # A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a

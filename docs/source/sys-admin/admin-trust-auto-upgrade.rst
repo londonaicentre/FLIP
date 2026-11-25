@@ -210,7 +210,12 @@ chart's README).
 
 How the agent behaves:
 
-- **The current release comes from the Helm record**, with ``trust-api``'s ``/health`` as the fallback.
+- **The current release comes from the Helm record**, with ``trust-api``'s ``/health`` as the fallback. A Trust whose
+  record names the hub's release while ``trust-api`` still serves another build (a failed attempt) is not treated as
+  up to date: the failed release is skipped until an operator clears it in the portal, then retried.
+- **Done means every core service is up on the release.** After ``helm upgrade`` the agent waits for the same core
+  workloads as ``make upgrade-trust-k8s`` (``trust/deploy/helm/scripts/rollout_wait.py``, shipped in the agent image)
+  and then for ``trust-api`` to report the release, before it reports **Succeeded**.
 - **The upgrade is Helm's.** It never passes ``--install``: a release it cannot see fails the check instead of being
   installed a second time underneath the running one.
 - **It stops in time to report.** The agent runs on its own clock, five minutes inside the Job's deadline, so a

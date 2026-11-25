@@ -215,7 +215,12 @@ def decide(policy: dict, local: Local, now_utc: datetime) -> Decision:
         return Decision("SKIP", "the hub runs no release tag to move to")
     if not STABLE_RELEASE.match(target):
         return Decision("SKIP", f"{target} is not a stable release; only vX.Y.Z is applied unattended")
-    if target == local.current_release:
+    # Helm's record says what was applied, not what came up: after a failed attempt the release is
+    # recorded on the target while trust-api still serves the old build. A trust-api that answers
+    # with another build is therefore not "already on" it, and the failed_release rule below (or,
+    # once an operator clears it, a retry) decides. One that cannot be read at all proves nothing
+    # either way, and a trust with nothing to do does not report a blocker.
+    if target == local.current_release and local.health.version in (None, target):
         return Decision("SKIP", f"already on {target}")
     # Never follow the hub down: a hub rollback must not walk every opted-in site back across
     # migrations it has already run. Moving down is an operator's decision.
@@ -457,6 +462,63 @@ def governance_drift(cluster: Cluster) -> str | None:
     return None
 
 
+# The manual upgrade's own rollout judge (trust/deploy/helm/scripts/rollout_wait.py), copied into the
+# agent image beside this script, so both paths wait on the same core workloads (FLIP#1645).
+ROLLOUT_WAIT = Path(__file__).resolve().parent / "rollout_wait.py"
+if not ROLLOUT_WAIT.exists():  # a checkout rather than the image
+    ROLLOUT_WAIT = Path(__file__).resolve().parent.parent / "trust" / "deploy" / "helm" / "scripts" / "rollout_wait.py"
+
+
+def ready_fl_clients(cluster: Cluster) -> str:
+    """The fl-client workloads ready before the upgrade, which ``wait_core_rollout`` then waits on too.
+
+    Best effort: an empty answer only means no fl-client is held to coming back, as on the manual path.
+    """
+    out = run(
+        [
+            sys.executable,
+            str(ROLLOUT_WAIT),
+            "--namespace",
+            cluster.namespace,
+            "--release",
+            cluster.release,
+            "--report-ready",
+        ],
+        Path.cwd(),
+    )
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def wait_core_rollout(cluster: Cluster, ready_before: str, timeout_s: int = VERIFY_TIMEOUT_S) -> tuple[bool, str]:
+    """Wait until every core workload of the release has rolled out, as ``upgrade-trust-k8s`` does.
+
+    trust-api answering on the target says nothing about imaging-api, data-access-api or the databases,
+    so a release whose other pods never become ready would otherwise be reported SUCCEEDED.
+    """
+    budget = remaining_budget()
+    if budget is not None:
+        timeout_s = min(timeout_s, int(budget))
+    out = run(
+        [
+            sys.executable,
+            str(ROLLOUT_WAIT),
+            "--namespace",
+            cluster.namespace,
+            "--release",
+            cluster.release,
+            "--timeout",
+            f"{timeout_s}s",
+            "--ready-before",
+            ready_before,
+        ],
+        Path.cwd(),
+    )
+    text = (out.stdout + out.stderr)[-LOG_TAIL_BYTES:]
+    if out.returncode == 0:
+        return True, "every core workload rolled out"
+    return False, f"the upgrade applied but not every core workload rolled out within {timeout_s}s:\n{text}"
+
+
 def verify(
     kit: dict[str, str],
     tag: str,
@@ -582,6 +644,7 @@ def tick(cluster: Cluster, dry_run: bool) -> int:
             },
         )
         return 0
+    ready_before = ready_fl_clients(cluster)
     status, _ = hub_call(kit, "POST", "/trust/upgrade-status", {"state": "STARTING", "release": decision.release})
     if status == 409:
         print("the hub refused the claim (a job landed, or the policy changed); nothing done")
@@ -596,8 +659,11 @@ def tick(cluster: Cluster, dry_run: bool) -> int:
             ok, tail = cluster_upgrade(cluster, decision.release)
             detail = tail
             if ok:
-                # helm exiting 0 only says the release was applied. Confirm the site actually
-                # came back up ON the target before telling the hub it SUCCEEDED.
+                # helm exiting 0 only says the release was applied. Confirm every core workload rolled
+                # out and the site came back up ON the target before telling the hub it SUCCEEDED.
+                ok, detail = wait_core_rollout(cluster, ready_before)
+                print(detail)
+            if ok:
                 ok, detail = verify(kit, decision.release)
                 print(detail)
             if not ok:

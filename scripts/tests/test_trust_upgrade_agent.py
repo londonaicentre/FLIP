@@ -87,6 +87,16 @@ class Decide(unittest.TestCase):
     def test_already_current(self):
         self.assertEqual(agent.decide(policy(target_release="v1.2.0"), CLEAN, NOW).action, "SKIP")
 
+    def test_a_release_helm_records_but_trust_api_does_not_serve_is_not_current(self):
+        # After a failed attempt Helm records the target while trust-api still serves the old build.
+        broken = agent.Local(current_release="v1.3.0", health=HEALTHY)  # HEALTHY serves v1.2.0
+        d = agent.decide(policy(failed_release="v1.3.0"), broken, NOW)
+        self.assertEqual(
+            (d.action, d.reason), ("SKIP", "v1.3.0 failed earlier; an operator must clear it in the portal")
+        )
+        # Once an operator clears it, the next tick retries rather than calling the site current.
+        self.assertEqual(agent.decide(policy(), broken, NOW).action, "UPGRADE")
+
     def test_never_moves_to_a_release_candidate(self):
         d = agent.decide(policy(target_release="v1.3.0-rc.1"), CLEAN, NOW)
         self.assertEqual(d.action, "SKIP")
@@ -181,6 +191,8 @@ class Tick(unittest.TestCase):
             mock.patch.object(agent, "hub_call", hub),
             mock.patch.object(agent, "cluster_state", return_value=CLEAN),
             mock.patch.object(agent, "verify", return_value=verified),
+            mock.patch.object(agent, "ready_fl_clients", return_value=""),
+            mock.patch.object(agent, "wait_core_rollout", return_value=(True, "rolled out")),
             mock.patch.object(agent, "cluster_upgrade", return_value=upgrade_result) as up,
         ):
             code = agent.tick(CLUSTER, dry_run)
@@ -240,6 +252,8 @@ class Tick(unittest.TestCase):
         with (
             mock.patch.object(agent, "hub_call", hub),
             mock.patch.object(agent, "cluster_state", return_value=CLEAN),
+            mock.patch.object(agent, "ready_fl_clients", return_value=""),
+            mock.patch.object(agent, "wait_core_rollout", return_value=(True, "rolled out")),
             mock.patch.object(agent, "cluster_upgrade", side_effect=RuntimeError("helm died")),
             self.assertRaises(RuntimeError),
         ):
@@ -260,6 +274,8 @@ class Tick(unittest.TestCase):
         with (
             mock.patch.object(agent, "hub_call", hub),
             mock.patch.object(agent, "cluster_state", return_value=CLEAN),
+            mock.patch.object(agent, "ready_fl_clients", return_value=""),
+            mock.patch.object(agent, "wait_core_rollout", return_value=(True, "rolled out")),
             mock.patch.object(agent, "cluster_upgrade", return_value=(False, "boom")),
             mock.patch.object(agent.time, "sleep"),
         ):
@@ -410,6 +426,8 @@ class TickStops(unittest.TestCase):
             mock.patch.object(agent, "cluster_kit", return_value=KIT),
             mock.patch.object(agent, "hub_call", fake_hub_call),
             mock.patch.object(agent, "cluster_state", return_value=local),
+            mock.patch.object(agent, "ready_fl_clients", return_value=""),
+            mock.patch.object(agent, "wait_core_rollout", return_value=(True, "rolled out")),
             mock.patch.object(agent, "cluster_upgrade", return_value=upgrade_result) as up,
             mock.patch.object(agent, "governance_drift", return_value=None),
             mock.patch.object(agent, "verify", return_value=verify_result),
@@ -610,6 +628,8 @@ class ClusterTick(unittest.TestCase):
             mock.patch.object(agent, "cluster_kit", return_value={}),
             mock.patch.object(agent, "hub_call", side_effect=[(200, policy), (200, None), (200, None)]),
             mock.patch.object(agent, "cluster_state", return_value=local),
+            mock.patch.object(agent, "ready_fl_clients", return_value=""),
+            mock.patch.object(agent, "wait_core_rollout", return_value=(True, "rolled out")),
             mock.patch.object(agent, "cluster_upgrade", return_value=(True, "fine")) as upgrade,
             mock.patch.object(agent, "verify", return_value=(True, "v0.13.0")),
             mock.patch.object(agent, "governance_drift", return_value=None),
@@ -704,6 +724,8 @@ class TickChecksGovernance(unittest.TestCase):
             mock.patch.object(agent, "cluster_kit", return_value={}),
             mock.patch.object(agent, "hub_call", fake_hub_call),
             mock.patch.object(agent, "cluster_state", return_value=local),
+            mock.patch.object(agent, "ready_fl_clients", return_value=""),
+            mock.patch.object(agent, "wait_core_rollout", return_value=(True, "rolled out")),
             mock.patch.object(agent, "cluster_upgrade", return_value=(True, "applied")) as up,
             mock.patch.object(agent, "verify", return_value=(True, "up")),
             mock.patch.object(agent, "governance_drift", return_value=drift),
@@ -805,6 +827,92 @@ class Budget(unittest.TestCase):
         with mock.patch.object(agent, "tick", return_value=0) as tick:
             self.assertEqual(agent.main([*CLUSTER_ARGS, "--dry-run"]), 0)
         tick.assert_called_once_with(agent.Cluster("ns", "flip-trust", "oci://x/y", "GSTT", "prod"), True)
+
+
+class CoreRollout(unittest.TestCase):
+    """The real rollout_wait.py, driven against a stub kubectl on PATH."""
+
+    DEPLOYMENTS = json.dumps(
+        {
+            "items": [
+                {"metadata": {"name": name, "labels": {"app.kubernetes.io/component": name}}}
+                for name in ("trust-api", "data-access-api")
+            ]
+        }
+    )
+    STUB = """#!/bin/sh
+echo "$@" >> "$KUBECTL_LOG"
+case "$1 $2" in
+  "get deployment") echo '%s' ;;
+  "get "*) echo '{"items":[]}' ;;
+  "rollout status") case "$3" in *data-access-api) exit "${DAA_ROLLOUT_RC:-0}" ;; esac ;;
+esac
+"""
+
+    def _wait(self, daa_rc):
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "kubectl"
+            stub.write_text(self.STUB % self.DEPLOYMENTS)
+            stub.chmod(0o755)
+            log = Path(tmp) / "log"
+            env = {"PATH": f"{tmp}:{os.environ['PATH']}", "KUBECTL_LOG": str(log), "DAA_ROLLOUT_RC": str(daa_rc)}
+            with mock.patch.dict(os.environ, env):
+                ok, detail = agent.wait_core_rollout(CLUSTER, "", timeout_s=30)
+            return ok, detail, log.read_text()
+
+    def test_every_core_workload_is_waited_on(self):
+        ok, _, log = self._wait(0)
+        self.assertTrue(ok)
+        assert "rollout status deployment/trust-api" in log
+        assert "rollout status deployment/data-access-api" in log
+
+    def test_a_core_workload_that_never_rolls_out_fails_the_upgrade(self):
+        ok, detail, _ = self._wait(1)
+        self.assertFalse(ok)
+        assert "data-access-api" in detail
+
+    def test_the_image_ships_the_judge_the_agent_runs(self):
+        dockerfile = (SCRIPTS_DIR.parent / "trust" / "deploy" / "helm" / "agent" / "Dockerfile").read_text()
+        assert "trust/deploy/helm/scripts/rollout_wait.py /opt/flip/rollout_wait.py" in dockerfile
+        assert agent.ROLLOUT_WAIT.exists()
+
+
+class TickWaitsForTheRollout(unittest.TestCase):
+    def _tick(self, rollout):
+        reports = []
+        pol = policy()
+        local = agent.Local("v1.2.0", HEALTHY)
+
+        def fake_hub_call(kit, method, route, body=None):
+            if body and body.get("state") in ("SUCCEEDED", "FAILED"):
+                reports.append(body)
+            return (200, pol if method == "GET" else None)
+
+        with (
+            mock.patch.object(agent, "cluster_kit", return_value=KIT),
+            mock.patch.object(agent, "hub_call", fake_hub_call),
+            mock.patch.object(agent, "cluster_state", return_value=local),
+            mock.patch.object(agent, "ready_fl_clients", return_value="deployment/fl-client-net-1"),
+            mock.patch.object(agent, "wait_core_rollout", return_value=rollout) as waited,
+            mock.patch.object(agent, "cluster_upgrade", return_value=(True, "applied")),
+            mock.patch.object(agent, "verify", return_value=(True, "on v1.3.0")) as verified,
+            mock.patch.object(agent, "governance_drift", return_value=None),
+            mock.patch.object(agent, "LeaseRenewal"),
+        ):
+            rc = agent.tick(CLUSTER, False)
+        return rc, reports, waited, verified
+
+    def test_a_workload_that_does_not_roll_out_is_a_failed_upgrade(self):
+        rc, reports, _, verified = self._tick((False, "data-access-api did not roll out"))
+        self.assertEqual(rc, 1)
+        self.assertEqual(reports[-1]["state"], "FAILED")
+        assert "data-access-api" in reports[-1]["detail"]
+        verified.assert_not_called()
+
+    def test_the_fl_clients_ready_before_are_held_to_coming_back(self):
+        rc, reports, waited, _ = self._tick((True, "rolled out"))
+        self.assertEqual((rc, reports[-1]["state"]), (0, "SUCCEEDED"))
+        waited.assert_called_once_with(CLUSTER, "deployment/fl-client-net-1")
 
 
 if __name__ == "__main__":

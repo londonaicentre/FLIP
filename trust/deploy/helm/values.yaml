@@ -1076,7 +1076,7 @@ autoscaling:
 # installing a second copy underneath the running one).
 autoUpgrade:
   enabled: false
-  # Hourly, matching the host timer's cadence. One tick is one decision; a tick that has nothing to
+  # Hourly. One tick is one decision; a tick that has nothing to
   # do costs a hub call and exits.
   schedule: "17 * * * *"
   suspend: false

@@ -50,6 +50,7 @@ COPY --from=fetch /usr/local/bin/kubectl /usr/local/bin/kubectl
 RUN mkdir -p /opt/flip
 # 0444, not 0400: the container runs as uid 65534, and a root-owned 0400 file is unreadable to it.
 COPY --chmod=0444 scripts/trust_upgrade_agent.py /opt/flip/trust_upgrade_agent.py
+COPY --chmod=0444 trust/deploy/helm/scripts/rollout_wait.py /opt/flip/rollout_wait.py
 
 # The chart's runAsUser is 65534, which Alpine already owns as `nobody` — no account to add, and
 # the agent never needs a shell or a writable root.
