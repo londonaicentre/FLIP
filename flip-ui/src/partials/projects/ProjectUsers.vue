@@ -71,12 +71,28 @@
             />
         </div>
     </div>
-    <div v-if="readonly" class="mb-1 text-sm font-bold text-gray-700 dark:text-gray-300">
-        Additional Project Users
+    <div class="mb-1 text-sm font-bold text-gray-700 dark:text-gray-300" data-test="project-users-heading">
+        Project Users
+    </div>
+    <!-- The owner always has access and cannot be removed, so their row has no remove button. -->
+    <div
+        data-test="project-owner-row"
+        class="flex flex-row items-center w-full gap-2 px-4 py-2 mb-2 border border-gray-300 rounded-md
+               dark:border-dark-border-strong"
+    >
+        <div class="text-sm font-bold truncate grow">
+            {{ ownerEmail }}
+        </div>
+        <span
+            class="px-2 py-0.5 text-xs font-semibold rounded-full shrink-0 text-primary-500 bg-primary-100
+                   dark:text-primary-200 dark:bg-dark-raised"
+        >
+            Owner
+        </span>
     </div>
     <div class="flex flex-col-reverse items-start w-full h-full mb-2 space-y-2 space-y-reverse overflow-y-auto">
         <div
-            v-for="(row, i) in displayUsers"
+            v-for="(row, i) in members"
             :key="row.id"
             data-test="added-user-project-list"
             class="flex flex-row items-center w-full px-4 py-2 border border-gray-300 rounded-md dark:border-dark-border-strong"
@@ -96,12 +112,6 @@
                 />
             </button>
         </div>
-        <div
-            v-if="!displayUsers.length"
-            class="flex flex-row items-center justify-center w-full p-6 text-sm text-gray-600 border-2 border-gray-300 border-dashed rounded-md dark:text-gray-300 dark:border-dark-border-strong"
-        >
-            No Project Users
-        </div>
     </div>
 </template>
 
@@ -116,13 +126,16 @@ import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import { IProjectUserLookup, lookupProjectUser } from "@/services/user-service";
-import { useAuthStore } from "@/store/auth";
 import { emailValidation } from "@/utils/forms/validation";
 
 export interface IProjectUsersProps {
     // Existing members (`GET /projects/{id}`) and newly looked-up ones (`GET /users/lookup`) both
     // carry id / email / isDisabled only (FLIP#907, FLIP#996).
     users?: IProjectUserLookup[];
+    // Listed first and never removable. `users` may or may not contain the owner: an existing
+    // project's does (the hub adds the owner), a new project's does not.
+    ownerId: string;
+    ownerEmail: string;
     readonly?: boolean;
 }
 
@@ -138,14 +151,12 @@ const props = withDefaults(
     }
 );
 
-const authStore = useAuthStore();
-const currentUserId = authStore.user?.userId;
-
 const formSubmit = ref<boolean>(false);
 // Copy rather than alias `props.users`: the list is mutated in place on add/remove, which would
-// otherwise mutate the parent's prop.
+// otherwise mutate the parent's prop. The owner stays in it when present: editing a project
+// replaces its whole access list with what is emitted here.
 const userList = ref<IProjectUserLookup[]>([...props.users]);
-const displayUsers = computed(() => userList.value.filter(u => u.id !== currentUserId));
+const members = computed(() => userList.value.filter(u => u.id !== props.ownerId));
 const invalidUser = ref<string[]>([]);
 const userIsDirty = ref(false);
 
@@ -160,7 +171,7 @@ const submit = async(v: unknown, { resetForm }: {resetForm: () => void} ): Promi
         userIsDirty.value = false;
         formSubmit.value = true;
 
-        if (userList.value.some(u => u.email === email)) {
+        if (email === props.ownerEmail || userList.value.some(u => u.email === email)) {
             return handleError(`${email} has already been added to the list`);
         }
 
