@@ -45,8 +45,9 @@ _GLYPHS = {
     Status.PENDING: "⏳",
     Status.ERROR: "💥",
 }
-# A run is ready when nothing failed, is still pending, or could not run.
-_BLOCKING = (Status.FAIL, Status.PENDING, Status.ERROR)
+# A run is ready when nothing failed or is still pending (exit 1), and nothing could not run (exit 2).
+_NOT_READY = (Status.FAIL, Status.PENDING)
+_BLOCKING = (*_NOT_READY, Status.ERROR)
 
 
 @dataclass(frozen=True)
@@ -59,8 +60,14 @@ class Check:
     hints: Sequence[str] = ()  # what the operator can do about it
     refs: Sequence[str] = ()  # the requirements the check tests, e.g. "SATRE 2.2.11"
 
+    def __post_init__(self) -> None:
+        # Callers pass lists; tuples keep two equal checks equal, and a check hashable.
+        object.__setattr__(self, "hints", tuple(self.hints))
+        object.__setattr__(self, "refs", tuple(self.refs))
+
     @property
     def ok(self) -> bool:
+        """Whether this row lets a run be ready: a warning and a skip do, so read ``status`` for "passed"."""
         return self.status not in _BLOCKING
 
 
@@ -94,9 +101,9 @@ def could_not_run(name: str, error: Exception) -> Check:
 
 
 def exit_code(checks: list[Check]) -> int:
-    """0 ready; 1 a check failed or is pending; 2 nothing failed but a check could not run."""
+    """0 ready; 1 a check failed or is pending, or none ran; 2 nothing failed but a check could not run."""
     statuses = {c.status for c in checks}
-    if not checks or statuses & {Status.FAIL, Status.PENDING}:
+    if not checks or statuses & set(_NOT_READY):
         return 1
     return 2 if Status.ERROR in statuses else 0
 
