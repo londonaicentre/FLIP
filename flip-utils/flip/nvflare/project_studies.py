@@ -13,11 +13,11 @@
 """Build NVFLARE's ``study_runtime.yaml`` for a site: the default study plus one entry per FLIP project (FLIP#1678).
 
 Each FLIP project is an NVFLARE study. NVFLARE leaves the study-to-data mapping to the site, in
-``local/study_runtime.yaml``, which the site's operator maintains and its Kubernetes launcher re-reads at every
-launch. The fl-client only reads that file: its kit is read-only while it runs (FLIP#1570). The trust's chart
-therefore mounts the file from a ConfigMap, and the operator fills it with
-``make -C trust/deploy/helm sync-project-studies``, which runs this module inside the fl-client and applies what
-it prints::
+``local/study_runtime.yaml``, which its Kubernetes launcher re-reads at every launch. FLIP's launcher
+(``flip.nvflare.project_launcher``) builds a project's entry with ``project_entry`` when the project's job starts.
+The operator can still write the site's file, a ConfigMap the chart mounts (the kit is read-only while the client
+runs, FLIP#1570), with ``make -C trust/deploy/helm sync-project-studies``, which runs this module inside the
+fl-client and applies what it prints; a project's job does not use it::
 
     python -m flip.nvflare.project_studies <local_dir> [<project id> ...]
 

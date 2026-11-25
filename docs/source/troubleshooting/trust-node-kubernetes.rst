@@ -1048,17 +1048,17 @@ If you manage the values by hand, add the port to ``networkPolicies.allowedEgres
 Job pods on: a project's jobs never start at this trust
 =======================================================
 
-**Symptom.** With ``flClient.nvflare.jobPods.enabled``, a newly approved project's training waits at this trust and
-no job pod appears, while other projects' jobs run.
+**Symptom.** With ``flClient.nvflare.jobPods.enabled``, a project's training fails at the start and the hub's FL server
+log names this site with ``K8sJobLauncher is configured for site … but no job image was specified``, or
+``cannot build the study entry of project …``.
 
-**Cause.** NVFLARE takes a job's image and pod template from the project's entry in the site's study file, which
-the site maintains. A project approved since the file was last synced has no entry, so NVFLARE does not start its jobs.
+**Cause.** NVFLARE takes a job's image and pod template from the project's study entry, which the FL client's
+launcher builds when the job starts, from the kit's default study. A trust older than v0.16 has no entry for a
+project's study at all: it must upgrade before its hub. On v0.16 or later the error means the default study is
+missing from the kit: ``fl-client-init`` did not switch it.
 
-**Fix.** Sync the entries, after each approval and after every upgrade:
-
-.. code-block:: shell
-
-   make -C trust/deploy/helm sync-project-studies KUBE_CONTEXT=<ctx>
+**Fix.** Upgrade the trust. On v0.16 or later, read ``kubectl logs <fl-client pod> -c fl-client-init`` and redeploy
+so it runs again.
 
 .. _ts-k8s-fl-reset:
 

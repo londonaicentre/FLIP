@@ -54,7 +54,6 @@
   - NVFLARE: the fl-client mounts its kit's `local/` and `startup/` read-only through a new `fl-client-init` step (#1906), so the FL client image must be this release's too.
 - **Kubernetes sites:**
   - The OMOP vocabulary is staged onto the node, never fetched in the cluster (#1902): `make -C trust/deploy/helm download-vocab` or an Athena export, then `stage-vocab`.
-  - A trust that runs NVFLARE jobs as pods: after **every** project approval, run `make -C trust/deploy/helm sync-project-studies KIT=<CODE> HUB=<env>`. Without it, every site aborts that project's jobs.
   - An account limited to the trust's namespace (#1986): the built-in `admin` role is not enough. `make preflight` reports `Cluster unreachable` on a healthy cluster, and a first deploy stops at `resourcequotas … is forbidden`. Have a cluster administrator create the namespace and grant the three extra rights listed under "Deploying with an account limited to one namespace" on the Kubernetes troubleshooting page: write ResourceQuotas and LimitRanges in the namespace, read Services in `kube-system`, read nodes and StorageClasses. A trust already running with those rights is not affected.
 - **Snowflake trusts:** pass `HUB_EGRESS=true` on every `make up` and `make render`, not only at join. Without it the services lose their hub and FL access.
 - **Operator command**, on the trust host, from your FLIP checkout:
