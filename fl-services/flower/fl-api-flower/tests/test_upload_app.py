@@ -22,6 +22,7 @@ from tomlkit import parse
 
 from fl_api import app as app_module
 from fl_api.schemas import UploadAppRequest
+from fl_api.utils.upload import upsert_flwr_run_config
 
 _URL_SECRET = "bundle-signature-sentinel"  # pragma: allowlist secret (synthetic sentinel)
 _SIGNED_QUERY = f"?X-Amz-Signature={_URL_SECRET}&X-Amz-Security-Token={_URL_SECRET}"
@@ -189,6 +190,45 @@ def test_upload_app_injects_min_clients_from_trust_count(trusts, expected, clien
 
     config_doc = parse((upload_dir / model_id / "app" / "config.toml").read_text())
     assert config_doc["flip-min-clients"] == expected
+
+
+def test_upload_app_injects_the_approved_trusts(client, upload_dir, mock_requests_get):
+    """flip-trusts carries the approved trusts' slot names, not just how many there are.
+
+    A Flower net is shared by every trust onboarded onto it and flwr's FedAvg samples from
+    every connected SuperNode, so the count alone cannot keep a run on its own project's
+    trusts. The names are the FL kit slot names, which are also the names the SuperLink holds
+    against each SuperNode's registered key, so the strategy can resolve them to node ids
+    (FLIP#1743, FLIP-SR-048).
+    """
+    model_id = str(uuid4())
+
+    # Seeded with someone else's list: the value is platform-set, so a researcher-uploaded
+    # config.toml must not be able to widen the run to a trust outside the project.
+    mock_requests_get({f"https://example.com/{model_id}/app/config.toml": b'flip-trusts = "Trust_9"\n'})
+
+    body = UploadAppRequest(
+        project_id="project-123",
+        cohort_query="*",
+        trusts=["Trust_1", "Trust_3"],
+        bundle_urls=[f"https://example.com/{model_id}/app/config.toml"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 200
+
+    config_doc = parse((upload_dir / model_id / "app" / "config.toml").read_text())
+    assert config_doc["flip-trusts"] == "Trust_1,Trust_3"
+    assert config_doc["flip-min-clients"] == 2
+
+
+def test_upsert_refuses_a_trust_name_that_would_split(tmp_path):
+    """The value is comma-separated, so a name holding one would scope the run to the wrong set."""
+    config_path = tmp_path / "config.toml"
+
+    with pytest.raises(ValueError, match="must not contain a comma"):
+        upsert_flwr_run_config(config_path, "model-1", "project-1", "*", ["Trust_1,Trust_2"])
 
 
 def test_upload_app_rejects_an_empty_trust_list(client, upload_dir, mock_requests_get):

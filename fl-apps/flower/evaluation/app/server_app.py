@@ -22,6 +22,7 @@ from pathlib import Path
 import torch
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus
+from flip.flower.scope import trusts_from_run_config
 from flip.flower.strategy import min_clients_from_run_config
 from flwr.app import ArrayRecord, Context
 from flwr.common import log
@@ -96,10 +97,15 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # constructor rejects a quorum below 1 (an injected flip-min-clients=0).
     try:
         min_clients = min_clients_from_run_config(run_config)
+        # The trusts this run was approved for. The strategy evaluates on their SuperNodes and
+        # on no others, so a shared Flower net never evaluates a project's model on a trust
+        # outside it; a malformed value must fail the run rather than leave it unscoped.
+        trusts = trusts_from_run_config(run_config)
         strategy = EvaluationStrategy(
             flip=flip,
             model_id=model_id,
             min_clients=min_clients,
+            trusts=trusts,
             fraction_train=0.0,  # No training
             fraction_evaluate=1.0,  # All clients evaluate
         )

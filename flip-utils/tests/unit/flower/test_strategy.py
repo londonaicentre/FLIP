@@ -32,6 +32,8 @@ import numpy as np
 import pytest
 from flwr.app import ArrayRecord, Message, MetricRecord, RecordDict
 from flwr.common import ConfigRecord
+from flwr.proto.node_pb2 import NodeInfo
+from flwr.serverapp.strategy import FedAvg
 
 from flip.flower.strategy import MIN_CLIENTS_KEY, FlipFedAvg, min_clients_from_run_config
 from flip.schemas import FLLogEvent
@@ -45,6 +47,43 @@ class _StubGrid:
 
     def get_node_ids(self) -> list[int]:
         return list(self._node_ids)
+
+
+class _WouldBlock(Exception):
+    """Raised instead of flwr's unbounded `sleep(1)` wait, so a test can assert on it."""
+
+
+class _NamedGrid(_StubGrid):
+    """A Grid reporting node names the way the SuperLink does, for the scoped-grid filter.
+
+    ``get_node_ids`` raises once the pollable wait would begin (flwr's ``sample_nodes`` loops
+    on ``sleep(1)`` forever when too few nodes are connected), so "the round did not start"
+    is a visible outcome rather than a hanging test.
+    """
+
+    def __init__(self, nodes: list[tuple[int, str]]):
+        super().__init__([node_id for node_id, _ in nodes])
+        self._nodes = [NodeInfo(node_id=node_id, name=name) for node_id, name in nodes]
+        self._reads = 0
+
+    def _read(self) -> list[NodeInfo]:
+        # Counted on both accessors: a scoped grid reads get_nodes (it needs the names), an
+        # unscoped one reads get_node_ids, and either way four reads is more than a round that
+        # can start needs (configure_* once, sample_nodes once).
+        self._reads += 1
+        if self._reads > 4:
+            raise _WouldBlock("flwr is waiting for nodes that will never connect")
+        return list(self._nodes)
+
+    def get_nodes(self) -> list[NodeInfo]:
+        return self._read()
+
+    def get_node_ids(self) -> list[int]:
+        return [node.node_id for node in self._read()]
+
+
+# Three trusts onboarded onto one Flower net; a run approved for the first two.
+_SHARED_NET = [(101, "Trust_1"), (202, "Trust_2"), (303, "Trust_3")]
 
 
 def _strategy(**kwargs) -> FlipFedAvg:
@@ -255,6 +294,75 @@ class TestMinClients:
         flwr's sample_size is max(n, 0), so the round would start against nobody."""
         with pytest.raises(ValueError, match="min_clients must be >= 1"):
             _strategy(min_clients=min_clients)
+
+
+class TestTrustScoping:
+    """The strategy must dispatch to the run's approved trusts' SuperNodes and to no others.
+
+    A FLIP Flower net is shared, so the nodes a ServerApp sees are every onboarded trust's,
+    not the project's. These drive the real ``FedAvg`` hooks over a grid that reports node
+    names the way the SuperLink does (``NodeInfo.name``, the slot name registered against the
+    SuperNode's authenticated key).
+    """
+
+    def test_train_rounds_reach_only_the_runs_trusts(self):
+        strategy = _strategy(min_clients=2, trusts=["Trust_1", "Trust_2"])
+
+        messages = list(strategy.configure_train(1, ArrayRecord(), ConfigRecord(), _NamedGrid(_SHARED_NET)))
+
+        assert sorted(msg.metadata.dst_node_id for msg in messages) == [101, 202]
+
+    def test_evaluate_rounds_reach_only_the_runs_trusts(self):
+        strategy = _strategy(min_clients=2, trusts=["Trust_1", "Trust_2"])
+
+        messages = list(strategy.configure_evaluate(1, ArrayRecord(), ConfigRecord(), _NamedGrid(_SHARED_NET)))
+
+        assert sorted(msg.metadata.dst_node_id for msg in messages) == [101, 202]
+
+    def test_without_a_trust_list_every_connected_node_is_still_sampled(self):
+        """The unscoped path is the off-platform one (simulator, submit_tutorial)."""
+        strategy = _strategy(min_clients=2)
+
+        messages = list(strategy.configure_train(1, ArrayRecord(), ConfigRecord(), _NamedGrid(_SHARED_NET)))
+
+        assert sorted(msg.metadata.dst_node_id for msg in messages) == [101, 202, 303]
+
+    def test_a_trust_outside_the_run_is_excluded_even_as_the_only_other_node(self):
+        strategy = _strategy(min_clients=1, trusts=["Trust_3"])
+
+        messages = list(strategy.configure_train(1, ArrayRecord(), ConfigRecord(), _NamedGrid(_SHARED_NET)))
+
+        assert [msg.metadata.dst_node_id for msg in messages] == [303]
+
+    def test_start_hands_fedavgs_round_loop_a_scoped_grid(self, monkeypatch: pytest.MonkeyPatch):
+        """Not only the configure hooks: the loop pushes and pulls through this same object.
+
+        FedAvg.start is stubbed because the real one would run the rounds; what matters here is
+        which grid it is given.
+        """
+        captured = {}
+
+        def _capture(self, grid, initial_arrays, num_rounds=3, *args, **kwargs):
+            captured["grid"] = grid
+            return "result"
+
+        monkeypatch.setattr(FedAvg, "start", _capture)
+        strategy = _strategy(min_clients=1, trusts=["Trust_1"])
+
+        assert strategy.start(_NamedGrid(_SHARED_NET), ArrayRecord(), 1) == "result"
+        assert list(captured["grid"].get_node_ids()) == [101]
+
+    def test_the_round_waits_on_the_runs_trusts_rather_than_the_nets_node_count(self):
+        """A two-trust run on a three-node net must not start on one approved trust plus a stranger.
+
+        ``min_available_nodes`` is the trust count, and the scoped grid is what flwr counts
+        against it, so the round is dispatched only once both approved nodes are connected.
+        """
+        strategy = _strategy(min_clients=2, trusts=["Trust_1", "Trust_2"])
+        grid = _NamedGrid([(101, "Trust_1"), (303, "Trust_3"), (404, "Trust_4")])
+
+        with pytest.raises(_WouldBlock):
+            list(strategy.configure_train(1, ArrayRecord(), ConfigRecord(), grid))
 
 
 class TestMinClientsFromRunConfig:
