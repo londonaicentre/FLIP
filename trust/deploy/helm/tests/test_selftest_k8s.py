@@ -67,6 +67,9 @@ class FakeCluster:
             },
         ]
         self.health = '{"status":"ok","version":"sha-1"}'
+        self.hub_url = "https://hub.example/api"
+        self.fl_target = "fl.hub.example:8002"
+        self.unreachable = {"https://example.com/", "https://www.wikipedia.org/"}  # what the node's network blocks
         self.person_count = "4166"
         self.orthanc_creds = "flip:s3cret"
         self.orthanc_statistics = '{"CountInstances": 250, "CountStudies": 25}'
@@ -100,6 +103,15 @@ class FakeCluster:
 
     def exec(self, pod, script, stdin=None):
         self.exec_log.append((pod, script, stdin))
+        if "urllib.error" in script:  # the egress probe: its targets arrive on stdin
+            answers = {t: "TimeoutError: timed out" if t in self.unreachable else "reached" for t in json.loads(stdin)}
+            return True, json.dumps(answers)
+        if script == "printenv CENTRAL_HUB_API_URL":
+            return True, self.hub_url
+        if script.startswith("cat ") and "fed_client.json" in script:
+            return True, json.dumps({"servers": [{"service": {"target": self.fl_target}}]})
+        if "/proc/1/cmdline" in script:
+            return True, f"flower-supernode\n--superlink\n{self.fl_target}\n--insecure"
         if "/health" in script:
             return (self.health is not None), self.health or "connection refused"
         if "omop.person" in script:
@@ -840,9 +852,71 @@ def test_the_heartbeat_is_checked_only_when_asked_for():
     assert skipped.status.value == "skipped"
     assert "--hub" in skipped.detail
     cluster = FakeCluster(health='{"status":"ok","hub_key_match":true}')
-    asked = selftest.run_checks(cluster, _values(), lambda: (0, "ok", ""), 0, 0, hub=True)
-    assert asked[-1].name == "hub heartbeat"
-    assert asked[-1].status.value == "pass"
+    asked = {c.name: c for c in selftest.run_checks(cluster, _values(), lambda: (0, "ok", ""), 0, 0, hub=True)}
+    assert asked["hub heartbeat"].status.value == "pass"
+    assert asked["declared endpoints reachable"].status.value == "pass"
+
+
+# ── egress (FLIP#2077) ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("backend", ["nvflare", "flower"])
+def test_declared_endpoints_are_asked_from_the_containers_that_use_them(backend):
+    cluster = FakeCluster()
+    check = selftest.node_checks.check_declared_reachable(cluster, backend, fl_enabled=True)
+    assert check.status.value == "pass", check
+    assert "hub API https://hub.example/api/health" in check.detail
+    assert "FL server fl.hub.example:8002" in check.detail
+    probes = [(pod, json.loads(stdin)) for pod, script, stdin in cluster.exec_log if "urllib.error" in script]
+    assert probes == [("trust-api-0", ["https://hub.example/api/health"]), ("fl-client-0", ["fl.hub.example:8002"])]
+    assert "SATRE 2.2.11" in check.refs
+
+
+def test_a_declared_endpoint_that_does_not_answer_is_a_failure_naming_it():
+    cluster = FakeCluster(unreachable={"fl.hub.example:8002"})
+    check = selftest.node_checks.check_declared_reachable(cluster, "nvflare", fl_enabled=True)
+    assert check.status.value == "fail"
+    assert check.detail == "FL server fl.hub.example:8002: TimeoutError: timed out"
+
+
+def test_a_hub_url_that_is_not_https_is_refused_before_anything_is_dialled():
+    cluster = FakeCluster(hub_url="http://hub.example/api")
+    check = selftest.node_checks.check_declared_reachable(cluster, "nvflare", fl_enabled=True)
+    assert check.status.value == "fail"
+    assert "not an https URL" in check.detail
+    assert not [1 for _, script, _ in cluster.exec_log if "urllib.error" in script]
+
+
+def test_a_node_whose_network_blocks_the_sample_passes_and_says_it_is_a_sample():
+    check = selftest.node_checks.check_undeclared_blocked(FakeCluster(), fl_enabled=True)
+    assert check.status.value == "pass", check
+    assert "a sample, not a proof" in check.detail
+
+
+def test_an_open_network_is_a_warning_that_names_what_answered_and_never_fails_the_run():
+    cluster = FakeCluster(unreachable={"https://www.wikipedia.org/"})
+    check = selftest.node_checks.check_undeclared_blocked(cluster, fl_enabled=True)
+    assert check.status.value == "warn"
+    assert check.ok
+    assert "example.com from trust-api-0, example.com from fl-client-0" in check.detail
+    assert "wikipedia" not in check.detail
+    assert check.refs == ("SATRE 5.5.01", "SATRE 2.2.11")
+
+
+def test_a_probe_that_cannot_run_could_not_run():
+    cluster = FakeCluster()
+    cluster.exec = lambda pod, script, stdin=None: (False, "sh: python3: not found")
+    check = selftest.trust_checks.run(
+        "undeclared destinations blocked", lambda: selftest.node_checks.check_undeclared_blocked(cluster, True)
+    )
+    assert check.status.value == "error"
+    assert "python3: not found" in check.detail
+
+
+def test_a_hubless_run_skips_the_declared_endpoints_and_still_samples_the_network():
+    checks = _checks(_values(), smoke=lambda: (0, "ok", ""))
+    assert checks["declared endpoints reachable"].status.value == "skipped"
+    assert checks["undeclared destinations blocked"].status.value == "pass"
 
 
 def test_the_release_reports_the_rows_every_platform_reports():

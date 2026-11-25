@@ -91,6 +91,13 @@ def test_the_file_loads_and_names_each_endpoint_once() -> None:
     )
 
 
+def test_the_egress_checks_sample_is_not_on_the_list() -> None:
+    import node_checks
+
+    declared = {host for e in trust_endpoints.load() for host in e.hosts}
+    _assert(not declared & set(node_checks.UNDECLARED), "no sampled 'undeclared' host is a declared one")
+
+
 def test_a_row_that_is_not_one_clear_destination_is_refused() -> None:
     base = 'name = "x"\nwhy = "y"\n'
     _assert(_rejects(base + 'when = "sometimes"\nhosts = ["a"]\nport = 1', "when must be"), "an unknown when")
@@ -124,6 +131,7 @@ def test_the_docs_tables_name_exactly_the_files_hosts() -> None:
 
 def main() -> None:
     test_the_file_loads_and_names_each_endpoint_once()
+    test_the_egress_checks_sample_is_not_on_the_list()
     test_a_row_that_is_not_one_clear_destination_is_refused()
     test_the_docs_tables_name_exactly_the_files_hosts()
     print("—")
