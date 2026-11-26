@@ -604,6 +604,26 @@ def test_trust_api_probes_omop_on_snowflake(specs: dict) -> None:
     assert containers(specs["trust-api"])[0]["env"]["OMOP_BACKEND"] == "snowflake"
 
 
+def test_trust_api_gets_the_kits_expected_trust_id(kit: dict, specs: dict) -> None:
+    """The wrong-host self-check: trust-api stops when the hub resolves it as another trust
+    (FLIP#2047). Without the kit line the value is empty, which is "check off" in trust-api."""
+    trust_id = "11111111-1111-1111-1111-111111111111"
+    built = {r.name: r for r in spec_templates.build_all({**kit, "EXPECTED_TRUST_ID": trust_id}, "GSTT")}
+    assert containers(built["trust-api"].spec)[0]["env"]["EXPECTED_TRUST_ID"] == trust_id
+    assert containers(specs["trust-api"])[0]["env"]["EXPECTED_TRUST_ID"] == ""
+
+
+@pytest.mark.parametrize("value", [None, "", "<run-make-register-trust>"])
+def test_trust_api_keeps_the_platform_header_without_a_kit_value(kit: dict, value: str | None) -> None:
+    """A placeholder is not a header name: sent as one, the hub answers 401 "API key is missing"."""
+    kit = {k: v for k, v in kit.items() if k != "TRUST_API_KEY_HEADER"}
+    if value is not None:
+        kit["TRUST_API_KEY_HEADER"] = value
+    built = {r.name: r for r in spec_templates.build_all(kit, "GSTT")}
+    env = containers(built["trust-api"].spec)[0]["env"]
+    assert env["TRUST_API_KEY_HEADER"] == "Authorization"  # pragma: allowlist secret
+
+
 def test_the_fl_client_image_follows_the_fl_tag(kit: dict) -> None:
     """The FL images are released on their own tag (DOCKER_FL_TAG), as in Compose and Helm."""
     client = next(

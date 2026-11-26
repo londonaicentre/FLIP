@@ -72,8 +72,9 @@ class Settings(BaseSettings):
     # is set (in the kit file) and the hub reports a different id, the trust-api
     # exits non-zero instead of silently authenticating as the wrong trust — the
     # typical cause is the operator deploying the wrong kit to the wrong host.
-    # Leaving it empty disables the check; the loud "Authenticated to hub as …"
-    # log line is emitted regardless.
+    # Leaving it empty disables the check, as does a kit's unfilled ``<…>`` placeholder
+    # (the poller warns once); the loud "Authenticated to hub as …" log line is
+    # emitted regardless.
     EXPECTED_TRUST_ID: str = ""
 
     # Timeout for cohort query requests to data-access-api (seconds)

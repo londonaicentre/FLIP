@@ -573,6 +573,45 @@ def test_an_interpreter_without_tomllib_is_a_clear_refusal(tmp_path, monkeypatch
         )
 
 
+def _trust_api_env(kit: dict) -> dict:
+    return yaml.safe_load(sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2"))["trustApi"]["env"]
+
+
+def test_render_override_carries_the_kits_trust_api_header():
+    """The hub names the header it reads the trust's key from. With the chart's own literal winning,
+    a trust on a hub configured with another header was answered 401 (FLIP#2047)."""
+    env = _trust_api_env({**_FL_KIT, "TRUST_API_KEY_HEADER": "X-Trust-Api-Key"})  # pragma: allowlist secret
+    assert env["TRUST_API_KEY_HEADER"] == "X-Trust-Api-Key"  # pragma: allowlist secret
+
+
+def test_render_override_carries_the_kits_expected_trust_id():
+    """trust-api's wrong-host self-check compares the hub's answer to this; unmapped, it never ran."""
+    env = _trust_api_env({**_FL_KIT, "EXPECTED_TRUST_ID": "11111111-1111-1111-1111-111111111111"})
+    assert env["EXPECTED_TRUST_ID"] == "11111111-1111-1111-1111-111111111111"
+
+
+@pytest.mark.parametrize("key", ["TRUST_API_KEY_HEADER", "EXPECTED_TRUST_ID"])
+@pytest.mark.parametrize("value", [None, ""])
+def test_render_override_leaves_an_unset_trust_api_value_to_the_chart(key, value):
+    """A dev kit (Hub-shared block commented out) keeps the chart's values."""
+    kit = dict(_FL_KIT) if value is None else {**_FL_KIT, key: value}
+    assert key not in _trust_api_env(kit)
+
+
+def test_render_override_keeps_the_chart_header_for_a_placeholder():
+    """A scaffolded header placeholder is not a header name; the chart's `Authorization` stands."""
+    assert "TRUST_API_KEY_HEADER" not in _trust_api_env(
+        {**_FL_KIT, "TRUST_API_KEY_HEADER": "<run-make-register-trust>"}
+    )
+
+
+def test_render_override_passes_an_expected_trust_id_placeholder_on():
+    """trust-api treats the placeholder as unset and warns that the self-check is off, as on every
+    other shape; filtered here, a Helm trust would be the only one with no warning."""
+    env = _trust_api_env({**_FL_KIT, "EXPECTED_TRUST_ID": "<run-make-register-trust>"})
+    assert env["EXPECTED_TRUST_ID"] == "<run-make-register-trust>"
+
+
 @pytest.mark.parametrize("target", ["sync-kit", "sync-kit-override", "patch-kit-secrets"])
 def test_make_passes_no_vocab_load_through_to_every_sync(target):
     """NO_VOCAB_LOAD=1 is how an AKS operator keeps the vocab-load hook out (FLIP#1390); dry-run each target."""
