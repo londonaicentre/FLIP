@@ -63,7 +63,8 @@ on:
       # mirror manifest (FLIP#1721).
       - "trust/deploy/mirror-images.manifest"
       - "trust/xnat/docker-compose-stack.yml"
-      - "trust/deploy/ansible/roles/flip_trust_seed/defaults/main.yml"
+      - "trust/deploy/ansible/roles/*/defaults/main.yml"
+      - "trust/deploy/ansible/roles/*/tasks/*.yml"
       # test_secret_scanning_gate.py asserts on the secret-scanning workflow, the
       # pre-commit pin and the baseline (FLIP#1215) — same trap, same fix.
       - ".github/workflows/secret-scanning.yml"

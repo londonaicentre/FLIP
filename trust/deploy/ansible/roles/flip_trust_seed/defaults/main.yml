@@ -30,7 +30,7 @@ seed_reseed_enabled: "{{ seed_reseed | default(false) }}"
 hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
 hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version) }}"
 omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
-orthanc_image: "ghcr.io/londonaicentre/orthanc:{{ omop_db_tag | default('stag', true) }}"
+orthanc_image: "ghcr.io/londonaicentre/orthanc:{{ orthanc_tag | default(omop_db_tag, true) | default('stag', true) }}"
 # uv's image, pinned by digest — the same one the Helm chart's trust-seed hook runs in.
 uv_image: "ghcr.io/londonaicentre/mirror/astral-sh/uv:python3.13-bookworm-slim@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca"
 seed_omop_port: "15499"
