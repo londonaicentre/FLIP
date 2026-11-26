@@ -429,6 +429,14 @@ Two more things to plan for:
   caveat: Postgres applies ``XNAT_DATASOURCE_*`` only at the first initdb of the ``xnat-db`` volume, so a rotated value
   must also be applied to the live database. See ``make generate-xnat-credentials FORCE=1`` and the
   ``ALTER ROLE`` commands it prints.
+  The XNAT admin and service passwords rotate with
+  ``make -C trust rotate-xnat-passwords KIT=<CODE> HUB=<env>``, which mints two distinct values into the kit and
+  keeps the old admin one as ``XNAT_ADMIN_PREVIOUS_PASSWORD``. The next deploy or upgrade from that kit applies
+  them: ``configure-xnat.sh`` signs in with the previous admin password once and changes it, and sets the
+  service account's password when XNAT refuses the kit's. Remove ``XNAT_ADMIN_PREVIOUS_PASSWORD`` from the kit
+  after that run. Until it finishes, imaging-api's XNAT calls fail, so rotate in a quiet window. A Snowflake
+  trust does not carry the previous admin password: use ``SERVICE_ONLY=1`` there and change the admin password in
+  XNAT by hand.
 
 Rotating a trust that has no FL kit slot fails rather than minting keys the trust could not use: reclaiming a slot
 is a separate operation.

@@ -15,7 +15,7 @@
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts remove-stray-studies ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance prepare-host-dirs \
-	reconvert-nifti install-kit rotate-internal-service-key
+	reconvert-nifti install-kit rotate-internal-service-key rotate-xnat-passwords
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
 # runs the prod compose) and the kit-file env token (ENV: .env.<CODE>.stag / .prod,
 # the files the AWS-side register-trusts writes), both from ../deploy/env_mode.mk.
@@ -679,6 +679,18 @@ rotate-internal-service-key:
 	$(require_kit_file)
 	@python3 deploy/scripts/rotate_internal_service_key.py --kit-file "$(KIT_FILE)"
 	@echo "   Next: recreate every trust container from $(KIT_FILE_LABEL), e.g. 'make upgrade-onprem-trust KIT=$(KIT)$(if $(HUB), HUB=$(HUB))' from the repo root."
+
+# Mint new XNAT admin and service passwords into this trust's kit (FLIP#1569): two distinct values, the
+# old admin one kept as XNAT_ADMIN_PREVIOUS_PASSWORD so configure-xnat.sh can sign in once and change it.
+# SERVICE_ONLY=1 rotates the service password alone (the only form for a Snowflake trust, whose specs do
+# not carry the previous admin password). Nothing reaches XNAT until the trust is deployed from this kit;
+# rotate in a quiet window, because imaging-api's XNAT calls fail until configure-xnat.sh has run.
+rotate-xnat-passwords:
+	$(require_kit_file)
+	@python3 deploy/scripts/rotate_xnat_passwords.py --kit-file "$(KIT_FILE)"$(if $(filter 1,$(SERVICE_ONLY)), --service-only)
+	@echo "   Next: deploy the trust from $(KIT_FILE_LABEL): 'make upgrade-onprem-trust KIT=$(KIT)$(if $(HUB), HUB=$(HUB))' from the repo root (Compose),"
+	@echo "   or scripts/generate_values.py then 'make -C trust/deploy/helm deploy-trust-k8s KIT=$(KIT)' (Helm)."
+	@echo "   After configure-xnat.sh reports the change, remove XNAT_ADMIN_PREVIOUS_PASSWORD from the kit."
 
 check-governance:
 	$(require_kit_file)

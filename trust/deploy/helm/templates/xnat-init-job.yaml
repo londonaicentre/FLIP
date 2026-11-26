@@ -127,6 +127,13 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-admin-password
+            # Set only while an admin password rotation is pending (FLIP#1569); absent, it is empty.
+            - name: XNAT_ADMIN_PREVIOUS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-previous-password
+                  optional: true
             - name: XNAT_SERVICE_USER
               valueFrom:
                 secretKeyRef:

@@ -191,6 +191,24 @@ if ! [[ "$auth_attempts" =~ ^[1-8]$ ]]; then
     "failed admin login, and XNAT locks the account after about 20), got '${auth_attempts}'" >&2
   exit 1
 fi
+
+# ROTATE (FLIP#1569): the admin password the kit held before `make rotate-xnat-passwords` gave it a
+# new XNAT_ADMIN_PASSWORD. Unset or empty means no rotation is pending. XNAT still holds this value
+# until a run changes it, so it is tried after the configured one: when it is the only one XNAT
+# accepts, the run signs in with it and changes the admin password to XNAT_ADMIN_PASSWORD (just after
+# activation, before the plugin wait, which knows only the initial and configured passwords). Once a
+# run has done that, the configured password authenticates and this value is never tried again.
+XNAT_ADMIN_PREVIOUS_PASSWORD="${XNAT_ADMIN_PREVIOUS_PASSWORD-}"
+probe_previous=false
+if [[ -n "$XNAT_ADMIN_PREVIOUS_PASSWORD" && "$XNAT_ADMIN_PREVIOUS_PASSWORD" != "$XNAT_ADMIN_PASSWORD" &&
+  "$XNAT_ADMIN_PREVIOUS_PASSWORD" != "$XNAT_ADMIN_INITIAL_PASSWORD" ]]; then
+  probe_previous=true
+  # A third password probed per round: keep a run's worst case (every password refused on every
+  # round) at 15 failed logins, the same margin under XNAT's ~20-login lockout as 8 rounds of two.
+  if [[ "$auth_attempts" -gt 5 ]]; then
+    auth_attempts=5
+  fi
+fi
 # At least a second: a zero wait still spends a failed login per round but gives XNAT no time to
 # finish initialising, which is all the retry is for.
 if ! [[ "$auth_wait" =~ ^[1-9][0-9]*$ ]]; then
@@ -198,6 +216,8 @@ if ! [[ "$auth_wait" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 ADMIN_PASSWORD_ROTATED=false
+ADMIN_PASSWORD_FROM_PREVIOUS=false
+previous_status=""
 for ((attempt = 1; ; attempt++)); do
   xnat_request 5 15 -o /dev/null -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
     "$XNAT_URL/xapi/siteConfig/initialized"
@@ -211,13 +231,25 @@ for ((attempt = 1; ; attempt++)); do
     initialized=$xnat_body
     [[ "${rotated_status}" == "200" ]] && break
   fi
+  if [[ "$probe_previous" == true ]]; then
+    xnat_request 5 15 -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PREVIOUS_PASSWORD}" "$XNAT_URL/xapi/siteConfig/initialized"
+    previous_status=$xnat_status
+    if [[ "${previous_status}" == "200" ]]; then
+      initialized=$xnat_body
+      ADMIN_PASSWORD_FROM_PREVIOUS=true
+      break
+    fi
+  fi
   statuses="initial: HTTP ${init_pw_status:-000}, configured: HTTP ${rotated_status:-000}"
+  statuses+="${previous_status:+, previous: HTTP ${previous_status}}"
   if [[ "$attempt" -ge "$auth_attempts" ]]; then
     echo "ERROR: neither admin password authenticates (${statuses}) after ${attempt} attempt(s)." >&2
     case "${init_pw_status:-000} ${rotated_status:-000}" in
       *401*)
         echo "  Check XNAT_ADMIN_PASSWORD in the kit against this XNAT's admin account. After about" \
-          "20 failed logins XNAT locks the account and rejects even the right password." >&2 ;;
+          "20 failed logins XNAT locks the account and rejects even the right password." >&2
+        echo "  If the kit's admin password was just rotated, XNAT_ADMIN_PREVIOUS_PASSWORD must hold the" \
+          "value XNAT still has (make rotate-xnat-passwords writes it)." >&2 ;;
       "000 000")
         echo "  Nothing answered at $XNAT_URL — check that the xnat-web container is running and reachable." >&2 ;;
       *5??*)
@@ -231,6 +263,10 @@ for ((attempt = 1; ; attempt++)); do
 done
 if [[ "${init_pw_status}" != "200" ]]; then
   ADMIN_PASSWORD_ROTATED=true
+  if [[ "$ADMIN_PASSWORD_FROM_PREVIOUS" == true ]]; then
+    echo "XNAT accepts only XNAT_ADMIN_PREVIOUS_PASSWORD — this run changes the admin password to" \
+      "XNAT_ADMIN_PASSWORD after activation (FLIP#1569)."
+  fi
   if [[ "${initialized}" == "true" ]]; then
     echo "XNAT already configured (the initial admin password no longer works) — converging configuration."
   else
@@ -239,7 +275,9 @@ if [[ "${init_pw_status}" != "200" ]]; then
   fi
 fi
 # The admin password the activation call authenticates with: whichever one XNAT accepts.
-if [[ "$ADMIN_PASSWORD_ROTATED" == true ]]; then
+if [[ "$ADMIN_PASSWORD_FROM_PREVIOUS" == true ]]; then
+  ACTIVATION_PASSWORD="${XNAT_ADMIN_PREVIOUS_PASSWORD}"
+elif [[ "$ADMIN_PASSWORD_ROTATED" == true ]]; then
   ACTIVATION_PASSWORD="${XNAT_ADMIN_PASSWORD}"
 else
   ACTIVATION_PASSWORD="${XNAT_ADMIN_INITIAL_PASSWORD}"
@@ -262,6 +300,26 @@ xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
   -u "${XNAT_ADMIN_USER}:${ACTIVATION_PASSWORD}" \
   -H "Content-Type: application/json" \
   -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_SITE_URL:-$XNAT_URL}\"}"
+
+# Rotation (FLIP#1569): XNAT holds the kit's previous admin password. Change it here, before the
+# plugin wait below, which signs in with the initial or the configured password only. A user PUT is a
+# core route, so it does not wait on the plugins. Then prove the configured password works: every
+# later call in this script, and configure-dcm2niix.sh after it, signs in with it.
+if [[ "$ADMIN_PASSWORD_FROM_PREVIOUS" == true ]]; then
+  echo "Changing admin password from XNAT_ADMIN_PREVIOUS_PASSWORD to XNAT_ADMIN_PASSWORD..."
+  xnat_curl -X PUT "$XNAT_URL/xapi/users/${XNAT_ADMIN_USER}" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PREVIOUS_PASSWORD}" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg u "${XNAT_ADMIN_USER}" --arg p "${XNAT_ADMIN_PASSWORD}" '{username: $u, password: $p}')"
+  xnat_request 5 15 -o /dev/null -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/siteConfig/initialized"
+  if [[ "$xnat_status" != "200" ]]; then
+    echo "ERROR: XNAT accepted the admin password change but refuses XNAT_ADMIN_PASSWORD" \
+      "(HTTP ${xnat_status:-000}). The admin password may now be either value; sign in to XNAT by hand" \
+      "to find out before running again." >&2
+    exit 1
+  fi
+  echo "Admin password changed. XNAT_ADMIN_PREVIOUS_PASSWORD is no longer used and can be removed from the kit."
+fi
 
 # Now that the site is initialized, authenticated routes stop redirecting to /setup and the
 # plugin-readiness probe can actually answer.
@@ -308,7 +366,35 @@ create_user_status=$xnat_status
 if [[ "$create_user_status" == 2* ]]; then
   echo "Service account created."
 elif [[ "$create_user_status" == "409" ]]; then
-  echo "Service account already exists (HTTP 409) — leaving as-is."
+  # The account is there, but its password may predate the kit's: after `make rotate-xnat-passwords`
+  # (FLIP#1569), or on a trust whose admin and service accounts once shared one value. A 409 used to
+  # be the end of it, so a new XNAT_SERVICE_PASSWORD never reached XNAT and imaging-api got 401 on
+  # every call. Sign in as the service account first and set the password only when XNAT refuses it:
+  # an unconditional set would trip an XNAT site that forbids reusing a password, and when nothing
+  # changed this costs no failed login.
+  echo "Service account already exists (HTTP 409) — checking XNAT accepts the kit's XNAT_SERVICE_PASSWORD."
+  xnat_request 5 15 -o /dev/null -u "${XNAT_SERVICE_USER}:${XNAT_SERVICE_PASSWORD}" "$XNAT_URL/xapi/users/username"
+  case "$xnat_status" in
+    200)
+      echo "Service account password matches the kit — leaving as-is." ;;
+    401)
+      echo "XNAT refuses the kit's XNAT_SERVICE_PASSWORD — setting it on ${XNAT_SERVICE_USER}."
+      xnat_curl -X PUT "$XNAT_URL/xapi/users/${XNAT_SERVICE_USER}" \
+        -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n --arg u "${XNAT_SERVICE_USER}" --arg p "${XNAT_SERVICE_PASSWORD}" '{username: $u, password: $p}')"
+      xnat_request 5 15 -o /dev/null -u "${XNAT_SERVICE_USER}:${XNAT_SERVICE_PASSWORD}" "$XNAT_URL/xapi/users/username"
+      if [[ "$xnat_status" != "200" ]]; then
+        echo "ERROR: XNAT still refuses ${XNAT_SERVICE_USER} with the kit's password after setting it" \
+          "(HTTP ${xnat_status:-000}). A locked account refuses even the right password: after about 20" \
+          "failed logins XNAT locks it for a while. Check the account in XNAT's admin UI." >&2
+        exit 1
+      fi
+      echo "Service account password set from the kit." ;;
+    *)
+      echo "ERROR: could not check the service account's password (HTTP ${xnat_status:-000})." >&2
+      exit 1 ;;
+  esac
 else
   echo "ERROR: creating service account failed (HTTP $create_user_status)" >&2
   printf '%s\n' "$xnat_body" >&2
