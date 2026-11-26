@@ -381,6 +381,11 @@ that `up-onprem-trust` and `upgrade-onprem-trust` use: `trust/.env.<CODE>.<env>`
 The checklist delegates to `make -C trust onboard-onprem-trust`, which passes its
 resolved `KIT_FILE` to the script. A direct script invocation can use `--kit-file PATH`.
 
+After bring-up, `make check-onprem-trust KIT=<CODE>` checks the running stack and writes a report
+under `build/checks/`; `up-onprem-trust` and `upgrade-onprem-trust` end with it. It is
+`make -C trust check-node`, the Compose form of the checks `make -C trust/deploy/helm selftest` runs
+(`trust/deploy/scripts/node_checks.py`).
+
 Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
 

@@ -499,14 +499,15 @@ xnat-db-remove-old-cluster: ## List the PostgreSQL cluster an xnat-db major upgr
 	$(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s -- $(if $(YES),--delete) \
 	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_remove_old_cluster.sh
 
-# The node self-test's checklist against a deployed release (FLIP#1390): release ready, FL kit,
-# API health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion (FLIP#1448),
-# FL client steady. Needs no hub.
+# The node checks every trust shape runs (trust/deploy/scripts/node_checks.py) against a deployed
+# release (FLIP#1390): services ready, FL kit, API health, OMOP/Orthanc seeded, Orthanc auth, a real
+# C-STORE, a dcm2niix conversion (FLIP#1448), FL client steady. Needs no hub, unless HUB_CHECK=1 asks
+# for the hub heartbeat too.
 # Writes selftest-k8s-<backend>-<stamp>.{json,md} under SELFTEST_OUT; exits non-zero on a failure.
 SELFTEST_OUT ?= $(REPO_ROOT)/build/selftest
-selftest: ## Run the trust self-test against the deployed release and write a report
+selftest: ## Run the trust self-test against the deployed release and write a report (HUB_CHECK=1: also its hub heartbeat)
 	python3 $(CHART_DIR)/scripts/selftest_k8s.py --namespace $(NAMESPACE) --release $(RELEASE_NAME) \
-		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT)) --out $(SELFTEST_OUT)
+		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT)) --out $(SELFTEST_OUT) $(if $(filter 1 true,$(HUB_CHECK)),--hub)
 
 # NVFLARE's study file for job pods (FLIP#1678): the site maintains it, the fl-client only reads it. The
 # fl-client builds the file (it holds the job-pod template and creates each project's images folder) and this

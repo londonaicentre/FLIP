@@ -11,6 +11,7 @@
 #
 
 .PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
+	check-onprem-trust \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-fl-api-key generate-xnat-credentials _check-compose-project-owner \
 		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub _refuse-deployed-hub _check-revoke-old integration_test \
@@ -270,6 +271,7 @@ up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) HUB=$(or $(HUB),prod)
+	@$(MAKE) --no-print-directory check-onprem-trust KIT=$(KIT) HUB=$(HUB) || echo "$(CHECK_LATER)"
 
 # Upgrade twin of up-onprem-trust (FLIP#1204): the same readiness-checklist gate, then
 # trust/Makefile's data-safe upgrade-trust — pull the target release, recreate what
@@ -285,6 +287,15 @@ upgrade-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS="--gate"
 	$(MAKE) -C trust upgrade-trust KIT=$(KIT) HUB=$(or $(HUB),prod) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
+	@$(MAKE) --no-print-directory check-onprem-trust KIT=$(KIT) HUB=$(HUB) || echo "$(CHECK_LATER)"
+
+# The checks of the running stack (FLIP#1449): onboard-onprem-trust checks the host before anything
+# starts, this checks the stack after. The two verbs above end with it, and its result never changes
+# theirs: the stack is up either way, and a service still starting is not a failed install.
+CHECK_LATER = ⚠️  The node check did not pass (its rows above say why). To run it again: make check-onprem-trust KIT=$(KIT)$(if $(HUB), HUB=$(HUB))
+check-onprem-trust:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
+	@$(MAKE) --no-print-directory -C trust check-node KIT=$(KIT) HUB=$(or $(HUB),prod)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or HUB value.

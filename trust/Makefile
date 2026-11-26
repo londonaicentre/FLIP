@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node check-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts remove-stray-studies ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
@@ -559,6 +559,19 @@ endef
 
 build:
 	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) -p $(or $(TRUST_PROJECT),trust) build
+
+# The checks every trust shape runs, against this kit's RUNNING stack (FLIP#1449): services up, the
+# three APIs healthy, OMOP and Orthanc hold data, Orthanc refuses anonymous requests, a C-STORE
+# reaches XNAT and converts, the FL client stays up, the hub heartbeat. It starts no service. It sends
+# one sample study to XNAT (left in the prearchive) and converts one in a throwaway project, unless the
+# kit has TRUST_DATA_SEED=false: then the node holds the site's own data and no study is sent.
+# Report under CHECKS_OUT.
+check-node:
+	$(require_kit_file)
+	@python3 deploy/scripts/check_node.py --site --project $(TRUST_PROJECT) \
+	  --xnat-stack $(INSTANCE_PREFIX)xnat$(TRUST_NUM) --backend $(FL_BACKEND) --title 'Trust node check: $(KIT)' \
+	  --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' \
+	  --out '$(subst ','"'"',$(CHECKS_OUT))'
 
 # The root on-prem verbs delegate here so readiness checks exactly the kit that
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.

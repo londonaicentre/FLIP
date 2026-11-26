@@ -351,6 +351,7 @@ Scripts in `scripts/release/` (stdlib only, so the GPU host's plain `python3` ru
 ```bash
 make upgrade-onprem-trust KIT=<CODE> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
 make -C trust upgrade-trust KIT=<CODE> HUB=<env> [TAG=…]                 # the verb itself (pull, recreate, XNAT in place)
+make check-onprem-trust KIT=<CODE>                                       # check the RUNNING Compose stack (FLIP#1449): the rows `make -C trust/deploy/helm selftest` reports, through docker; up-/upgrade-onprem-trust end with it and its result never changes theirs; starts no service, sends one sample study to XNAT unless TRUST_DATA_SEED=false; report under build/checks/
 make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG=… [KUBE_CONTEXT=…]  # Helm: sync-kit → global.image.tag
 make -C trust/deploy/helm reseed KIT=<CODE> HUB=<env>   # sample-data trust after a .data_version bump: the seed hook fills only empty stores (FLIP#2111); Compose `make -C trust seed … CLEAR=1`, EC2 `make seed RESEED=1`
 make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> [YES=1]  # after an xnat-db PostgreSQL major upgrade (FLIP#1812): list, then delete, the old cluster kept for a rollback (Helm: make -C trust/deploy/helm xnat-db-remove-old-cluster)
