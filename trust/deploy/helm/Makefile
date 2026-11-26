@@ -24,7 +24,13 @@ $(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 # The kit's FLIP_DATA_ROOT (FLIP#2113), read here because KIT_DEST and VOCAB_DEST default under it.
 # The chart's stores are PVCs, placed by the StorageClass (on k3s, under its --data-dir); the root
 # only holds the two folders staged straight onto the node.
-FLIP_DATA_ROOT ?= $(if $(KIT),$(shell sed -n 's/^FLIP_DATA_ROOT=//p' $(KIT_FILE) 2>/dev/null | tail -1))
+# It is the kit's, never the shell's: an exported root from another trust's kit must not leak in.
+ifneq ($(origin FLIP_DATA_ROOT),command line)
+ifneq ($(and $(KIT),$(filter stage-kit stage-vocab,$(MAKECMDGOALS)),$(if $(wildcard $(KIT_FILE)),,missing)),)
+$(error ❌  KIT=$(KIT) names no kit file ($(KIT_FILE)): pass HUB=<stag|prod> for a hub kit)
+endif
+FLIP_DATA_ROOT := $(if $(KIT),$(shell sed -n 's/^FLIP_DATA_ROOT=\([^$(_HASH)]*\).*/\1/p' '$(KIT_FILE)' 2>/dev/null | tail -1))
+endif
 include $(REPO_ROOT)/deploy/data_root.mk
 
 # Where the FL participant kit lives ON THE NODE, and the uid that must own it.
@@ -234,7 +240,7 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## kit arrives out-of-band (trust/README.md). This copies an already-obtained kit
 	## from KIT_SRC onto the node at the path the chart mounts (flClient.kitHostPath).
 	##
-	##   make stage-kit KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
+	##   make stage-kit KIT=KCH HUB=stag KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
 	##
 	## KIT_DEST defaults to fl-kit/ under the kit's FLIP_DATA_ROOT (pass KIT=<CODE> so it is
 	## read), else /opt/flip/fl-kit — the path the first deploy with the same KIT mounts.

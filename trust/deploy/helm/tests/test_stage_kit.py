@@ -233,3 +233,35 @@ def test_a_relative_data_root_is_refused(nvflare_kit, tmp_path):
     result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
     assert result.returncode != 0
     assert "FLIP_DATA_ROOT must be an absolute path" in result.stderr
+
+
+def test_an_inline_comment_on_the_data_root_is_dropped(nvflare_kit, tmp_path):
+    """As make reads an included kit: the comment must not end up in the path."""
+    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod  # data disk")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
+    assert result.returncode == 0, result.stderr
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("line", "error"),
+    [("FLIP_DATA_ROOT=/", "not / itself"), ("FLIP_DATA_ROOT=/mnt/Data Disk/flip", "one path with no spaces")],
+)
+def test_a_malformed_data_root_is_refused(nvflare_kit, tmp_path, line, error):
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={_kit_file(tmp_path, line)}")
+    assert result.returncode != 0
+    assert error in result.stderr
+
+
+def test_a_kit_that_names_no_kit_file_is_refused(nvflare_kit, tmp_path):
+    """Staging to /opt/flip while the deploy with that KIT mounts the root's fl-kit/ leaves the pod Pending."""
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={tmp_path / '.env.ABC.prod'}")
+    assert result.returncode != 0
+    assert "names no kit file" in result.stderr
+
+
+def test_an_exported_data_root_is_not_the_kits(nvflare_kit, tmp_path, monkeypatch):
+    monkeypatch.setenv("FLIP_DATA_ROOT", "/data/other-trust")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={_kit_file(tmp_path)}")
+    assert result.returncode == 0, result.stderr
+    assert '--dest "/opt/flip/fl-kit"' in result.stdout

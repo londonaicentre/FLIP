@@ -62,8 +62,8 @@ NOT_A_KIT = "could not decrypt the kit: wrong passphrase, or not a kit downloade
 XNAT_PASSWORD_KEYS = ("XNAT_DATASOURCE_PASSWORD", "XNAT_DATASOURCE_ADMIN_PASSWORD", "XNAT_ACTIVEMQ_PASSWORD")
 TAG_KEYS = ("DOCKER_TAG", "DOCKER_FL_TAG")
 DEFAULT_FL_KIT_DIR = "/opt/flip/fl-kit"
-# A new kit keeps every store in one directory of its own (FLIP#2113), named for the trust and the hub so
-# a host running a trust on two hubs never shares one; the template's per-store paths are for development.
+# The store lines a new kit file comments out (FLIP#2113): its stores go under FLIP_DATA_ROOT=/opt/flip/<CODE>-<hub>,
+# one directory per trust and hub. An existing kit file keeps its lines: the root moves no data.
 STORE_KEYS = (
     "OMOP_DATA_DIR",
     "ORTHANC_STORAGE_DIR",

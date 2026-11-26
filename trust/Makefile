@@ -231,8 +231,9 @@ endif
 # `make register-trusts` writes the hub-managed blocks; trust/.env.example is the
 # template the operator copies first.
 # KIT has no default, so non-KIT targets (build, test) load no kit file; with KIT set it is
-# -included at the top (before fl_backend.mk). TRUST_VARS carries only values derived from
-# $(KIT) at make time; every kit-file key reaches compose through --env-file (DOCKER_COMPOSE_CMD).
+# -included at the top (before fl_backend.mk). TRUST_VARS carries values derived from $(KIT) at
+# make time, and the resolved store paths, which override the kit's lines; every other kit-file key
+# reaches compose through --env-file (DOCKER_COMPOSE_CMD).
 # The kit file is authoritative: operators customise ports/paths there, not via make overrides.
 
 # Numeric suffix of the ASSIGNED FL kit slot (Trust_1 -> 1), read from the

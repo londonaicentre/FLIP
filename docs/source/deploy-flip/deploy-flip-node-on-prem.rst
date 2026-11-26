@@ -108,13 +108,19 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - gid 49999
        - ``BASE_IMAGES_DOWNLOAD_DIR/net-<N>``, group-writable
 
-  The simplest way to place them is ``FLIP_DATA_ROOT`` in the kit: one absolute directory that holds every store,
-  each in a fixed folder (``omop``, ``orthanc``, ``xnat``, ``images``, ``cohort-snapshots``). A kit installed from the
-  FLIP UI already sets it to ``/opt/flip/<CODE>-<hub>``; point it at the data disk before the first install to keep
-  the stores off the root filesystem. A store's own setting (``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``,
+  The simplest way to place them is ``FLIP_DATA_ROOT`` in the kit: one absolute directory, this trust's alone, that
+  holds its five data stores, each in a fixed folder (``omop``, ``orthanc``, ``xnat``, ``images``,
+  ``cohort-snapshots``). The FL kit stays at ``FL_KIT_DIR``. A kit file that ``install-kit`` creates sets it to
+  ``/opt/flip/<CODE>-<hub>``; to keep the stores off the root filesystem, edit it to the data disk before the first
+  ``up-onprem-trust``. A store's own setting (``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``,
   ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR``, ``XNAT_DATA_DIR``) still wins over it. Without
   ``FLIP_DATA_ROOT``, set those five to absolute paths: the kit template carries the development values, which are
-  relative and so land inside the checkout, and unset ones fall back to per-slot directories under ``/opt/flip``.
+  relative and so land inside the checkout, and unset ones fall back to defaults under ``/opt/flip``.
+
+  ``FLIP_DATA_ROOT`` moves no data. On a trust that is already running, every store whose own setting is unset
+  would restart on an empty folder under the root: either set each to where it is now, or move the data there with
+  the stack stopped. The checklist's *Data root* row fails when a store would be left behind, or when another kit on
+  the host names the same root.
   The checklist's *Data dir paths* row warns on a relative path and fails on one that does not exist yet and that
   you cannot create, or whose parent you cannot even enter.
 - **Read access to the checkout and the FL kit** (``FL_KIT_DIR``).

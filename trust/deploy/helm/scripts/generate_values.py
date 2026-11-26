@@ -42,10 +42,7 @@ ENV_VAR_MAP = {
     "ENV": ("environment", False),
     "FL_BACKEND": ("flBackend", False),
     "UPLOADED_FEDERATED_DATA_BUCKET": ("uploadedFederatedDataBucket", False),
-    # No S3 kit fetch: the chart mounts an already-provisioned kit from the node
-    # (flClient.kitHostPath). A trust holds no FLIP AWS credentials. Falls back to
-    # DEFAULT_KIT_HOST_PATH when the kit omits it — see build_values.
-    "FL_KIT_DIR": ("flClient.kitHostPath", False),
+    # FL_KIT_DIR is not mapped: build_values always renders flClient.kitHostPath (kit_host_path).
     "OMOP_VOCAB_DIR": ("omopDb.vocabLoad.hostPath", False),
     "TRUST_DATA_VERSION": ("trustData.version", False),
     # The release this site runs (FLIP#1204): the kit's Hub-shared DOCKER_TAG is the one
@@ -73,20 +70,20 @@ def fl_client_pin(env: dict) -> str:
     return tag if IMMUTABLE_IMAGE_TAG.match(tag) else ""
 
 
-# Where the operator placed this trust's kit ON THE NODE when the kit file does not say.
-# The canonical FLIP kit path: every shipped kit sets FL_KIT_DIR to it, the Ansible
-# EC2/on-prem plays stage to it, and the chart Makefile's stage-kit KIT_DEST defaults to it.
+# The canonical FLIP kit path on the node: every shipped kit sets FL_KIT_DIR to it, the Ansible
+# EC2/on-prem plays stage to it, and the chart Makefile's KIT_DEST defaults to it without a FLIP_DATA_ROOT.
 DEFAULT_KIT_HOST_PATH = "/opt/flip/fl-kit"
 
 
-def default_kit_host_path(env: dict[str, str]) -> str:
-    """The kit path for a kit file without FL_KIT_DIR, where the Makefile's KIT_DEST defaults.
+def kit_host_path(env: dict[str, str]) -> str:
+    """flClient.kitHostPath for this kit, where the chart Makefile's stage-kit puts the kit and its deploys mount it.
 
-    fl-kit/ under the kit's FLIP_DATA_ROOT (FLIP#2113), else DEFAULT_KIT_HOST_PATH. Used by both
+    fl-kit/ under the kit's FLIP_DATA_ROOT (FLIP#2113), as KIT_DEST: the deploys ignore FL_KIT_DIR, which every
+    kit made from trust/.env.example sets. Without a root, FL_KIT_DIR, else DEFAULT_KIT_HOST_PATH. Used by both
     generators of a Helm override (this script and sync_k8s_kit.render_override), so they agree.
     """
     root = env.get("FLIP_DATA_ROOT", "").strip().rstrip("/")
-    return f"{root}/fl-kit" if root else DEFAULT_KIT_HOST_PATH
+    return f"{root}/fl-kit" if root else (env.get("FL_KIT_DIR", "").strip() or DEFAULT_KIT_HOST_PATH)
 
 
 # The chart's credential slots, as (env var name, Secret key name) pairs. Both
@@ -163,12 +160,8 @@ def build_values(env: dict[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
             val = val.lower().replace(" ", "")
         deep_set(overrides, yaml_path, val)
 
-    # flClient.kitHostPath is `required` by the chart, so dropping it like any other
-    # absent value would only move the failure to render time. A kit missing or
-    # blanking FL_KIT_DIR still renders the path the default `make stage-kit` wrote to,
-    # exactly as sync_k8s_kit.render_override does.
-    if not env.get("FL_KIT_DIR", "").strip():
-        deep_set(overrides, "flClient.kitHostPath", default_kit_host_path(env))
+    # flClient.kitHostPath is `required` by the chart, so it is always rendered, never dropped like an absent value.
+    deep_set(overrides, "flClient.kitHostPath", kit_host_path(env))
     if fl_client_pin(env):
         deep_set(overrides, "flClient.image.pin", fl_client_pin(env))
 

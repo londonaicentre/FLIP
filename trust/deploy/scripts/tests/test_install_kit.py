@@ -300,6 +300,22 @@ def test_update_keeps_keys_tags_and_site_lines() -> None:
         assert not list(s.tmp.iterdir())
 
 
+def test_update_over_a_kit_from_before_the_data_root_moves_no_store() -> None:
+    """FLIP#2113: the root goes only into a kit file the install creates, or a live site restarts on empty folders."""
+    import install_kit
+
+    with site() as s:
+        assert s.install(s.kit("nvflare")).returncode == 0
+        stores = {key: f"/srv/{key.lower()}" for key in install_kit.STORE_KEYS}
+        lines = [line for line in s.kit_file.read_text().splitlines() if not line.startswith(("FLIP_DATA_ROOT=", "# "))]
+        s.kit_file.write_text("\n".join([*lines, *(f"{key}={path}" for key, path in stores.items())]) + "\n")
+        update = s.kit("nvflare", "update", kit__hub_shared={**HUB_SHARED, "FL_BACKEND": "nvflare"})
+        assert s.install(update).returncode == 0
+        after = s.values()
+        assert {key: after.get(key) for key in stores} == stores
+        assert "FLIP_DATA_ROOT" not in after
+
+
 def test_full_kit_over_an_installed_one_replaces_the_keys() -> None:
     with site() as s:
         assert s.install(s.kit("flower")).returncode == 0

@@ -9,13 +9,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# FLIP_DATA_ROOT (FLIP#2113): the one directory holding everything this trust stores, set in its kit.
-# Under it each store has a fixed folder (omop, orthanc, xnat, images, cohort-snapshots), so a site
-# moves all of them to another disk with one line. A store's own key (OMOP_DATA_DIR, ...) still wins.
-# Unset, every store keeps the default it had before. Included by trust/Makefile and trust/xnat/Makefile
-# after the kit file, so the kit's value is the one read.
+# FLIP_DATA_ROOT (FLIP#2113): one directory per trust, set in its kit. Under it each store has a fixed
+# folder (omop, orthanc, xnat, images, cohort-snapshots), so one line places all of them on one disk; it
+# moves no data, and two trusts must never share one. A store's own key (OMOP_DATA_DIR, ...) still wins.
+# Unset, every store keeps the default it had before. Included after the kit is read, so the kit's
+# value is the one checked.
+ifeq ($(strip $(FLIP_DATA_ROOT)),/)
+$(error FLIP_DATA_ROOT must name a directory below /, not / itself)
+endif
 FLIP_DATA_ROOT := $(patsubst %/,%,$(strip $(FLIP_DATA_ROOT)))
 ifneq ($(FLIP_DATA_ROOT),)
+ifneq ($(words $(FLIP_DATA_ROOT)),1)
+$(error FLIP_DATA_ROOT must be one path with no spaces, not '$(FLIP_DATA_ROOT)')
+endif
 ifeq ($(filter /%,$(FLIP_DATA_ROOT)),)
 $(error FLIP_DATA_ROOT must be an absolute path, not '$(FLIP_DATA_ROOT)': compose and the sub-makes would resolve it from different directories)
 endif

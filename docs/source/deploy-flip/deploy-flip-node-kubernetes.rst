@@ -326,7 +326,7 @@ the FL client starts.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm stage-kit KIT_SRC=<slot-kit-dir> KUBE_CONTEXT=<kube-context>
+   make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<slot-kit-dir> KUBE_CONTEXT=<kube-context>
 
 - ``KIT_SRC`` is the slot's own kit: for FLARE the folder holding ``local/``, ``startup/`` and ``transfer/``; for
   Flower ``certificates/`` and ``keys/`` with this slot's credential only. The target reads the backend from that
@@ -334,8 +334,8 @@ the FL client starts.
 - ``KUBE_CONTEXT`` is required, so the kit never lands in whichever cluster ``kubectl`` happens to point at.
 - The kit goes to ``KIT_DEST`` on the node, and the deploy targets mount that same path, whatever the kit's
   ``FL_KIT_DIR`` says. It defaults to ``fl-kit/`` under the kit's ``FLIP_DATA_ROOT``, else ``/opt/flip/fl-kit``.
-  The root is read from the kit only when you pass ``KIT=<CODE>`` (and ``HUB=``), so pass the same ``KIT`` here
-  and at the deploy. Any previous kit there is removed first. To use another path, pass
+  ``KIT`` and ``HUB`` name the kit file the root is read from, so pass the same ones here and at the deploy; a
+  ``KIT`` that names no kit file is refused. Any previous kit there is removed first. To use another path, pass
   the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the first deploy. Later deploys and upgrades keep the path
   the release already mounts; pass ``KIT_DEST`` again only to move the kit.
 - ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
@@ -535,8 +535,8 @@ onto the node; it fetches nothing and needs no cloud credentials, so this works 
 1. Get the vocabulary as a folder of Athena CSVs. With access to the AI Centre bucket, run
    ``make -C trust/deploy/helm download-vocab`` on your own machine (it uses your AWS CLI profile). Otherwise export
    it from OHDSI Athena as step 7 of :doc:`onboarding-a-trust` describes, and unzip the export into a folder.
-2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<kube-context>``.
-   It lands at ``omop-vocab/`` under the kit's ``FLIP_DATA_ROOT`` when you pass ``KIT=<CODE>``, else
+2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<folder>
+   KUBE_CONTEXT=<kube-context>``. It lands at ``omop-vocab/`` under the kit's ``FLIP_DATA_ROOT``, else
    ``/opt/flip/omop-vocab``, the same way ``stage-kit`` reaches the node (Step 3). With more than
    one node, name it with ``NODE=<name>`` and pin the load job to it with ``omopDb.vocabLoad.nodeSelector`` (for
    example ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
@@ -589,7 +589,7 @@ overlay win for the keys they set. Do not pass settings with
      - Default
      - What it does
    * - ``flClient.kitHostPath``
-     - ``<FLIP_DATA_ROOT>/fl-kit``, else ``/opt/flip/fl-kit``
+     - ``fl-kit/`` under the kit's ``FLIP_DATA_ROOT``, else ``/opt/flip/fl-kit`` (set by the Makefile deploys)
      - Path **on the node** holding the FL kit. Required whenever the FL client is enabled with the default
        ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). The first deploy sets it
        from ``KIT_DEST``, over the kit's ``FL_KIT_DIR``, and later deploys keep it (see Step 3).

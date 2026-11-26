@@ -588,8 +588,8 @@ def test_make_passes_no_vocab_load_through_to_every_sync(target):
     assert "--no-vocab-load" not in run()
 
 
-def test_render_override_kit_host_path_falls_back_under_the_data_root():
-    """Without FL_KIT_DIR, a kit with FLIP_DATA_ROOT (FLIP#2113) renders fl-kit/ under it, where KIT_DEST defaults."""
-    kit = {k: v for k, v in _FL_KIT.items() if k != "FL_KIT_DIR"} | {"FLIP_DATA_ROOT": "/data/flip/ABC-prod"}
+def test_render_override_kit_host_path_is_under_the_data_root():
+    """A kit with FLIP_DATA_ROOT (FLIP#2113) renders fl-kit/ under it, where KIT_DEST stages, over its FL_KIT_DIR."""
+    kit = _FL_KIT | {"FL_KIT_DIR": "/opt/flip/fl-kit", "FLIP_DATA_ROOT": "/data/flip/ABC-prod"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
     assert "\nflClient:\n  kitHostPath: /data/flip/ABC-prod/fl-kit\n" in out

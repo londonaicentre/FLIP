@@ -236,9 +236,8 @@ names each directory; the table gives the default the production stack uses when
      - Loki logs and Grafana state.
      - Not needed to run the trust.
 
-``<N>`` is ``FL_KIT_SLOT_NUMBER`` from the kit file. When the kit sets ``FLIP_DATA_ROOT``, the four stores and the
-images cache it does not name are folders under it instead: ``omop``, ``orthanc``, ``xnat``, ``cohort-snapshots``
-and ``images``. To see the exact host paths a running trust uses, inspect its
+``<N>`` is ``FL_KIT_SLOT_NUMBER`` from the kit file. When the kit sets ``FLIP_DATA_ROOT``, each of these five whose
+own setting is unset is a folder under it: ``omop``, ``orthanc``, ``xnat``, ``cohort-snapshots`` and ``images``. To see the exact host paths a running trust uses, inspect its
 containers on the trust host:
 
 .. code-block:: shell

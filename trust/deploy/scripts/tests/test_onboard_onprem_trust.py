@@ -1291,7 +1291,7 @@ def test_58_a_site_without_the_membership_store_dir_is_told_the_exact_root_step(
     _assert(command in uid_row.detail or os.getuid() == 0, "the container uid row too", uid_row.detail)
 
 
-def test_60_flip_data_root_holds_every_store_the_kit_does_not_name() -> None:
+def test_62_flip_data_root_holds_every_store_the_kit_does_not_name() -> None:
     """One kit line moves every store (FLIP#2113): the checklist judges the folders deploy/data_root.mk resolves."""
     print("▶ FLIP_DATA_ROOT -> unset stores judged under it, a store's own key still wins, relative refused")
     with tempfile.TemporaryDirectory() as td:
@@ -1309,6 +1309,54 @@ def test_60_flip_data_root_holds_every_store_the_kit_does_not_name() -> None:
     _assert("XNAT_DATA_DIR" not in blocked.detail, "a store's own key beats the root", blocked.detail)
     _assert(f"{root}/omop" in omop.detail, "OMOP unset is not a FAIL under a root", f"{omop.status}: {omop.detail}")
     _assert(relative.status == mod.Status.FAIL and "relative" in relative.detail, "relative root", str(relative))
+
+
+def test_63_a_data_root_never_strands_a_store_or_is_shared() -> None:
+    """FLIP_DATA_ROOT moves no data (FLIP#2113): a store in use must not restart on an empty folder."""
+    print("▶ Data root -> FAIL on a store left behind, FAIL on a root another kit has, inline comment dropped")
+    with tempfile.TemporaryDirectory() as td:
+        kit_file = Path(td) / ".env.SITE.prod"
+        kit_file.write_text("")
+        old = Path(td) / "old-xnat"
+        (old / "archive").mkdir(parents=True)
+        root = f"{td}/root"
+        kit = {"FLIP_DATA_ROOT": f"{root}  # data disk", "FL_KIT_SLOT_NUMBER": "1"}
+        defaults = {**mod.PRE_ROOT_DEFAULTS, "XNAT_DATA_DIR": str(old)}
+        with mock.patch.object(mod, "PRE_ROOT_DEFAULTS", defaults):
+            stranded = mod.check_data_root(kit, True, kit_file, "trust/.env.SITE.prod")
+            kept = mod.check_data_root({**kit, "XNAT_DATA_DIR": str(old)}, True, kit_file, "trust/.env.SITE.prod")
+            (Path(root) / "xnat" / "archive").mkdir(parents=True)
+            moved = mod.check_data_root(kit, True, kit_file, "trust/.env.SITE.prod")
+        (Path(td) / ".env.OTHER.prod").write_text(f"FLIP_DATA_ROOT={root}/\n")
+        (Path(td) / ".env.example").write_text(f"FLIP_DATA_ROOT={root}\n")
+        shared = mod.check_data_root(kit, True, kit_file, "trust/.env.SITE.prod")
+    _assert(stranded.status == mod.Status.FAIL, "a store left behind FAILs", str(stranded))
+    _assert(f"XNAT_DATA_DIR ({old} → {root}/xnat)" in stranded.detail, "it names both paths", stranded.detail)
+    _assert(kept.status == mod.Status.PASS, "the store's own key keeps it where it is", str(kept))
+    _assert(moved.status == mod.Status.PASS, "data moved under the root passes", str(moved))
+    _assert(shared.status == mod.Status.FAIL and ".env.OTHER.prod" in shared.detail, "a shared root", str(shared))
+    _assert(".env.example" not in shared.detail, "a template is not a trust", shared.detail)
+    _assert(mod.data_root_error({"FLIP_DATA_ROOT": "/"}) == "is / itself", "/ is refused", "")
+    _assert("spaces" in mod.data_root_error({"FLIP_DATA_ROOT": "/mnt/Data Disk"}), "spaces are refused", "")
+
+
+def test_64_a_data_dir_below_a_closed_directory_names_it() -> None:
+    """Python 3.13 raised from is_dir and 3.14 answers False ("does not exist yet"): both must name the closed dir."""
+    print("▶ OMOP data dir below a directory this user cannot enter -> FAIL naming that directory")
+    if os.geteuid() == 0:
+        print("  (skipped as root: root enters every directory)")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        closed = Path(td) / "closed"
+        closed.mkdir()
+        closed.chmod(0)
+        try:
+            kit = {"OMOP_DATA_DIR": f"{closed}/omop"}
+            check = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit, True, Path(td))
+        finally:
+            closed.chmod(0o700)
+    _assert(check.status == mod.Status.FAIL, "FAIL, not a traceback or a WARN", str(check))
+    _assert(f"{closed} is not traversable" in check.detail, "names the closed directory", check.detail)
 
 
 def test_59_standalone_ready_also_names_the_upgrade() -> None:
@@ -1394,6 +1442,9 @@ def main() -> None:
     test_59_standalone_ready_also_names_the_upgrade()
     test_60_log_level_passes_only_a_level_quieter_than_debug()
     test_61_an_empty_trust_local_password_is_not_a_rotated_one()
+    test_62_flip_data_root_holds_every_store_the_kit_does_not_name()
+    test_63_a_data_root_never_strands_a_store_or_is_shared()
+    test_64_a_data_dir_below_a_closed_directory_names_it()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

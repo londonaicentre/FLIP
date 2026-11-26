@@ -1129,7 +1129,7 @@ def check_data_dir(
     repo_root: Path,
     image_uid: int | None = None,
 ) -> Check:
-    """Validate a per-trust data dir (OMOP, Orthanc) — set; exists and non-empty if real data.
+    """Validate a per-trust data dir (OMOP, Orthanc) — set (or under FLIP_DATA_ROOT); exists and non-empty if real data.
 
     `image_uid` is the uid the dir's container runs as when the kit sets no FLIP_UID, where
     the image fixes one (deploy/portable.mk).
@@ -1145,7 +1145,7 @@ def check_data_dir(
         return Check(label, Status.PENDING, "pending — needs kit file")
     raw = kit_vars.get(var_name, "") or (data_dir_default(var_name, kit_vars) if data_root(kit_vars) else "")
     if not raw:
-        return Check(label, Status.FAIL, f"{var_name} unset in kit file")
+        return Check(label, Status.FAIL, f"{var_name} unset in kit file (set it, or FLIP_DATA_ROOT)")
     # Resolve relative paths from trust/. Strip a leading "./" for a clean display.
     if raw.startswith("/"):
         resolved = Path(raw)
@@ -1161,7 +1161,18 @@ def check_data_dir(
             if seeded
             else "Sample data is off (TRUST_DATA_SEED=false): `make -C trust up-trust` loads nothing into it."
         )
-    if not resolved.is_dir():
+    try:
+        is_dir = resolved.is_dir()
+    except PermissionError:  # before Python 3.14; from 3.14 on it answers False
+        is_dir = False
+    if not is_dir and (closed := _untraversable(resolved)) != resolved:
+        return Check(
+            label,
+            Status.FAIL,
+            f"{resolved}: {closed} is not traversable by this user",
+            hints=["Run the checklist as the user that runs the bring-up, or let that user enter the directory."],
+        )
+    if not is_dir:
         return Check(
             label,
             Status.WARN,
@@ -1232,9 +1243,35 @@ DATA_ROOT_FOLDERS: dict[str, str] = {
 }
 
 
+# Where each store lived before its kit had a FLIP_DATA_ROOT: the defaults above, and for OMOP and Orthanc
+# what compose_trust.prod.yml mounts when they are unset.
+PRE_ROOT_DEFAULTS: dict[str, str] = {
+    **DATA_DIR_DEFAULTS,  # type: ignore[dict-item]
+    "OMOP_DATA_DIR": "/opt/flip/omop/db_data",
+    "ORTHANC_STORAGE_DIR": "/opt/flip/orthanc/orthanc-storage",
+}
+
+
+def _raw_data_root(kit_vars: dict[str, str]) -> str:
+    """FLIP_DATA_ROOT as make reads an included kit: an inline comment dropped."""
+    return kit_vars.get("FLIP_DATA_ROOT", "").split("#", 1)[0].strip()
+
+
 def data_root(kit_vars: dict[str, str]) -> str:
-    """The kit's FLIP_DATA_ROOT without a trailing slash, as deploy/data_root.mk reads it; empty when unset."""
-    return kit_vars.get("FLIP_DATA_ROOT", "").strip().rstrip("/")
+    """The kit's FLIP_DATA_ROOT without a trailing slash; empty when unset."""
+    return _raw_data_root(kit_vars).rstrip("/")
+
+
+def data_root_error(kit_vars: dict[str, str]) -> str:
+    """Why deploy/data_root.mk refuses the kit's FLIP_DATA_ROOT, or empty."""
+    raw = _raw_data_root(kit_vars)
+    if not raw:
+        return ""
+    if not raw.rstrip("/"):
+        return "is / itself"
+    if len(raw.split()) > 1:
+        return f"has spaces ({raw})"
+    return "" if raw.startswith("/") else f"is relative ({raw})"
 
 
 def data_dir_default(var: str, kit_vars: dict[str, str]) -> str | None:
@@ -1256,6 +1293,21 @@ def prepare_host_dirs_command(kit: str) -> str:
     hub = os.environ.get("HUB", "prod")
     command = f"sudo -E make -C trust prepare-host-dirs {quote_make_assignment('KIT', kit)}"
     return f"{command} {quote_make_assignment('HUB', hub)}" if hub else command
+
+
+def _untraversable(path: Path) -> Path:
+    """The first directory on the way to ``path`` this user cannot enter (``path`` itself when none is)."""
+    return next((p for p in reversed(path.parents) if p.is_dir() and not os.access(p, os.X_OK)), path)
+
+
+def _in_use(path: Path) -> bool:
+    """Whether ``path`` holds something; unreadable counts, as a container owns a store it runs on."""
+    try:
+        return any(path.iterdir())
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except PermissionError:
+        return True
 
 
 def _exists_or_raise(path: Path) -> bool:
@@ -1283,12 +1335,11 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
     slot = kit_vars.get("FL_KIT_SLOT_NUMBER", "").strip() or "<N>"
-    root = data_root(kit_vars)
-    if root and not root.startswith("/"):
+    if problem := data_root_error(kit_vars):
         return Check(
             label,
             Status.FAIL,
-            f"FLIP_DATA_ROOT is relative ({root}): make refuses it",
+            f"FLIP_DATA_ROOT {problem}: make refuses it",
             hints=[f"Set FLIP_DATA_ROOT in {kit_path} to an absolute path on the data disk."],
         )
     relative: list[str] = []
@@ -1306,7 +1357,7 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
         try:
             nearest = next(p for p in (path, *path.parents) if _exists_or_raise(p))
         except OSError as error:  # a parent this user cannot traverse
-            blocked[var] = f"{unset}{error.filename} is not traversable: {error.strerror}"
+            blocked[var] = f"{unset}{_untraversable(path)} is not traversable: {error.strerror}"
             continue
         if nearest != path and not os.access(nearest, os.W_OK):
             blocked[var] = f"{unset}{nearest} is not writable"
@@ -1339,6 +1390,53 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
             ],
         )
     return Check(label, Status.PASS, "absolute")
+
+
+def check_data_root(kit_vars: dict[str, str], kit_present: bool, kit_file: Path, kit_path: str) -> Check:
+    """FLIP_DATA_ROOT moves no data and is one trust's (FLIP#2113).
+
+    FAIL when it would start a store that holds data at its old default on an empty folder under the root
+    (a root added to a running site), or when another kit beside this one names the same root.
+    """
+    label = "Data root"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    root = data_root(kit_vars)
+    if not root:
+        return Check(label, Status.PASS, "unset: each store keeps its own default")
+    if data_root_error(kit_vars):
+        return Check(label, Status.FAIL, "malformed: see Data dir paths")
+    shared = sorted(
+        other.name
+        for other in kit_file.parent.glob(".env.*")
+        if other != kit_file and not other.name.endswith(".example") and data_root(read_kit_vars(other)) == root
+    )
+    if shared:
+        return Check(
+            label,
+            Status.FAIL,
+            f"{root} is also the root of {', '.join(shared)}: the trusts would share their databases and archives",
+            hints=[f"Give {kit_path} its own FLIP_DATA_ROOT, e.g. /opt/flip/<CODE>-<hub>."],
+        )
+    slot = kit_vars.get("FL_KIT_SLOT_NUMBER", "").strip() or "<N>"
+    moved = [
+        f"{var} ({old} → {Path(root) / folder})"
+        for var, folder in DATA_ROOT_FOLDERS.items()
+        if not kit_vars.get(var, "").strip()
+        and _in_use(old := Path(PRE_ROOT_DEFAULTS[var].format(slot=slot)))
+        and not _in_use(Path(root) / folder)
+    ]
+    if moved:
+        return Check(
+            label,
+            Status.FAIL,
+            "would start on empty folders, leaving data behind: " + "; ".join(moved),
+            hints=[
+                f"FLIP_DATA_ROOT moves no data. Set each of these in {kit_path} to where it is now,",
+                "or move the data under the root with the stack stopped, never as part of an upgrade.",
+            ],
+        )
+    return Check(label, Status.PASS, root)
 
 
 IMAGE_USERS = (
@@ -1421,6 +1519,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root, image_uid=999),
         check_data_dir_paths(kit_vars, kit_present, kit_path, kit),
+        check_data_root(kit_vars, kit_present, kit_file, kit_path),
         check_container_uid(kit_vars, kit_present, kit_path, kit),
     ]
 

@@ -84,8 +84,9 @@ def test_download_vocab_runs_the_host_side_fetch():
 def test_stage_vocab_goes_under_the_kits_data_root(bundle, tmp_path):
     """A kit with FLIP_DATA_ROOT (FLIP#2113) stages the vocabulary to omop-vocab/ under it."""
     kit_file = tmp_path / ".env.ABC.prod"
-    kit_file.write_text("FLIP_DATA_ROOT=/data/flip/ABC-prod\n")
+    dest = "/data/flip/ABC-prod/omop-vocab"
+    kit_file.write_text(f"FLIP_DATA_ROOT={dest.removesuffix('/omop-vocab')}\n")
     result = make_n("stage-vocab", f"VOCAB_DIR={bundle}", "KUBE_CONTEXT=test", "KIT=ABC", f"KIT_FILE={kit_file}")
     assert result.returncode == 0, result.stderr
-    assert '--dest "/data/flip/ABC-prod/omop-vocab"' in result.stdout
-    assert "OMOP_VOCAB_DIR=/data/flip/ABC-prod/omop-vocab" in result.stdout
+    assert f'--dest "{dest}"' in result.stdout
+    assert f"OMOP_VOCAB_DIR={dest}" in result.stdout
