@@ -108,7 +108,9 @@ def _image_user(image: str) -> str:
         return ":".join(re.search(rf"^\s*{key}\s*=\s*(\d+)$", posix, re.M).group(1) for key in ("uid", "gid"))
     text = "\n".join(_dockerfile(path) for path in (image, BASES.get(image)) if path)
     if image == SUPERLINK:
-        assert not re.search(r"^USER ", text, re.M), "the SuperLink sets a USER of its own, not flwr/base's"
+        # fl-base may switch to root for a step, but must hand the image back to flwr/base's `app`.
+        switches = [u for path in (BASES[image], image) for u in re.findall(r"^USER (\S+)$", _dockerfile(path), re.M)]
+        assert not switches or switches[-1] == "app", "the SuperLink sets a USER of its own, not flwr/base's"
         return FLWR_BASE_USER
     user = re.findall(r"^USER (\S+)$", _dockerfile(image), re.M)[-1]
     if re.fullmatch(r"\d+:\d+", user):
