@@ -292,6 +292,7 @@ def test_explicitly_empty_ae_title_is_refused_before_anything_runs(tmp_path, kit
     assert result.returncode != 0, "an empty XNAT_AETITLE was accepted:\n" + result.stdout
     output = result.stdout + result.stderr
     assert "XNAT_AETITLE" in output
+    assert "take the default 'FLIP_XNAT'" in output, f"the refusal names another default than the stack's:\n{output}"
     source = str(tmp_path / ".env.Probe.development") if not overrides else "command line"
     assert source in output, f"the refusal does not say where the empty value came from:\n{output}"
     assert "docker" not in result.stdout, "something was run (or would have been) before the guard:\n" + result.stdout

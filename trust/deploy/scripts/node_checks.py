@@ -333,22 +333,28 @@ def check_undeclared_blocked(node: Node, fl_enabled: bool) -> Check:
 
 
 def check_omop_seeded(node: Node) -> Check:
-    """omop-db holds people: the seed hook loaded this trust's slice of the dataset."""
+    """omop-db holds imaging rows: the seed hook loaded this trust's slice of the dataset.
+
+    Image rows, not persons, as Compose's `make -C trust ensure-seeded` asks (FLIP#2111): Synthea
+    adds persons with no imaging.
+    """
     pod = node.pod("omop-db")
     if not pod:
         return failed("omop seeded", "no running omop-db pod")
-    ok, out = node.exec(pod, 'psql -X -tAc "select count(*) from omop.person" -U "$POSTGRES_USER" -d "$POSTGRES_DB"')
-    count = out.strip()
-    if ok and count.isdigit() and int(count) > 0:
-        return passed("omop seeded", f"{count} rows in omop.person")
-    return failed("omop seeded", f"omop.person is empty or unreadable ({count[:120]})")
+    ok, out = node.exec(
+        pod, 'psql -X -tAc "SELECT 1 FROM omop.image_occurrence LIMIT 1" -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+    )
+    if ok and out.strip() == "1":
+        return passed("omop seeded", "omop.image_occurrence holds rows")
+    return failed("omop seeded", f"no imaging row in omop.image_occurrence ({out.strip()[:120]})")
 
 
 def check_orthanc(node: Node) -> tuple[Check, Check, bool]:
-    """Orthanc holds studies, and refuses a request without credentials; and whether it answered that it is empty.
+    """Orthanc holds studies (CountStudies, as ensure-seeded asks), and refuses a request without credentials; and
+    whether it answered that it is empty.
 
     Both asked from the xnat-web container, which can reach Orthanc on every platform (it is the C-STORE receiver).
-    The third value is true only when Orthanc itself said it holds no instance: a count that could not be read is
+    The third value is true only when Orthanc itself said it holds no study: a count that could not be read is
     a failure of this check, never an empty Orthanc.
     """
     pod = node.pod("xnat-web")
@@ -364,15 +370,15 @@ def check_orthanc(node: Node) -> tuple[Check, Check, bool]:
         # The credential goes to curl as a config on stdin: in argv the container's process list would show it.
         ok, out = node.exec(pod, f"{CURL_AUTH}\nread -r ocreds\n{ORTHANC_CURL} {ORTHANC_URL}/statistics", stdin=creds)
         try:
-            instances = int(json.loads(out)["CountInstances"]) if ok else None
+            studies = int(json.loads(out)["CountStudies"]) if ok else None
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            instances = None
-        if instances is None:
+            studies = None
+        if studies is None:
             seeded = failed("orthanc seeded", f"Orthanc did not say what it holds ({out[:120]})")
-        elif instances == 0:
-            seeded, empty = failed("orthanc seeded", "Orthanc holds no instances"), True
+        elif studies == 0:
+            seeded, empty = failed("orthanc seeded", "Orthanc holds no study"), True
         else:
-            seeded = passed("orthanc seeded", f"{instances} instances")
+            seeded = passed("orthanc seeded", f"{studies} studies")
 
     _, code = node.exec(pod, f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 10 {ORTHANC_URL}/")
     code = code.strip()
@@ -717,7 +723,7 @@ def run_checks(
         record(orthanc_seeded)
     record(orthanc_auth)
     if no_study or nothing_to_send:
-        why = no_study or f"{no_orthanc}, and it reports no instance to send"
+        why = no_study or f"{no_orthanc}, and it reports no study to send"
         skip("xnat c-store", why)
         skip("dcm2niix conversion", why)
     else:

@@ -150,6 +150,55 @@ def test_provision_checks_out_a_release_tag(tmp_path):
     assert "checkout --quiet --detach v0.12.0" in log.read_text()
 
 
+def test_a_bare_provision_keeps_the_ref_the_node_was_moved_to(tmp_path):
+    """FLIP_REF is first boot's ref: returning to it would undo every `reprovision REF=`."""
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    assert _run(env, "provision", "v0.12.0").returncode == 0
+    # From here the checkout is detached, as `checkout --detach` leaves it: symbolic-ref exits 1.
+    _stub(tmp_path / "bin", "git", f'echo "git $*" >> "{log}"; [[ " $* " != *" symbolic-ref "* ]]')
+    log.write_text("")
+
+    result = _run(env, "provision")
+
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text()
+    assert "checkout" not in calls
+    assert "fetch" not in calls
+    assert "ansible-playbook" in calls, "the play still runs, on the code already there"
+
+
+@pytest.mark.parametrize(
+    ("git", "why"),
+    [
+        ('[[ " $* " != *" symbolic-ref "* ]] || exit 128', "symbolic-ref itself failed (dubious ownership)"),
+        (
+            'case " $* " in *" symbolic-ref "*) exit 1 ;; *" rev-parse "*) exit 128 ;; esac',
+            "detached, but HEAD does not resolve (a damaged repo)",
+        ),
+    ],
+)
+def test_a_bare_provision_stops_on_a_checkout_it_cannot_read(tmp_path, git, why):
+    """Only a HEAD git confirms as detached is kept: any other failure must not run the play on what is on disk."""
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    (Path(env["FLIP_DIR"]) / "FLIP" / ".git").mkdir(parents=True)
+    _stub(tmp_path / "bin", "git", f'echo "git $*" >> "{log}"; {git}')
+
+    result = _run(env, "provision")
+
+    assert result.returncode != 0, why
+    assert "ansible-playbook" not in log.read_text(), why
+
+
+def test_a_bare_provision_pins_a_clone_that_was_never_checked_out(tmp_path):
+    """A first boot that failed between clone and checkout left the default branch: not a pin to keep."""
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    (Path(env["FLIP_DIR"]) / "FLIP" / ".git").mkdir(parents=True)
+
+    assert _run(env, "provision").returncode == 0
+    first_boot_ref = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+    assert f"checkout --quiet --detach {first_boot_ref}" in log.read_text()
+
+
 def test_unknown_command_prints_usage(tmp_path):
     env, _ = _setup(tmp_path, disk_present=True, has_fs=True)
     result = _run(env, "explode")

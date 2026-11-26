@@ -880,7 +880,7 @@ rotate-trust-keys: ## Reissue one trust's api + internal-service keys in place (
 	## containers come back on the new kit. Writes the fresh credentials back into
 	## trust/.env.<CODE>.<env>. Deliver it with `make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>` on
 	## EC2, or `package-onprem-trust-kit` for an on-prem site (copy the kit to trust/.env.<slot> first).
-	## NEVER that root's `deploy`: it is a first-install verb and re-seeds the site's data.
+	## NEVER that root's `deploy`: it is a first-install verb and resets XNAT.
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=KCL)"; exit 1; }
 	@KIT=$(KIT) ENV_CLASS=$(ENV_CLASS) MAIN_ENV_FILE=$(abspath $(MAIN_ENV_FILE)) ROTATE_KEYS=1 REVOKE_OLD=$(REVOKE_OLD) KIT_FILES="$(KIT_FILE)" bash scripts/register-trusts.sh
 

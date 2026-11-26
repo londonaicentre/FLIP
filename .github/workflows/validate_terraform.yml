@@ -19,8 +19,28 @@ on:
       - "deploy/aws/**"
       # test_providers_forwarding.py runs the old path's forwarding stub (FLIP#1438).
       - "deploy/providers/AWS/GNUmakefile"
-      # The Makefile and test_env_mode.py read the HUB table.
-      - "deploy/env_mode.mk"
+      # The Makefile and test_env_mode.py read the HUB table; the Makefiles the suite parses
+      # include the other fragments.
+      - "deploy/*.mk"
+      # Read by deploy/aws/tests from outside the tree. tests/test_validate_terraform_paths.py
+      # derives the list from the test sources and fails when a path is missing here (FLIP#2047).
+      # test_env_mode.py and test_fl_kit_iam.py read these Makefiles (flower's is listed below);
+      # test_trust_makefile_hub.py parses the trust ones.
+      - "Makefile"
+      - "flip-ui/Makefile"
+      - "fl-services/nvflare/Makefile"
+      - "trust/Makefile"
+      - "trust/xnat/Makefile"
+      - "trust/xnat/.env"
+      # test_non_root_user.py and test_readonly_root_filesystem.py read each image's user and
+      # write paths; test_register_trusts_task_override.py reads flip-api's.
+      - "flip-api/Dockerfile"
+      - "fl-services/*/*/Dockerfile"
+      - "fl-services/nvflare/fl-server/fl-server/entrypoint.sh"
+      # test_flip_api_ses_iam.py reads the sender address the SES policy must allow.
+      - "flip-api/src/flip_api/utils/constants.py"
+      # test_validate_terraform_paths.py matches these lists with the PR path gate's pattern rules.
+      - "scripts/pr_paths_changed.py"
       # The trust roots (azure/, aws/, the Snowflake roots) have their own workflows,
       # validate_terraform_{azure,aws_node,snowflake}.yml, each on its own paths (FLIP#2021).
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
@@ -29,7 +49,6 @@ on:
       - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
       # test_flower_kit_slots.py and the add_fl_kits.sh harness read or stand in for these (FLIP#1942).
       - "fl-services/flower/register-supernode-keys.sh"
-      - "fl-services/flower/provision/scripts/generate_creds.py"
       - "fl-services/flower/Makefile"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
       # aws-ec2.yml imports and the shared roles they compose.
@@ -41,14 +60,36 @@ on:
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
       - ".github/workflows/terraform_drift.yml"
+      # test_staging_lifecycle_workflow.py reads it.
+      - ".github/workflows/staging_lifecycle.yml"
   pull_request:
     branches: [main, develop]
     paths:
       - "deploy/aws/**"
       # test_providers_forwarding.py runs the old path's forwarding stub (FLIP#1438).
       - "deploy/providers/AWS/GNUmakefile"
-      # The Makefile and test_env_mode.py read the HUB table.
-      - "deploy/env_mode.mk"
+      # The Makefile and test_env_mode.py read the HUB table; the Makefiles the suite parses
+      # include the other fragments.
+      - "deploy/*.mk"
+      # Read by deploy/aws/tests from outside the tree. tests/test_validate_terraform_paths.py
+      # derives the list from the test sources and fails when a path is missing here (FLIP#2047).
+      # test_env_mode.py and test_fl_kit_iam.py read these Makefiles (flower's is listed below);
+      # test_trust_makefile_hub.py parses the trust ones.
+      - "Makefile"
+      - "flip-ui/Makefile"
+      - "fl-services/nvflare/Makefile"
+      - "trust/Makefile"
+      - "trust/xnat/Makefile"
+      - "trust/xnat/.env"
+      # test_non_root_user.py and test_readonly_root_filesystem.py read each image's user and
+      # write paths; test_register_trusts_task_override.py reads flip-api's.
+      - "flip-api/Dockerfile"
+      - "fl-services/*/*/Dockerfile"
+      - "fl-services/nvflare/fl-server/fl-server/entrypoint.sh"
+      # test_flip_api_ses_iam.py reads the sender address the SES policy must allow.
+      - "flip-api/src/flip_api/utils/constants.py"
+      # test_validate_terraform_paths.py matches these lists with the PR path gate's pattern rules.
+      - "scripts/pr_paths_changed.py"
       # The trust roots (azure/, aws/, the Snowflake roots) have their own workflows,
       # validate_terraform_{azure,aws_node,snowflake}.yml, each on its own paths (FLIP#2021).
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
@@ -57,7 +98,6 @@ on:
       - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
       # test_flower_kit_slots.py and the add_fl_kits.sh harness read or stand in for these (FLIP#1942).
       - "fl-services/flower/register-supernode-keys.sh"
-      - "fl-services/flower/provision/scripts/generate_creds.py"
       - "fl-services/flower/Makefile"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
       # aws-ec2.yml imports and the shared roles they compose.
@@ -69,6 +109,8 @@ on:
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
       - ".github/workflows/terraform_drift.yml"
+      # test_staging_lifecycle_workflow.py reads it.
+      - ".github/workflows/staging_lifecycle.yml"
 
 permissions:
   contents: read

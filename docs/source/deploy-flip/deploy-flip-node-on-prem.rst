@@ -58,16 +58,14 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
     directory later needs root, so a second install on the same tree does too. Decide before the first install:
     a live site's data carries the ids it was installed with, and ``make upgrade-onprem-trust`` refuses a kit that
     turns ``FLIP_UID`` on, changes it or clears it afterwards.
-  - **Keep the images' own users** (the table below). Create the directory the data dirs sit in yourself
-    (``mkdir -p /data/flip``, say: your own bring-up writes the seed markers beside the data dirs, so that parent
-    must be yours), then have whoever prepares the host run, once, as root:
+  - **Keep the images' own users** (the table below). Have whoever prepares the host run, once, as root:
 
     .. code-block:: shell
 
        make -C trust prepare-host-dirs KIT=<CODE> HUB=prod
 
     It creates every directory below with its owner (the FL kit it only gives to its uid, once you have unpacked
-    it), refuses to create that parent, and deletes nothing, so it is safe to re-run.
+    it) and deletes nothing, so it is safe to re-run.
 
   On the first route ``make up-onprem-trust`` creates the XNAT tree itself; on the second it only checks the
   ownership, and a failed check names the fix.
@@ -110,11 +108,24 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - gid 49999
        - ``BASE_IMAGES_DOWNLOAD_DIR/net-<N>``, group-writable
 
-  Set ``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``, ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR`` and
-  ``XNAT_DATA_DIR`` in the kit to absolute paths on the data disk before they are created. The kit template carries
-  the development values, which are relative and so land inside the checkout; unset ones fall back to per-slot
-  directories under ``/opt/flip``. The checklist's *Data dir paths* row warns on a relative path and fails on one
-  that does not exist yet and that you cannot create, or whose parent you cannot even enter.
+  The simplest way to place them is ``FLIP_DATA_ROOT`` in the kit: one absolute directory, this trust's alone, that
+  holds its five data stores, each in a fixed folder (``omop``, ``orthanc``, ``xnat``, ``images``,
+  ``cohort-snapshots``). The FL kit stays at ``FL_KIT_DIR``. A kit file that ``install-kit`` creates sets it to
+  ``/opt/flip/<CODE>-<hub>``; to keep the stores off the root filesystem, edit it to the data disk before the first
+  ``up-onprem-trust``. A store's own setting (``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``,
+  ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR``, ``XNAT_DATA_DIR``) still wins over it. Without
+  ``FLIP_DATA_ROOT``, set those five to absolute paths: the kit template carries the development values, which are
+  relative and so land inside the checkout, and unset ones fall back to per-slot defaults under ``/opt/flip``, except
+  ``OMOP_DATA_DIR`` and ``ORTHANC_STORAGE_DIR``, whose fallbacks (``/opt/flip/omop/db_data``,
+  ``/opt/flip/orthanc/orthanc-storage``) are the same for every trust on the host: the checklist fails a kit that
+  leaves either unset with no ``FLIP_DATA_ROOT``.
+
+  ``FLIP_DATA_ROOT`` moves no data. On a trust that is already running, every store whose own setting is unset
+  would restart on an empty folder under the root: either set each to where it is now, or move the data there with
+  the stack stopped. The checklist's *Data root* row fails when a store would be left behind, or when another kit on
+  the host names the same root.
+  The checklist's *Data dir paths* row warns on a relative path and fails on one that does not exist yet and that
+  you cannot create, or whose parent you cannot even enter.
 - **Read access to the checkout and the FL kit** (``FL_KIT_DIR``).
 - **Python 3.11 or later** for the readiness checklist and ``make -C trust check-governance``. ``uv`` installs one when
   it can download it; otherwise the host must provide a ``python3.11`` or newer. The checklist refuses an older
@@ -279,7 +290,7 @@ the admin manages them.
    * - Trust-local passwords
      - ``make new-trust`` and ``install-kit`` mint a random value for each. A kit scaffolded from an older template still carries
        the mock-stack defaults; replace every one in the *Trust-local credentials* section, or the readiness
-       checklist refuses a ``.prod`` / ``.stag`` kit.
+       checklist refuses the kit of a ``prod`` or ``stag`` trust, whatever its file is called.
      - Yes
    * - ``TRUST_DATA_SEED``
      - ``false`` for a trust whose OMOP database and PACS hold real data. The first start then loads none of FLIP's

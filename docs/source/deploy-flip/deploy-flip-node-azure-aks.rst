@@ -123,7 +123,9 @@ the tarball in hand:
    ``K8S_PLATFORM_VALUES`` so that later deploys and upgrades of that slot keep them. The first install takes up to half
    an hour, most of it XNAT's first start. ``MOCK_PACS=1`` seeds the published mock studies into the chart's Orthanc,
    which a test node needs for an imaging pull and for the self-test's C-STORE and conversion checks (skipped without
-   it).
+   it). It is an argument of ``join`` only: its overlay is recorded with the other two, and ``make deploy`` reads all
+   of them from the kit file. ``deploy`` refuses ``MOCK_PACS`` or ``AKS_VALUES`` (change the kit line instead), and
+   refuses a kit file that records no overlays.
 
 The chart loads no OMOP core vocabulary: it is licensed, so each site loads its own copy, as
 :ref:`onprem-core-vocabulary` describes. Until then, cohort queries that name concepts through

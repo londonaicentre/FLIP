@@ -110,10 +110,13 @@ Cluster
   not the ``kubernetes`` Service. k3s and kind listen on 6443, minikube on 8443: find it with
   ``kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`` and set
   ``networkPolicies.apiServer`` (``cidrs`` and ``port``). AKS and EKS listen on 443, which the chart already allows.
-- **RBAC** to create Secrets in the namespace (required) and to create the namespace itself, or have a cluster
-  administrator create it first. The namespace is ``flip-trust`` unless you pass ``NAMESPACE=``. ``stage-kit`` and
+- **RBAC.** Cluster-admin works. The least an account needs is the built-in ``admin`` role in the trust's
+  namespace, the right to write ResourceQuotas there (``admin`` only reads them, and the chart creates one for
+  XNAT's conversion jobs), and the namespace created for it by a cluster administrator. ``make preflight`` names any
+  kind of object the account cannot create before the deploy starts. The namespace is ``flip-trust`` unless you pass
+  ``NAMESPACE=``. Reading StorageClasses is optional (the preflight's default-class check). ``stage-kit`` and
   ``stage-vocab`` outside kind also read the nodes and create and exec into a root pod with a ``hostPath``, which is
-  as good as root on that node (Step 3).
+  as good as root on that node (Step 3). The roles to grant are under :ref:`ts-k8s-namespaced-account`.
 
 .. list-table:: Default volume sizes
    :header-rows: 1
@@ -203,6 +206,9 @@ for development only. *Who: the node's administrator, with root for the install 
 
 - ``--data-dir``: where container images and every PersistentVolume go (the default ``local-path`` StorageClass
   writes under ``<data-dir>/storage``). Pick a disk with room for the volumes above plus about 30 GB of images.
+  This is the Kubernetes counterpart of a Compose trust's ``FLIP_DATA_ROOT``: the chart's stores are volumes, so
+  k3s places them, not the kit. Set ``FLIP_DATA_ROOT`` in the kit too, on the same disk, and the two folders staged
+  straight onto the node go under it: the FL kit (Step 3) and the vocabulary (`Load the OMOP core vocabulary`_).
 - ``--disable traefik``: the chart brings no Ingress, and nothing on the node needs to listen on 80 or 443.
 - The kubeconfig is cluster-admin, and with ``hostPath`` pods that is root on the node, so keep it ``600`` and copy
   it only to the operator. Its context is ``default`` (``KUBE_CONTEXT=default``).
@@ -323,28 +329,33 @@ the FL client starts.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm stage-kit KIT_SRC=<slot-kit-dir> KUBE_CONTEXT=<kube-context>
+   make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<slot-kit-dir> KUBE_CONTEXT=<kube-context>
 
 - ``KIT_SRC`` is the slot's own kit: for FLARE the folder holding ``local/``, ``startup/`` and ``transfer/``; for
   Flower ``certificates/`` and ``keys/`` with this slot's credential only. The target reads the backend from that
   shape and refuses a folder with neither shape or both (``FL_BACKEND=nvflare|flower`` overrides).
 - ``KUBE_CONTEXT`` is required, so the kit never lands in whichever cluster ``kubectl`` happens to point at.
-- The kit goes to ``KIT_DEST`` on the node (default ``/opt/flip/fl-kit``), and the deploy targets mount that same
-  path, whatever the kit's ``FL_KIT_DIR`` says. Any previous kit there is removed first. To use another path, pass
-  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the first deploy. Later deploys and upgrades keep the path
-  the release already mounts; pass ``KIT_DEST`` again only to move the kit.
+- The kit goes to the path the kit file names: ``fl-kit/`` under its ``FLIP_DATA_ROOT``, else its ``FL_KIT_DIR``
+  (``/opt/flip/fl-kit`` in every kit as shipped). Every deploy and upgrade of that kit mounts the same path, so pass
+  the same ``KIT`` and ``HUB`` here and at the deploy; a ``KIT`` that names no kit file is refused. Any previous kit
+  there is removed first. To use another path, set it in the kit file before you stage. To move a deployed trust's
+  kit (a ``FLIP_DATA_ROOT`` added to its kit file moves it too), change the kit file, then pass ``KIT_MOVED=1`` to
+  ``stage-kit`` and to the next deploy or upgrade: without it, ``stage-kit`` refuses to stage anywhere else than the
+  release mounts, and a deploy that would change that path stops before it changes anything. Once the FL client is
+  running from the new path, delete the old folder on the node yourself: ``stage-kit`` clears only the folder it
+  copies to, and the old one still holds the kit's private key.
 - ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
   to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
 .. note::
 
    On a kind development cluster ``stage-kit`` copies with ``docker cp``. On any other cluster (k3s, a VM) it starts
-   a short-lived root pod on the node, with ``KIT_DEST`` mounted as a ``hostPath``, and copies with
+   a short-lived root pod on the node, with the kit's path mounted as a ``hostPath``, and copies with
    ``kubectl cp``. That needs no docker or shell on the host, but RBAC to read the nodes and to create and exec
    into that pod, which is as good as root on the node. If the cluster will not run the pod, ``stage-kit`` prints
    the same steps as one command to run as root on the node. A namespace under Pod Security ``baseline`` refuses
    every ``hostPath``, the chart's own kit mount included, so use the kit Secret below there. Otherwise place the
-   kit at ``KIT_DEST`` by your site's own means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one
+   kit at that path by your site's own means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one
    else. On a host
    shared with people, check that uid isn't a person's account: whoever holds it can read the kit's private key.
 
@@ -432,7 +443,8 @@ your cluster (``kubectl get job -n flip-trust -w``), then raise it if needed:
 
    Set below the job's real duration, the deploy fails **after** the new release is applied and rolled out, with
    ``xnat-init did not complete``. The job itself keeps running in the cluster; re-run
-   ``make -C trust/deploy/helm xnat-init`` once it has finished or with a larger budget.
+   ``make -C trust/deploy/helm xnat-init`` once it has finished or with a larger budget. Run with no values, as the
+   message prints it, it renders the job from the values the release was deployed with.
 
 If you add ``--wait`` to your own ``helm upgrade``, note that Helm 4 waits until workloads are genuinely ready, so size
 ``--timeout`` for the slowest service rather than for the API call.
@@ -484,9 +496,9 @@ shares, the same one as the VM node self-test, against the deployed release:
    * - trust-api / imaging-api / data-access-api health
      - Each answers its own ``/health`` with ``"status":"ok"``.
    * - omop seeded
-     - ``omop.person`` has rows.
+     - ``omop.image_occurrence`` has rows (persons alone may be Synthea's).
    * - orthanc seeded
-     - Orthanc holds instances.
+     - Orthanc holds studies.
    * - orthanc requires auth
      - Orthanc answers 401 without credentials.
    * - xnat c-store
@@ -548,12 +560,13 @@ onto the node; it fetches nothing and needs no cloud credentials, so this works 
 1. Get the vocabulary as a folder of Athena CSVs. With access to the AI Centre bucket, run
    ``make -C trust/deploy/helm download-vocab`` on your own machine (it uses your AWS CLI profile). Otherwise export
    it from OHDSI Athena as step 7 of :doc:`onboarding-a-trust` describes, and unzip the export into a folder.
-2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<kube-context>``.
-   It lands at ``/opt/flip/omop-vocab``, the same way ``stage-kit`` reaches the node (Step 3). With more than
+2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<folder>
+   KUBE_CONTEXT=<kube-context>``. It lands at ``omop-vocab/`` under the kit's ``FLIP_DATA_ROOT``, else
+   ``/opt/flip/omop-vocab``, the same way ``stage-kit`` reaches the node (Step 3). With more than
    one node, name it with ``NODE=<name>`` and pin the load job to it with ``omopDb.vocabLoad.nodeSelector`` (for
    example ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
    vocabulary, later upgrades skip it, so you may remove it.
-3. Set ``OMOP_VOCAB_DIR=/opt/flip/omop-vocab`` in the kit and re-run Step 4. ``sync-kit`` writes it into
+3. Set ``OMOP_VOCAB_DIR`` in the kit to the path ``stage-vocab`` printed and re-run Step 4. ``sync-kit`` writes it into
    ``omopDb.vocabLoad.hostPath`` and a load job runs after each install or upgrade, loading only what is missing.
 
 .. warning::
@@ -601,10 +614,10 @@ overlay win for the keys they set. Do not pass settings with
      - Default
      - What it does
    * - ``flClient.kitHostPath``
-     - ``/opt/flip/fl-kit``
+     - ``fl-kit/`` under the kit's ``FLIP_DATA_ROOT``, else its ``FL_KIT_DIR``, else ``/opt/flip/fl-kit`` (set by the Makefile deploys)
      - Path **on the node** holding the FL kit. Required whenever the FL client is enabled with the default
-       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). The first deploy sets it
-       from ``KIT_DEST``, over the kit's ``FL_KIT_DIR``, and later deploys keep it (see Step 3).
+       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). A deploy that names a
+       kit takes it from the kit file: ``fl-kit/`` under ``FLIP_DATA_ROOT``, else ``FL_KIT_DIR`` (see Step 3).
    * - ``flBackend``
      - from the kit
      - ``nvflare`` or ``flower``.
@@ -618,8 +631,10 @@ overlay win for the keys they set. Do not pass settings with
        device plugin.
    * - ``trustData.seed.enabled``
      - ``true``
-     - Loads the **mock** projects into OMOP (and Orthanc) on install and every upgrade. A site whose stores hold
-       real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit (see Step 1).
+     - Loads the **mock** projects into an empty OMOP (and Orthanc), on install or any later upgrade that finds it
+       empty; a store that holds data is left alone. ``make -C trust/deploy/helm reseed`` moves a seeded trust to a
+       new ``trustData.version``. A site whose stores hold real data turns it off with ``TRUST_DATA_SEED=false`` in
+       the kit (see Step 1).
    * - ``trustData.seed.orthanc``
      - ``false``
      - Also load the mock DICOM studies into Orthanc (about 2 GB per trust). A test trust taking part in imaging
@@ -693,9 +708,16 @@ When the admin refreshes your kit's hub-shared settings, see "Later — rotate h
 
 .. warning::
 
-   While ``trustData.seed.enabled`` is on, every upgrade re-applies the mock projects. A site whose stores hold real
-   data must set ``TRUST_DATA_SEED=false`` in the kit (see `Step 1 — Check out the release and copy in the kit`_);
-   the upgrade carries it into the release.
+   While ``trustData.seed.enabled`` is on, every upgrade loads the mock projects into a store that has no imaging
+   data yet. A site whose stores hold real data must set ``TRUST_DATA_SEED=false`` in the kit (see
+   `Step 1 — Check out the release and copy in the kit`_); the upgrade carries it into the release.
+
+   An upgrade never re-seeds a store that holds data (FLIP#2111). After a release that moves ``trustData.version``,
+   move a sample-data trust to it with:
+
+   .. code-block:: shell
+
+      make -C trust/deploy/helm reseed KIT=<CODE> HUB=<env>
 
 .. note::
 

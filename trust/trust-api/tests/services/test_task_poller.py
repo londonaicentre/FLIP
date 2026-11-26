@@ -62,6 +62,39 @@ def test_announce_identity_exits_on_expected_id_mismatch():
             _maybe_announce_identity({"trust_id": "different-id", "trust_name": "Some Trust"})
 
 
+@pytest.mark.parametrize("typed", ["ABC-123", " abc-123 \n", "Abc-123\t"])
+def test_announce_identity_matches_an_id_typed_in_another_case_or_with_spaces(typed):
+    """The hub's id is a lower-case UUID; a kit line in upper case or with trailing whitespace is the
+    same trust, and must not stop a correctly deployed trust-api (FLIP#2047)."""
+    with patch.object(task_poller, "EXPECTED_TRUST_ID", typed):
+        _maybe_announce_identity({"trust_id": "abc-123", "trust_name": "Open Trust (EC2)"})
+    assert task_poller._identity_logged
+
+
+def test_announce_identity_still_exits_on_a_different_id_after_normalising():
+    with patch.object(task_poller, "EXPECTED_TRUST_ID", " ABC-124 "):
+        with pytest.raises(SystemExit):
+            _maybe_announce_identity({"trust_id": "abc-123", "trust_name": "Some Trust"})
+
+
+def test_announce_identity_treats_a_padded_placeholder_as_unset():
+    with patch.object(task_poller, "EXPECTED_TRUST_ID", " <run-make-register-trust> "):
+        _maybe_announce_identity({"trust_id": "abc-123", "trust_name": "Open Trust (EC2)"})
+    assert task_poller._identity_logged
+
+
+def test_announce_identity_treats_a_kit_placeholder_as_unset(caplog):
+    """A kit registration has not filled yet names no trust: the check is off, with one warning (FLIP#2047)."""
+    with patch.object(task_poller, "EXPECTED_TRUST_ID", "<run-make-register-trust>"), caplog.at_level("INFO"):
+        _maybe_announce_identity({"trust_id": "abc-123", "trust_name": "Open Trust (EC2)"})
+        _maybe_announce_identity({"trust_id": "abc-123", "trust_name": "Open Trust (EC2)"})
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "placeholder" in warnings[0].getMessage()
+    assert "self-check is off" in warnings[0].getMessage()
+    assert any("Authenticated to hub as trust" in r.message for r in caplog.records)
+
+
 def test_announce_identity_ignores_response_without_identity():
     """A response body lacking trust_id/trust_name is not an identity check."""
     with patch.object(task_poller, "EXPECTED_TRUST_ID", "expected-id"):

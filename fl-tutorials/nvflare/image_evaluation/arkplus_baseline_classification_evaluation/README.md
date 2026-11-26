@@ -89,6 +89,8 @@ top-level `query` key of `config_fed_client.json` (read by `evaluator.load_query
 
 The cohort query for a real deployment is [`query.sql`](query.sql) — it selects the **hold-out** chest
 X-ray set (`procedure_source_value = 'Chest X-ray (holdout)'`) and returns the seven lesion-label columns.
+A trust holds those rows once it is seeded with `arkplus_project` (`make -C trust seed KIT=<CODE>
+PROJECTS=arkplus_project`; see [`datasets/arkplus/README.md`](../../../datasets/arkplus/README.md)).
 Pass it as the project's cohort query (e.g. `make e2e_smoke QUERY_FILE=.../arkplus_baseline_classification_evaluation/query.sql`).
 
 ## Checkpoint setup
