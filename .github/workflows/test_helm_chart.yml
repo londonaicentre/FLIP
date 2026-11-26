@@ -727,6 +727,9 @@ jobs:
         uses: helm/kind-action@v1
         with:
           cluster_name: flip-helm-test
+          # Pinned: the egress proof below needs a network that enforces NetworkPolicy, which this
+          # kind's default one does (FLIP#2079). The proof fails if a later version stops.
+          version: v0.30.0
 
       - name: Create namespace and secrets
         run: |
@@ -789,6 +792,20 @@ jobs:
         run: |
           kubectl get svc -n flip-trust
           kubectl get pods -n flip-trust
+
+      # The self-test's egress and drift checks, each run against a release it must pass and one it
+      # must not (FLIP#2079): the release as installed, a Deployment changed by hand, and
+      # the release confined to DNS-only egress.
+      - name: Prove the egress and drift checks
+        run: python3 trust/deploy/helm/ci/prove_node_checks.py --out build/node-checks
+
+      - name: Upload the check reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: node-check-reports
+          path: build/node-checks/
+          if-no-files-found: warn
 
       - name: Debug on failure
         if: failure()
