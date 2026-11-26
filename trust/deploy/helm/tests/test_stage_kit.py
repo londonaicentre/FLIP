@@ -277,13 +277,20 @@ def _helm_with_release(tmp_path, kit_host_path):
     return f"HELM_BIN={helm}"
 
 
-def test_a_restage_goes_where_the_live_release_mounts(nvflare_kit, tmp_path):
-    """FLIP#2113: a root added to a live trust's kit must not send the new kit where the FL client never looks."""
+def test_a_restage_elsewhere_than_the_live_release_mounts_is_refused(nvflare_kit, tmp_path):
+    """FLIP#2113: a root added to a live trust's kit must not send the new kit where the FL client never looks.
+
+    Refused rather than followed: stage-kit empties its target, so it never takes that path from the cluster.
+    """
     kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod")
     helm = _helm_with_release(tmp_path, "/opt/flip/fl-kit")
-    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm)
-    assert result.returncode == 0, result.stderr
-    assert '--dest "/opt/flip/fl-kit"' in result.stdout
-    assert "Keeping flClient.kitHostPath=/opt/flip/fl-kit" in result.stderr
-    moved = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm, "KIT_DEST=/srv/kit")
-    assert '--dest "/srv/kit"' in moved.stdout, "KIT_DEST still moves it"
+    refused = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm)
+    assert refused.returncode != 0
+    assert "mounts its kit at /opt/flip/fl-kit, and KIT_DEST defaults to /data/flip/ABC-prod/fl-kit" in refused.stderr
+    for dest in ("/opt/flip/fl-kit", "/srv/kit"):
+        named = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm, f"KIT_DEST={dest}")
+        assert f'--dest "{dest}"' in named.stdout, named.stderr
+    same = make_n_stage_kit(
+        nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", _helm_with_release(tmp_path, "/data/flip/ABC-prod/fl-kit")
+    )
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in same.stdout, "the release's own path needs no KIT_DEST"

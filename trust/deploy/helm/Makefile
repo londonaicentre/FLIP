@@ -39,9 +39,9 @@ include $(REPO_ROOT)/deploy/data_root.mk
 # of every shipped kit (trust/.env.example) and the path the Ansible EC2/on-prem plays
 # stage to. stage-kit and the deploys find the root only when they are given KIT.
 # Overriding it means also passing KIT_DEST=<same path> to the FIRST deploy, or the pod stays
-# Pending on a `hostPath type check failed` event naming the mounted path. Later
-# re-stages, deploys and upgrades keep the path the release mounts (KEEP_KIT_PATH below), so
-# setting a root on a deployed trust moves nothing until KIT_DEST is passed.
+# Pending on a `hostPath type check failed` event naming the mounted path. Later deploys
+# and upgrades keep the path the release mounts (KEEP_KIT_PATH below), and stage-kit refuses
+# another, so setting a root on a deployed trust moves nothing until KIT_DEST is passed.
 KIT_DEST ?= $(call data_root_or,fl-kit,/opt/flip/fl-kit)
 # KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
 # the FLARE image as 1000. Which backend is read from the kit ITSELF — a FLARE
@@ -179,20 +179,23 @@ ifeq ($(filter command environment override,$(origin KIT_DEST) $(origin FL_CLIEN
 KEEP_KIT_PATH = $$($(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
 	| python3 $(CHART_DIR)/scripts/keep_kit_path.py --default "$(FL_CLIENT_KIT_HOST_PATH)")
 endif
-# stage-kit re-stages a live release's kit where the release mounts it, not where KIT_DEST defaults:
-# a kit staged elsewhere would leave the FL client on the old credentials, with nothing failing.
+# A re-stage must reach the path a live release mounts, or the FL client keeps the old credentials
+# with nothing failing (e.g. a FLIP_DATA_ROOT added to its kit). stage-kit empties its target, so it
+# never takes that path from the cluster: when the two differ it stops and the operator names one.
 ifneq ($(and $(filter stage-kit,$(MAKECMDGOALS)),$(KUBE_CONTEXT)),)
 ifeq ($(filter command environment override,$(origin KIT_DEST)),)
-KIT_DEST := $(or $(shell $(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
-	| python3 $(CHART_DIR)/scripts/keep_kit_path.py --path --default "$(KIT_DEST)"),$(KIT_DEST))
+RELEASE_KIT_PATH := $(shell $(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
+	| python3 $(CHART_DIR)/scripts/keep_kit_path.py --path)
+ifneq ($(if $(RELEASE_KIT_PATH),$(filter-out $(KIT_DEST),$(RELEASE_KIT_PATH))),)
+$(error ❌  release $(RELEASE_NAME) mounts its kit at $(RELEASE_KIT_PATH), and KIT_DEST defaults to $(KIT_DEST): pass KIT_DEST=$(RELEASE_KIT_PATH) to re-stage it in place, or KIT_DEST=$(KIT_DEST) here and at the next deploy to move it)
+endif
 endif
 endif
 # stage-kit empties KIT_DEST before copying (see the recipe), so refuse the two values
 # where that would reach beyond the kit directory. An empty KIT_DEST would make the wipe
 # `find  -mindepth 1 -delete`, which walks the working directory, and `/` would walk the
-# node's root filesystem. Both are only reachable by an explicit override, or a release that
-# mounts one, but the wipe is the one step here that destroys rather than writes, so it gets a
-# parse-time guard.
+# node's root filesystem. Both are only reachable by an explicit override, but the wipe is
+# the one step here that destroys rather than writes, so it gets a parse-time guard.
 ifneq ($(filter stage-kit,$(MAKECMDGOALS)),)
 ifeq ($(strip $(KIT_DEST)),)
 $(error ❌  KIT_DEST must not be empty — stage-kit clears it before copying)

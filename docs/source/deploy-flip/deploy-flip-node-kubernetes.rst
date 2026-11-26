@@ -336,9 +336,10 @@ the FL client starts.
   ``FL_KIT_DIR`` says. It defaults to ``fl-kit/`` under the kit's ``FLIP_DATA_ROOT``, else ``/opt/flip/fl-kit``.
   ``KIT`` and ``HUB`` name the kit file the root is read from, so pass the same ones here and at the deploy; a
   ``KIT`` that names no kit file is refused. Any previous kit there is removed first. To use another path, pass
-  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the first deploy. Once the release exists, re-stages, deploys
-  and upgrades all keep the path it already mounts, even after the kit gains a ``FLIP_DATA_ROOT``; pass ``KIT_DEST``
-  to both again only to move the kit.
+  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the first deploy. Once the release exists, deploys and upgrades
+  keep the path it already mounts, even after the kit gains a ``FLIP_DATA_ROOT``, and ``stage-kit`` refuses to stage
+  anywhere else unless you name the path: ``KIT_DEST=<the mounted path>`` re-stages in place, and a new
+  ``KIT_DEST`` passed to ``stage-kit`` and to the next deploy moves the kit.
 - ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
   to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
