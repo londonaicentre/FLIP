@@ -191,19 +191,20 @@ if [ "$fl_backend" = "nvflare" ]; then
 else
     client_owner="${flip_uid:-49999}:${flip_gid:-49999}"
     client_kit="fl-kit/net-1"
+    flower_source="s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1"
     certs_target="$KIT_STAGE_DIR/net-1/certificates"
     mkdir -p "$certs_target" "$KIT_STAGE_DIR/net-1/keys"
-    aws_cmd s3 sync "s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/certificates/" "$certs_target/"
-    if [ -z "$(ls -A "$certs_target" 2>/dev/null)" ]; then
-        log_error "Sync produced empty certificates at $certs_target."
-        log_error "  Source: s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/certificates/"
+    # The two files a SuperNode needs, by name. The prefix also holds the SuperLink's TLS key and
+    # every other slot's credential, so it is never synced whole.
+    if ! aws_cmd s3 cp "$flower_source/certificates/ca.crt" "$certs_target/" ||
+        ! aws_cmd s3 cp "$flower_source/keys/supernode_credentials_$slot_number" "$KIT_STAGE_DIR/net-1/keys/" ||
+        [ ! -s "$certs_target/ca.crt" ] ||
+        [ ! -s "$KIT_STAGE_DIR/net-1/keys/supernode_credentials_$slot_number" ]; then
+        log_error "Could not stage the Flower kit from $flower_source/ (slot $slot_number)."
         log_error "  Verify FLOWER_KIT_DATE in $KIT_FILE matches an actual S3 date prefix:"
         log_error "    aws s3 ls s3://$bucket_name/$fl_prefix/"
         exit 1
     fi
-    aws_cmd s3 cp \
-        "s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/keys/supernode_credentials_$slot_number" \
-        "$KIT_STAGE_DIR/net-1/keys/"
 fi
 log_success "FL kit staged at $KIT_STAGE_DIR"
 

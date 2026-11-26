@@ -109,7 +109,9 @@ NOT_APPLICABLE = {
     },
     "compose (development)": {
         **COMPOSE_BOTH,
-        "it dials the local hub and FL server": "CENTRAL_HUB_API_URL NLB_SUBDOMAIN FL_SERVER_PORT FL_EDGE_PORT",
+        "it dials the local hub and FL server": (
+            "CENTRAL_HUB_API_URL NLB_SUBDOMAIN FL_SERVER_PORT FL_EDGE_PORT FL_EDGE_PORT_OVERRIDE"
+        ),
     },
     "helm": {
         "host port or bind address; the chart publishes Services": HOST_PORTS,
@@ -136,7 +138,7 @@ NOT_APPLICABLE = {
         "host port or bind address; SPCS endpoints": HOST_PORTS,
         "host directory; SPCS volumes and stages": (
             "ORTHANC_STORAGE_DIR BASE_IMAGES_DOWNLOAD_DIR XNAT_DATA_DIR COHORT_SNAPSHOT_STORAGE_DIR OMOP_DATA_DIR "
-            "OMOP_VOCAB_DIR"
+            "OMOP_VOCAB_DIR FLIP_DATA_ROOT"
         ),
         "derived on SPCS from the trust's object names": (
             "OMOP_BACKEND SNOWFLAKE_WAREHOUSE SNOWFLAKE_DATABASE SNOWFLAKE_SCHEMA SNOWFLAKE_ROLE "

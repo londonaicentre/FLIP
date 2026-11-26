@@ -29,6 +29,7 @@ PROJECT_ID_BLOCKS = {
     "prostate_project": 3_000_000,
     # 4_000_000 is pathology_project's (FLIP#1181, in flight when brain_mri was added — FLIP#1221).
     "brain_mri_project": 5_000_000,
+    "arkplus_project": 6_000_000,
 }
 BLOCK_SIZE = 1_000_000
 

@@ -49,34 +49,28 @@ def override_deps(mock_db):
 
 class TestGetUsers:
     @patch("flip_api.user_services.get_users.get_user_role_data")
-    @patch("flip_api.user_services.get_users.get_total_pages")
-    @patch("flip_api.user_services.get_users.get_paging_details")
     @patch("flip_api.user_services.get_users.has_permissions")
     def test_get_users_success(
         self,
         mock_has_permissions,
-        mock_paging_details,
-        mock_get_total,
         mock_get_user_role_data,
         fake_idp,
     ):
         mock_has_permissions.return_value = True
 
-        mock_paging_details.return_value = MagicMock(page_number_int=1, page_size_int=2)
         fake_idp.list_users.return_value = ["user1", "user2"]
         mock_get_user_role_data.return_value = [
             IUser(id=uuid4(), email="user1@example.com", is_disabled=False, roles=[]),
             IUser(id=uuid4(), email="user2@example.com", is_disabled=True, roles=[]),
         ]
-        mock_get_total.return_value = 1
 
-        response = client.get("/api/users")
+        response = client.get("/api/users", params={"pageSize": 2})
 
         assert response.status_code == status.HTTP_200_OK
         body = response.json()
 
         assert body["page"] == 1
-        assert body["pageSize"] == 1
+        assert body["pageSize"] == 2
         assert body["totalPages"] == 1
         assert body["totalRecords"] == 2
         assert body["data"] == [

@@ -287,3 +287,26 @@ def test_sync_project_studies_never_replaces_the_file_when_it_finds_no_project(t
     calls = _sync_project_studies(tmp_path, snapshot_dir, fails=True)
 
     assert not any("project_studies" in c or "configmap" in c for c in calls), calls
+
+
+def test_a_first_deploy_mounts_the_kit_under_the_kits_data_root(tmp_path):
+    """No release yet, so nothing is kept: the kit path is fl-kit/ under FLIP_DATA_ROOT (FLIP#2113), where
+    stage-kit with the same KIT put it."""
+    out = subprocess.run(
+        [
+            "make",
+            "-n",
+            "-C",
+            str(CHART_DIR),
+            "deploy",
+            "KIT=ABC",
+            "HUB=stag",
+            f"KIT_FILE={_kit(tmp_path, 'FLIP_DATA_ROOT=/data/flip/ABC-stag')}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.replace("\\\n", " ")
+    install = next(row for row in out.splitlines() if "upgrade --install" in row)
+    assert "--set flClient.kitHostPath=/data/flip/ABC-stag/fl-kit" in install, install
+    assert '--default "/data/flip/ABC-stag/fl-kit"' in install, install

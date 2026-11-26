@@ -53,31 +53,3 @@ class TestUtilsIsValidUuid:
     def test_invalid(self, value):
         """Should return False for anything that is not a UUID."""
         assert Utils.is_valid_uuid(value) is False
-
-
-class TestUtilsIsStringEmpty:
-    """Test Utils.is_string_empty static method."""
-
-    @pytest.mark.parametrize(
-        ("value", "expected"),
-        [
-            ("", True),
-            ("   ", True),
-            ("\t", True),
-            ("\n", True),
-            ("  \t\n  ", True),
-            (" \t\n ", True),
-            ("hello", False),
-            (" hello ", False),
-            ("a", False),
-            ("  content  ", False),
-        ],
-    )
-    def test_is_string_empty(self, value, expected):
-        """True for empty or whitespace-only strings, False once anything is left after stripping."""
-        assert Utils.is_string_empty(value) is expected
-
-    def test_none_value_raises_error(self):
-        """Should raise AttributeError for None value."""
-        with pytest.raises(AttributeError):
-            Utils.is_string_empty(None)

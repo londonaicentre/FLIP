@@ -18,7 +18,7 @@
 #
 #   flip-api         — REST API (container port 8000)
 #   fl-api-net-1     — FL network API (container port 8000)
-#   fl-server-net-1  — FL server (container port 8002 + gRPC)
+#   fl-server-net-1  — FL server (container port 8002)
 #
 # Images are tagged with var.docker_image_tag for flip-api and
 # var.flip_fl_image_tag for FL services. Env vars come from
@@ -374,7 +374,7 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       ] : null
       linuxParameters = var.fl_backend == "flower" ? { initProcessEnabled = true } : null
 
-      # FLARE serves client gRPC + admin multiplexed on one port. Flower's
+      # FLARE serves client and admin traffic on one port. Flower's
       # SuperLink serves its HTTP APIs on 8000 (fl-api submits runs to the
       # Control API there and reads /health); the NLB's 9092 is the fleet
       # proxy's, below.

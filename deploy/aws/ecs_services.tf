@@ -198,8 +198,8 @@ resource "aws_ecs_service" "fl_server_net_1" {
   }
 
   # Register the running task's ENI IP with the NLB target group so FL
-  # clients hit the Fargate task over gRPC. NLB on TCP forwards the gRPC
-  # stream untouched: the internal NLB's TG (fl_ingress_lza.tf), reached via
+  # clients reach the Fargate task. NLB on TCP forwards the TLS stream
+  # untouched: the internal NLB's TG (fl_ingress_lza.tf), reached via
   # the networking account's edge NLB over the TGW (FLIP#749).
   load_balancer {
     target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
