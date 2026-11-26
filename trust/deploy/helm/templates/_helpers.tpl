@@ -33,20 +33,18 @@ Usage: {{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag 
 
 {{/*
 The FLIP git ref the trust-seed hook fetches its tools from (FLIP#2118): trustData.seed.sourceRef
-when set, else the ref of the release the site runs, read from the tag trust-api runs (the
-release pin every FLIP image follows). The tools then match the hook image and the schema they
-were released with; a moving `develop` default broke every v0.15.0 site's upgrade the day
-develop moved to Python 3.13.
-vX.Y.Z (and -rc.N) are git tags, sha-<sha> names its commit, `prod` is built from main and
-`stag`/`dev` from develop. Any other tag names no ref, so the render fails rather than guess.
+when set, else the ref of the tag trust-api runs, so the tools are the ones that release shipped
+with its hook image and schema. A release tag (the shape of site_upgrade.py's _RELEASE_TAG /
+_SHA_TAG) names its own git tag, sha-<sha> its commit, and a branch-built tag its branch. Any other
+tag, a local :dev build for one, is not mapped, so the render fails rather than guess.
 */}}
 {{- define "flip-trust.seedSourceRef" -}}
 {{- $tag := include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.trustApi.image.tag) -}}
+{{- $branch := dict "prod" "main" "main" "main" "stag" "develop" "develop" "develop" -}}
 {{- if .Values.trustData.seed.sourceRef -}}{{ .Values.trustData.seed.sourceRef }}
-{{- else if regexMatch "^v[0-9]+\\.[0-9]+\\.[0-9]+(-rc\\.[0-9]+)?$" $tag -}}{{ $tag }}
-{{- else if regexMatch "^sha-[0-9a-f]{7,40}$" $tag -}}{{ trimPrefix "sha-" $tag }}
-{{- else if eq $tag "prod" -}}main
-{{- else if has $tag (list "stag" "dev") -}}develop
+{{- else if regexMatch "^v[0-9]+\\.[0-9]+\\.[0-9]+([-.][0-9A-Za-z.-]+)?$" $tag -}}{{ $tag }}
+{{- else if regexMatch "^sha-[0-9a-f]{7}$" $tag -}}{{ trimPrefix "sha-" $tag }}
+{{- else if hasKey $branch $tag -}}{{ get $branch $tag }}
 {{- else -}}{{ fail (printf "trustData.seed.sourceRef is required: the image tag %q names no FLIP git ref to fetch the seed tools from" $tag) }}
 {{- end -}}
 {{- end }}

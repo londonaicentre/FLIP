@@ -43,7 +43,6 @@
 set -euo pipefail
 
 WORK_DIR="${WORK_DIR:-/work}"
-FLIP_REF="${FLIP_REF:-develop}"
 HF_TRUST_DATA_REPO="${HF_TRUST_DATA_REPO:-aicentreflip/trust-data}"
 # Only projects the dataset publishes BOTH tables and a DICOM set for: one list drives both
 # halves, and since FLIP#1221 spleen and brain_mri publish tables only (their DICOMs are
@@ -51,8 +50,8 @@ HF_TRUST_DATA_REPO="${HF_TRUST_DATA_REPO:-aicentreflip/trust-data}"
 PROJECTS="${PROJECTS:-cxr_project}"
 NUM_TRUSTS="${NUM_TRUSTS:-2}"
 VOCAB_DICOM_BUNDLE="${VOCAB_DICOM_BUNDLE:-vocab_dicom_paulnagy_20260109}"
-TOOLS_SPEC="${TOOLS_SPEC:-omop-db-tools @ https://github.com/londonaicentre/FLIP/archive/${FLIP_REF}.tar.gz#subdirectory=trust/omop-db}"
-SEEDER="${SEEDER:-https://raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/orthanc/seed_orthanc.py}"
+TOOLS_SPEC="${TOOLS_SPEC:-omop-db-tools @ https://github.com/londonaicentre/FLIP/archive/${FLIP_REF:?the FLIP git ref to fetch the tools at, or set TOOLS_SPEC}.tar.gz#subdirectory=trust/omop-db}"
+SEEDER="${SEEDER:-https://raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF:?the FLIP git ref to fetch the seeder at, or set SEEDER}/trust/orthanc/seed_orthanc.py}"
 : "${TRUST_DATA_VERSION:?the dataset tag to seed at (trust/.data_version)}"
 : "${SOURCE_TRUST:?the source_trust partition this trust receives}"
 
