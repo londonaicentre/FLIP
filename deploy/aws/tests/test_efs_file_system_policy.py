@@ -150,14 +150,17 @@ def test_policy_allows_only_the_hub_fl_task_roles_through_access_points() -> Non
 
     for chunk in allows:
         principal_arns = set(re.findall(r"aws_iam_role\.[A-Za-z0-9_]+\.arn", chunk))
-        assert '"aws:PrincipalArn"' in chunk and principal_arns == set(ALLOWED_ROLE_REFS), (
+        assert '"aws:PrincipalArn"' in chunk, "the Allow statement must be scoped with aws:PrincipalArn"
+        assert principal_arns == set(ALLOWED_ROLE_REFS), (
             "the Allow statement must be scoped with aws:PrincipalArn to exactly "
             f"{sorted(ALLOWED_ROLE_REFS)}, found {sorted(principal_arns)}"
         )
-        assert '"elasticfilesystem:AccessPointArn"' in chunk and "aws_efs_access_point.flip_fl" in chunk, (
+        access_point_msg = (
             "the Allow statement must require elasticfilesystem:AccessPointArn to be one of the "
             "declared access points, so a mount of the file system root is refused"
         )
+        assert '"elasticfilesystem:AccessPointArn"' in chunk, access_point_msg
+        assert "aws_efs_access_point.flip_fl" in chunk, access_point_msg
 
 
 def test_policy_grants_root_access_to_nobody() -> None:
@@ -181,13 +184,15 @@ def test_every_efs_mount_uses_tls_and_iam_authorization() -> None:
         for body in _blocks(source, "efs_volume_configuration"):
             checked += 1
             assert re.search(r'transit_encryption\s*=\s*"ENABLED"', body), (
-                f"an efs_volume_configuration in {path.name} does not set transit_encryption = \"ENABLED\"; "
+                f'an efs_volume_configuration in {path.name} does not set transit_encryption = "ENABLED"; '
                 "the file system policy denies connections that are not encrypted in transit"
             )
             authorization = _blocks(body, "authorization_config")
-            assert authorization and re.search(r'iam\s*=\s*"ENABLED"', authorization[0]), (
+            iam_msg = (
                 f"an efs_volume_configuration in {path.name} does not set "
                 'authorization_config { iam = "ENABLED" }; without it the mount is anonymous and the '
                 "file system policy's principal-scoped Allow cannot match it"
             )
+            assert authorization, iam_msg
+            assert re.search(r'iam\s*=\s*"ENABLED"', authorization[0]), iam_msg
     assert checked >= 4, f"expected every FL task's EFS volume to be checked, found only {checked}"
