@@ -58,8 +58,9 @@ KIND_TO_RESOURCE = {
 # the render against what is live before it applies.
 WRITE_VERBS = {"get", "list", "create", "update", "patch", "delete"}
 
-# The chart refuses the agent on a trust that runs XNAT until FLIP#2071, so every render that switches the agent on
-# switches XNAT off.
+# Switching the agent on. XNAT is off in most variants only to keep the render small; the
+# `with-xnat` variant below is the one that checks the Role against XNAT's kinds and the kinds of
+# the pre-upgrade dump hook that runs beside it (FLIP#2071).
 AGENT_ON = ("--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=false")
 
 # The trust's per-image pins and the kit-derived values differ only in what they enable, so
@@ -76,9 +77,9 @@ VARIANTS = [
             "podDisruptionBudget.enabled=true",
         ],
     ),
-    # The agent cannot be rendered beside XNAT until FLIP#2071, so this variant checks the XNAT kinds against the
-    # Role rendered without XNAT (the Role does not depend on it): the Role is ready when the guard goes.
-    ("with-xnat", ["--set", "xnat.enabled=true"]),
+    # The agent beside XNAT, which is every production trust: the Role has to cover XNAT's own
+    # kinds and those of the xnat-db dump hook the upgrade runs (FLIP#2071).
+    ("with-xnat", ["--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=true"]),
 ]
 
 
@@ -257,7 +258,7 @@ def test_kit_secret_name_overrides_the_default():
 def test_the_role_covers_every_kind_the_chart_renders(variant, extra):
     """The rot guard: a template that renders a kind the Role lacks fails here, not on a live trust."""
     docs = _render(*extra)
-    rules = _role_rules(docs if variant != "with-xnat" else _render(*AGENT_ON))
+    rules = _role_rules(docs)
     missing = []
     for doc in docs:
         kind = doc.get("kind")
@@ -396,11 +397,15 @@ def _render_result(*extra: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=CHART_DIR)
 
 
-def test_the_agent_is_refused_on_a_trust_that_runs_xnat():
-    """Until FLIP#2071 the agent cannot run xnat-init or the xnat-db dump, so the chart refuses it beside XNAT."""
-    out = _render_result("--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=true")
-    assert out.returncode != 0
-    assert "autoUpgrade.enabled cannot be used with XNAT until FLIP#2071" in out.stderr
+def test_the_agent_runs_on_a_trust_that_runs_xnat():
+    """FLIP#2071: the agent runs xnat-init, and the chart dumps xnat-db before a major change, so
+    an XNAT trust — which is every production trust — is upgraded like any other."""
+    assert _render_result("--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=true").returncode == 0
+    docs = _render("--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=true")
+    names = {str(d["metadata"]["name"]) for d in docs}
+    assert any(n.endswith("-upgrade-agent") for n in names)
+    assert any(n.endswith("-xnat-web") for n in names)
+    assert any(n.endswith("-xnat-db-migrate") for n in names), "the dump hook renders beside the agent"
 
 
 def test_xnat_alone_and_the_agent_without_xnat_still_render():
