@@ -127,8 +127,8 @@ imaging-api and the FL client:
 Nothing has been changed at that point.
 
 **Cause.** A checkout older than v0.16 asks whether you can write the folder that holds each data directory,
-where earlier releases wrote a seed marker. On a site that root installed, that folder is root's. Current
-releases write nothing there and no longer ask.
+where a first install writes a seed marker. On a site that root installed, that folder is root's. From v0.16
+the upgrade no longer asks, and releases after FLIP#2111 write no marker at all.
 
 **Fix.** On a checkout older than v0.16, read the checklist once on its own and confirm this is the only failing
 row:

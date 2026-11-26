@@ -32,11 +32,11 @@ SCRIPT = Path(__file__).resolve().parents[1] / "seed_trust.sh"
 VOCAB = "vocab_dicom_test"
 
 
-def _orthanc(studies: int) -> ThreadingHTTPServer:
+def _orthanc(studies: int, status: int = 200) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802 — the stdlib's hook name
             body = json.dumps({"CountStudies": studies}).encode()
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(body)
@@ -49,18 +49,24 @@ def _orthanc(studies: int) -> ThreadingHTTPServer:
     return server
 
 
-def _seed(tmp_path: Path, omop_holds: bool, studies: int, **env: str) -> tuple[str, str]:
-    """Run the script; return what the stub uv was asked to run, and the script's output."""
+def _seed(
+    tmp_path: Path, omop_holds: bool | str, studies: int, status: int = 200, ok: bool = True, **env: str
+) -> tuple[str, str]:
+    """Run the script; return what the stub uv was asked to run, and the script's output.
+
+    ``omop_holds`` is the OMOP probe's answer (True/False for yes/no, or any other text it might print);
+    ``status`` what Orthanc answers /statistics with; ``ok`` whether the script must succeed.
+    """
+    answer = ("yes" if omop_holds else "no") if isinstance(omop_holds, bool) else omop_holds
     calls = tmp_path / "uv.log"
     stub = tmp_path / "bin" / "uv"
     stub.parent.mkdir()
     stub.write_text(
-        f'#!/bin/sh\necho "uv $*" >> "{calls}"\n'
-        f'case "$*" in *--holds-data*) echo {"yes" if omop_holds else "no"};; esac\nexit 0\n'
+        f'#!/bin/sh\necho "uv $*" >> "{calls}"\ncase "$*" in *--holds-data*) echo {answer};; esac\nexit 0\n'
     )
     stub.chmod(0o755)
     (tmp_path / "work" / VOCAB).mkdir(parents=True)  # present, so nothing is downloaded
-    server = _orthanc(studies)
+    server = _orthanc(studies, status)
     port = str(server.server_address[1])
     try:
         result = subprocess.run(
@@ -90,8 +96,8 @@ def _seed(tmp_path: Path, omop_holds: bool, studies: int, **env: str) -> tuple[s
         )
     finally:
         server.shutdown()
-    assert result.returncode == 0, result.stdout + result.stderr
-    return (calls.read_text() if calls.exists() else ""), result.stdout
+    assert (result.returncode == 0) == ok, result.stdout + result.stderr
+    return (calls.read_text() if calls.exists() else ""), result.stdout + result.stderr
 
 
 LOAD = "omop_db_tools.import_tables --trust-index 2 --num-trusts"
@@ -138,3 +144,23 @@ def test_forcing_the_dicom_vocabulary_still_reaches_it(tmp_path, seeded):
     calls, _ = _seed(tmp_path, omop_holds=seeded, studies=0, FORCE_DICOM_VOCAB="1")
     assert "omop_db_tools.load_dicom_vocab --vocab-dir" in calls, calls
     assert "--force" in calls, calls
+
+
+def test_forcing_the_vocabulary_on_a_seeded_database_reloads_nothing_else(tmp_path):
+    """The repair must not quietly move the rows to the current pin while Orthanc stays where it was."""
+    calls, _ = _seed(tmp_path, omop_holds=True, studies=12, FORCE_DICOM_VOCAB="1")
+    assert FETCH not in calls, calls
+    assert LOAD not in calls, calls
+
+
+def test_a_probe_answer_that_is_neither_yes_nor_no_stops_the_seed(tmp_path):
+    """Stray output must never read as "empty" and reload a store that holds data."""
+    calls, out = _seed(tmp_path, omop_holds="warning: something", studies=12, ok=False)
+    assert "not yes or no" in out, out
+    assert LOAD not in calls, calls
+
+
+def test_a_refused_orthanc_login_fails_at_once(tmp_path):
+    """A wrong login is not an Orthanc still starting: no five minutes of retries ending in "not reachable"."""
+    _, out = _seed(tmp_path, omop_holds=True, studies=0, status=401, ok=False)
+    assert "refused the login (401)" in out, out

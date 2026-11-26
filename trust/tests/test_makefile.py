@@ -219,6 +219,13 @@ class SampleDataOff(unittest.TestCase):
         assert "GUARD-PASSED" in result.stdout, result.stdout
 
 
+def _command(out: str, start: str) -> str:
+    """The make invocation in ``out`` beginning ``start``, its backslash-continued lines joined."""
+    match = re.search(re.escape(start) + r"(?:[^\n]*\\\n)*[^\n]*", out)
+    assert match, f"no {start!r} in:\n{out}"
+    return match.group(0)
+
+
 class EnsureSeeded(unittest.TestCase):
     """ensure-seeded loads only an empty store, asking the store itself rather than a marker file (FLIP#2111)."""
 
@@ -250,11 +257,14 @@ class EnsureSeeded(unittest.TestCase):
     def test_empty_stores_are_seeded_after_probes_with_the_kit_login_and_port(self):
         """Image rows, not persons: load-synthea-ehr adds persons to a database no project was seeded into."""
         asked, out = self._ensure("", "0")
+        # This trust's own omop-db (slot 9, project trust9): a second trust on the host must not read
+        # the first one's database as its own and skip its seed.
+        assert "ps -q -f label=com.docker.compose.project=trust9 -f label=com.docker.compose.service=omop-db" in asked
         assert "exec cid psql -U site_user -d site_db -tAc SELECT 1 FROM omop.image_occurrence LIMIT 1" in asked
         assert "-u o:p http://127.0.0.1:8099/statistics" in asked, asked
         assert self.OMOP_SEED in out, out
         assert self.PACS_SEED in out, out
-        assert "CLEAR=1 " not in out.split(self.PACS_SEED, 1)[1], "an empty PACS has nothing to clear"
+        assert "CLEAR=" not in _command(out, self.PACS_SEED), "an empty PACS has nothing to clear"
 
     def test_stores_that_hold_data_are_left_alone_even_after_a_data_version_bump(self):
         """A seeded trust re-seeds only when asked: the release checklist names the step when the pin moves."""
@@ -275,6 +285,26 @@ class EnsureSeeded(unittest.TestCase):
         _, out = self._ensure("", "")
         assert self.OMOP_SEED in out, out
         assert self.PACS_SEED in out, out
+
+
+class ReseedClearsThePacs(unittest.TestCase):
+    """`seed … CLEAR=1` is how a Compose trust moves to a new data version (FLIP#2111): Orthanc never
+    overwrites an instance it holds, so without --clear-projects the PACS stays on the old cut."""
+
+    def test_clear_reaches_seed_orthanc(self):
+        out = dry_run("seed", "CLEAR=1", kit=EnsureSeeded.KIT_DB)
+        assert "CLEAR=1" in _command(out, EnsureSeeded.PACS_SEED), out
+
+    def test_the_orthanc_seeder_is_told_to_clear(self):
+        orthanc = Path(__file__).resolve().parents[1] / "orthanc"
+        result = subprocess.run(
+            ["make", "-n", "-C", str(orthanc), "seed-orthanc", "CLEAR=1", "PROJECTS=cxr_project"],
+            capture_output=True, text=True, timeout=60,
+            env={k: v for k, v in os.environ.items() if k not in {"MAKEFLAGS", "MAKELEVEL", "MFLAGS"}},
+        )  # fmt: skip
+        assert result.returncode == 0, result.stderr
+        assert "seed_orthanc.py --trust-index 1 --projects cxr_project" in result.stdout, result.stdout
+        assert "--clear-projects" in result.stdout, result.stdout
 
 
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")

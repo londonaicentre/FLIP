@@ -371,7 +371,7 @@ def install(args: argparse.Namespace) -> None:
         print(f"        make up-onprem-trust KIT={code}{hub}")
     else:
         print("   Next, from the repo root, with no FL job running (never up-onprem-trust on a running trust:")
-        print("   it resets XNAT and re-seeds):")
+        print("   it resets XNAT):")
         print(f"        make -C trust down-fl-clients-kit KIT={code} HUB={args.env}   # to remount the new FL kit")
         print(f"        make upgrade-onprem-trust KIT={code} YES=1{hub}   # recreates what changed, data intact")
     print()

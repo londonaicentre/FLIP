@@ -14,7 +14,7 @@ bring-up creates every network it needs (FLIP#1344), and the targets that drive 
 project refuse one that another checkout created (FLIP#1227).
 
 `make upgrade-onprem-trust` must run the readiness checklist and then reach the trust-level
-upgrade, never the first-install steps (`ensure-seeded` re-seeds OMOP / Orthanc, `xnat-reset`
+upgrade, never the first-install steps (`ensure-seeded` seeds an empty OMOP / Orthanc, `xnat-reset`
 wipes the XNAT archive and database).
 
 Usage:

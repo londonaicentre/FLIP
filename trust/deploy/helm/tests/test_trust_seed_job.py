@@ -93,9 +93,7 @@ def test_the_half_loaded_vocabulary_can_be_reloaded_from_the_chart():
     assert "- name: FORCE_DICOM_VOCAB\n" in SEED_JOB.read_text()
     assert VALUES["trustData"]["seed"]["forceDicomVocab"] is False
     script = (CHART_DIR.parents[2] / "trust" / "seed_trust.sh").read_text()
-    assert (
-        'if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi'
-    ) in script
+    assert '[ "${FORCE_DICOM_VOCAB:-}" = "1" ] && mode=--force' in script
 
 
 def test_the_shared_script_installs_the_repository_loaders_without_git():

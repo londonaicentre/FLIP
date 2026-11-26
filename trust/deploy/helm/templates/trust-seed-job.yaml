@@ -18,8 +18,8 @@ roles on first start; Orthanc its index) and this post-install/post-upgrade hook
 
 Each half seeds only a store that is still empty — an omop-db with no imaging row, an Orthanc with
 no study (FLIP#2111) — so an upgrade of a seeded trust fetches and loads nothing, and a store that is
-empty again (a recreated PVC) is filled on the next one. `make -C trust/deploy/helm reseed` runs this
-Job once with trustData.seed.reseed=true to move a seeded trust to a new trustData.version. Weight 6 — after the vocab-load hook (5), so on a cluster that loads the licensed
+empty again (a recreated PVC) is filled on the next one. `make -C trust/deploy/helm reseed KIT=<CODE>`
+runs this Job once with trustData.seed.reseed=true to move a seeded trust to a new trustData.version. Weight 6 — after the vocab-load hook (5), so on a cluster that loads the licensed
 vocabulary the rows land in a constrained database, which the loader handles (the DICOM vocabulary
 goes in first, so every imaging concept the rows reference resolves).
 
@@ -48,7 +48,11 @@ metadata:
     # it. A FAILED Job is kept, with its log, until the next install/upgrade replaces it.
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
-  backoffLimit: 2
+  # No retry (FLIP#2111): a store a first attempt left part-loaded is no longer empty, so a retry
+  # would skip it and report success, and the hook-succeeded policy would delete the failed attempt's
+  # log with it. The downloads and uploads already retry inside the script; a failure here fails the
+  # release, its log is kept, and `make -C trust/deploy/helm reseed KIT=<CODE>` finishes the load.
+  backoffLimit: 0
   template:
     metadata:
       labels:

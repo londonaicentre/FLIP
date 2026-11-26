@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""Snowflake OMOP seeding: SQL generation, the --if-needed check, partition filtering, unseed (FLIP#1580).
+"""Snowflake OMOP seeding: SQL generation, the --holds-data check, partition filtering, unseed (FLIP#1580).
 
 Nothing here touches a Snowflake account, a network or the ``snow`` CLI: the module's whole
 design is that the SQL is produced first and executed (or printed) second, so the interesting
@@ -80,7 +80,7 @@ def test_the_session_pins_the_loader_role(names: seed.Names) -> None:
     assert seed.sql_session_preamble(names)[0] == "USE ROLE FLIP_GSTT_OMOP_LOADER;"
 
 
-# ── --if-needed: seed only an empty OMOP (FLIP#2111) ──────────────────────────────────────
+# ── --holds-data: seed only an empty OMOP (FLIP#2111) ──────────────────────────────────────
 
 
 def _missing(table: str):
@@ -394,7 +394,7 @@ def test_the_rows_are_counted_after_the_load(canonical: Path, monkeypatch: pytes
 
 
 def test_an_empty_load_fails_the_run_and_says_to_re_seed(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """--if-needed would skip the half-loaded OMOP next time, so the error names the explicit seed."""
+    """ensure-seeded-snowflake would skip the half-loaded OMOP next time, so the error names the explicit seed."""
     _fake_snowflake(monkeypatch, _counts(person=0))
 
     with pytest.raises(seed.SnowflakeSeedError, match="person: 0 of 2.*Re-run seed-omop-snowflake"):
@@ -415,15 +415,15 @@ def test_holds_data_answers_and_does_nothing_else(
     assert scripts == [], "nothing is staged, loaded or counted"
 
 
-def _ensure_seeded_snowflake(tmp_path: Path, answer: str) -> str:
-    """`make -n ensure-seeded-snowflake` with the probe (uv) stubbed to print ``answer``."""
+def _ensure_seeded_snowflake(tmp_path: Path, answer: str, *args: str) -> str:
+    """`make -n ensure-seeded-snowflake` with the probe (uv) stubbed to print ``answer`` and log each call."""
     stub = tmp_path / "uv"
-    stub.write_text(f"#!/bin/sh\necho {answer}\n")
+    stub.write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/uv.log"\necho {answer}\n')
     stub.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if k not in {"MAKEFLAGS", "MAKELEVEL", "MFLAGS"}}
     env["PATH"] = f"{tmp_path}:{env['PATH']}"
     return subprocess.run(
-        ["make", "-n", "-C", str(OMOP_DB_DIR), "ensure-seeded-snowflake", "KIT=GSTT", "SNOW_CONNECTION=review"],
+        ["make", "-n", "-C", str(OMOP_DB_DIR), "ensure-seeded-snowflake", "KIT=GSTT", "SNOW_CONNECTION=review", *args],
         capture_output=True, text=True, env=env, check=True,
     ).stdout  # fmt: skip
 
@@ -435,6 +435,14 @@ def test_ensure_seeded_snowflake_fetches_nothing_for_a_seeded_trust(tmp_path: Pa
     assert "\n✅ OMOP (FLIP_TRUST_GSTT) already holds data" in out, out
     assert "omop_db_tools.dataset fetch" not in out, f"the dataset was fetched for a seeded trust:\n{out}"
     assert "--vocab-dir" not in out, f"the seed ran for a seeded trust:\n{out}"
+
+
+def test_a_dry_run_asks_nothing_and_prints_the_seed(tmp_path: Path) -> None:
+    """DRY_RUN=1 prints the SQL and connects to nothing, so the probe is not run either."""
+    out = _ensure_seeded_snowflake(tmp_path, "yes", "DRY_RUN=1")
+    assert not (tmp_path / "uv.log").exists(), "the probe connected to Snowflake on a dry run"
+    assert "--vocab-dir" in out, out
+    assert "--dry-run" in out, out
 
 
 def test_ensure_seeded_snowflake_seeds_an_empty_trust(tmp_path: Path) -> None:

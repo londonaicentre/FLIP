@@ -715,7 +715,7 @@ endef
 #
 # Deliberately NOT up-trust, and not restart-trust: up-trust is the first-install verb,
 # whose up-xnat step runs xnat-reset (wiping the XNAT archive and database) and whose
-# ensure-seeded step can replace the data volumes. A policy edit has no business going
+# ensure-seeded step seeds an empty OMOP or PACS. A policy edit has no business going
 # anywhere near either. Nor does it pull images or pre-create data dirs: --pull never keeps
 # a dev compose's pull_policy: always from swapping the image under the edit, and the net
 # dirs of a live trust already exist (as in _upgrade-trust-apply).
@@ -1042,7 +1042,7 @@ else
 	else \
 	  $(MAKE) seed-omop KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) || exit 1; \
 	fi; \
-	if curl -fs -u "$(ORTHANC_USERNAME):$(ORTHANC_PASSWORD)" "http://127.0.0.1:$(PACS_UI_PORT)/statistics" 2>/dev/null \
+	if curl -fs --max-time 30 -u "$(ORTHANC_USERNAME):$(ORTHANC_PASSWORD)" "http://127.0.0.1:$(PACS_UI_PORT)/statistics" 2>/dev/null \
 	    | grep -Eq '"CountStudies"[[:space:]]*:[[:space:]]*[1-9]'; then \
 	  echo "✅ PACS ($(KIT)) already holds studies, left as they are (re-seed: make -C trust seed-orthanc KIT=$(KIT) CLEAR=1)"; \
 	else \

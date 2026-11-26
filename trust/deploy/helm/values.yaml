@@ -97,7 +97,7 @@ trustData:
   # both stores start on empty PVCs and are filled here. Each half seeds only a store that is still
   # empty (FLIP#2111): an omop-db with no imaging row, an Orthanc with no study. So an upgrade of a
   # seeded trust fetches and loads nothing, and a trustData.version bump reaches it only through an
-  # explicit `make -C trust/deploy/helm reseed`. The licensed core vocabulary is still omopDb.vocabLoad.
+  # explicit `make -C trust/deploy/helm reseed KIT=<CODE>`. The licensed core vocabulary is still omopDb.vocabLoad.
   seed:
     enabled: true
     omop: true
@@ -135,11 +135,12 @@ trustData:
     # killed between them leaves a database that reports itself loaded while holding an
     # incomplete vocabulary, which every later upgrade then skips. Set true for one upgrade to
     # reload over it (it duplicates concept_relationship rows, which has no unique key), then
-    # put it back.
+    # put it back. On a database that already holds data that reload is all it does; an empty one
+    # is seeded as usual.
     forceDicomVocab: false
     # Seed a store that already holds data, Orthanc clearing the listed projects' studies first.
-    # Leave false: `make -C trust/deploy/helm reseed` sets it for one run of the seed Job, which is
-    # how a trust moves to a new trustData.version.
+    # Leave false: `make -C trust/deploy/helm reseed KIT=<CODE>` sets it for one run of the seed Job,
+    # which is how a trust moves to a new trustData.version.
     reseed: false
     # Scratch for the fetched tables, the vocabulary zip and — with `orthanc` on — the DICOM
     # sets and their extraction (~2 GB + ~2 GB for the two default projects).
