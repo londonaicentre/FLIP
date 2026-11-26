@@ -329,7 +329,7 @@ if [ -n "$KIT" ]; then
         warn "Per-trust override not yet generated: k8s-trust-${KIT}.yaml"
         hint "Generate it (and patch cluster secrets) with:"
         hint "  make -C trust/deploy/helm sync-kit KIT=${KIT} HUB=${HUB:-(env)}"
-        hint "Then deploy with OVERRIDES_FILE=k8s-trust-${KIT}.yaml"
+        hint "Then deploy with: make -C trust/deploy/helm deploy-trust-k8s KIT=${KIT} HUB=${HUB:-(env)}"
     else
         pass "Per-trust override: k8s-trust-${KIT}.yaml"
     fi

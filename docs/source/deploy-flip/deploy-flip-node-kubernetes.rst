@@ -442,7 +442,8 @@ your cluster (``kubectl get job -n flip-trust -w``), then raise it if needed:
 
    Set below the job's real duration, the deploy fails **after** the new release is applied and rolled out, with
    ``xnat-init did not complete``. The job itself keeps running in the cluster; re-run
-   ``make -C trust/deploy/helm xnat-init`` once it has finished or with a larger budget.
+   ``make -C trust/deploy/helm xnat-init`` once it has finished or with a larger budget. Run with no values, as the
+   message prints it, it renders the job from the values the release was deployed with.
 
 If you add ``--wait`` to your own ``helm upgrade``, note that Helm 4 waits until workloads are genuinely ready, so size
 ``--timeout`` for the slowest service rather than for the API call.
