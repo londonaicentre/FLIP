@@ -135,10 +135,10 @@ services:
       - SUPERLINK_ADDRESS=fl-server-net-1:8000
       # Service name (`fl-api-net-1`), which is the only name that resolves: with no
       # container_name the container is named by the compose project, and the old
-      # `flip-fl-api-net-1` spelling is not a DNS name in any harness. Getting this wrong
-      # fails SILENTLY — register-supernode-keys.sh swallows the DNS error and still exits
-      # 0, leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
-      # (FLIP#957).
+      # `flip-fl-api-net-1` spelling is not a DNS name in any harness. Getting this wrong makes
+      # the one-shot exit 3 with the error in its log (FLIP#2047), but nothing waits on it:
+      # `make up` and `restart-fl` still return 0, with SuperNode keys unlabelled and FL
+      # metrics attributed to unknown_client (FLIP#957). Check `docker compose ps -a`.
       - FL_API_ADDRESS=http://fl-api-net-1:8000
       - FL_API_KEY=${FL_API_KEY}
       # No TRUST_NAMES: each key names its own slot (supernode_credentials_<N>.pub is
