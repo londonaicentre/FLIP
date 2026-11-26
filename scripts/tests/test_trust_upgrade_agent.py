@@ -582,7 +582,33 @@ class ClusterUpgrade(unittest.TestCase):
         # render with the previous chart's defaults and drop any value the release adds.
         self.assertIn("--reset-then-reuse-values", upgrade)
         self.assertNotIn("--reuse-values", upgrade)
-        self.assertEqual(upgrade[upgrade.index("--set") + 1], "global.image.tag=v0.13.0")
+        self.assertIn("global.image.tag=v0.13.0", self._sets(upgrade))
+        self.assertEqual(
+            [s for s in self._sets(upgrade) if not s.startswith("xnat.initJob.")], ["global.image.tag=v0.13.0"]
+        )
+
+    @staticmethod
+    def _sets(cmd):
+        return [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--set"]
+
+    def test_runs_the_xnat_init_hook_whatever_the_stored_values_say(self):
+        """make deploy stores xnat.initJob.enabled=false; --reset-then-reuse-values would carry it (FLIP#2071)."""
+        _, calls = self._run()
+        self.assertIn("xnat.initJob.enabled=true", self._sets(calls[1][0]))
+
+    def test_gives_helm_long_enough_to_wait_on_the_hooks(self):
+        """Helm's default 5 minutes is shorter than a first XNAT start; the timeout bounds each hook."""
+        _, calls = self._run()
+        upgrade = calls[1][0]
+        self.assertEqual(upgrade[upgrade.index("--timeout") + 1], f"{agent.HELM_HOOK_TIMEOUT_S}s")
+
+    def test_the_hook_timeout_leaves_room_for_the_rollout_wait_and_verify(self):
+        agent.set_budget(agent.REPORT_RESERVE_S + 1500, now=lambda: 0.0)
+        try:
+            self.assertEqual(agent.helm_timeout_s(now=lambda: 0.0), 1500 - 2 * agent.VERIFY_TIMEOUT_S)
+        finally:
+            agent.set_budget(None)
+        self.assertEqual(agent.helm_timeout_s(), agent.HELM_HOOK_TIMEOUT_S)
 
     def test_it_never_installs(self):
         """A release the configmap driver cannot see must fail, not be installed a second time."""
