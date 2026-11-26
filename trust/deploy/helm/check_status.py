@@ -716,7 +716,7 @@ def main(
                     "INFO",
                     "fl-client cannot mount its FL participant kit — the path in "
                     "flClient.kitHostPath does not exist on the node. Stage it first: "
-                    "make stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<context>",
+                    "make stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<kit dir> KUBE_CONTEXT=<context>",
                 )
             else:
                 print_status("FAIL", f"'{svc}': {ready}/{len(svc_pods)} ready (expected at least {min_ready})")

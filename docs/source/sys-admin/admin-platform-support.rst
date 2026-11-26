@@ -30,10 +30,10 @@ PACS return leg, is on the site's own network (see `Firewall rules`_ below).
 Site-to-site VPN
 ================
 
-Use a VPN if site policy forbids internet egress for FL traffic, or if the site's network team will not write a
-per-port rule. The FL client → FL server leg then runs over an IPsec tunnel between the trust's network and the hub's
-networking account. trust-api keeps polling the hub over the internet on 443. The tunnel is set up on request, not by
-default.
+Most trusts do not need one: the FL client reaches the hub's FL endpoint over the internet on 443, which avoids the
+firewalls that reset TLS on other ports. Use a VPN if site policy forbids internet egress for FL traffic. The FL
+client → FL server leg then runs over an IPsec tunnel between the trust's network and the hub's networking account.
+trust-api keeps polling the hub over the internet on 443. The tunnel is set up on request, not by default.
 
 Agree these points in one meeting before you start. Each one discovered later costs weeks:
 
@@ -45,7 +45,9 @@ Agree these points in one meeting before you start. Each one discovered later co
 - **Cost.** The hub side costs about $140 a month.
 
 When the tunnel is up, the FL client must dial the tunnel's address instead of the public edge. Add a hosts entry for
-this, because the name in the kit resolves to the public edge.
+this, because the name in the kit resolves to the public edge. The tunnel's edge listens on 8002 only, so also set
+``FL_EDGE_PORT_OVERRIDE=8002`` in the trust's kit file. Hub tooling never overwrites that key, so the trust keeps
+dialling 8002 while new kits default to 443.
 
 Allow time: the first such tunnel took three months from first configuration to working traffic.
 
@@ -71,7 +73,7 @@ Firewall rules
      - 443
    * - FL client → FL server (via NLB)
      -
-     - configured ``FL_EDGE_PORT`` (else ``FL_SERVER_PORT``)
+     - the kit's ``FL_EDGE_PORT_OVERRIDE``, else ``FL_EDGE_PORT`` (443 on production), else ``FL_SERVER_PORT``
    * - Image pulls, OS packages and mock data (hosts in :ref:`deploy-trust-node-network`)
      -
      - 443; 80 for OS packages

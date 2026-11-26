@@ -59,8 +59,8 @@ Web and API traffic (browsers and each Trust's ``trust-api``)
    ``/api/*`` through a relay load balancer in the networking account.
 
 FL traffic (each Trust's FL client)
-   An internet-facing **edge NLB**, on TCP port **8002 for production** and **8003 for staging** (the two share one
-   listener set).
+   An internet-facing **edge NLB**, on TCP ports **443 and 8002 for production** and **8003 for staging** (they
+   share one listener set).
 
 Both paths then cross the estate's **Transit Gateway** and central **Network Firewall** into the workload account.
 
@@ -253,6 +253,10 @@ Create ``.env.prod`` (or ``.env.stag``) from the shipped example env file, then 
 
 - ``ALB_SUBDOMAIN`` and ``NLB_SUBDOMAIN`` keep their final values even while ``MANAGE_DNS=false``; they are also
   used to name resources.
+- **Production:** the edge also serves production FL traffic on 443, which perimeter firewalls that reset TLS on
+  other ports let through. Set ``FL_EDGE_PORT=443`` in ``.env.prod`` and on the production GitHub environment so
+  kits dial it; 8002 stays open for trusts set up before, and for a trust that pins ``FL_EDGE_PORT_OVERRIDE=8002``
+  in its kit file (a site-to-site VPN, :ref:`site-to-site-vpn`).
 - **Staging only:** the edge serves staging FL traffic on port 8003, while the staging FL server still listens on
   8002. Keep ``FL_SERVER_PORT=8002`` and set ``FL_EDGE_PORT=8003`` in ``.env.stag``; ``sync-trust-kit`` copies
   it into each kit and refuses to run on ``HUB=stag`` without it. Set the same value as the ``FL_EDGE_PORT``

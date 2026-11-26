@@ -39,6 +39,8 @@ on:
       - ".github/workflows/test_helm_chart.yml"
       # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
+      # The Makefile defaults the kit path / VOCAB_DEST under the kit's FLIP_DATA_ROOT through it.
+      - "deploy/data_root.mk"
       # sync_k8s_kit.py reads the kit's TRUST_DATA_SEED through it.
       - "trust/deploy/scripts/trust_kit_lib.py"
       # The chart's self-test imports these, and its tests are where they are tested (FLIP#1449).
@@ -66,6 +68,8 @@ on:
       - ".github/workflows/test_helm_chart.yml"
       # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
+      # The Makefile defaults the kit path / VOCAB_DEST under the kit's FLIP_DATA_ROOT through it.
+      - "deploy/data_root.mk"
       # sync_k8s_kit.py reads the kit's TRUST_DATA_SEED through it.
       - "trust/deploy/scripts/trust_kit_lib.py"
       # The chart's self-test imports these, and its tests are where they are tested (FLIP#1449).

@@ -61,12 +61,16 @@ def test_a_credential_with_nowhere_to_go_fails_the_upload(monkeypatch):
     assert CREDENTIAL not in failed.value.detail
 
 
-def test_a_model_id_that_leaves_the_directory_is_refused(tmp_path, monkeypatch):
+@pytest.mark.parametrize("model_id", ["../escaped", "/etc/passwd"])
+def test_a_model_id_that_leaves_the_directory_is_refused_before_anything_is_touched(tmp_path, monkeypatch, model_id):
     directory = tmp_path / "credentials"
     monkeypatch.setenv("JOB_CREDENTIAL_DIR", str(directory))
+    earlier = str(uuid4())
+    deliver_job_credential(earlier, "earlier")
 
-    with pytest.raises(HTTPException) as failed:
-        deliver_job_credential("../escaped", CREDENTIAL)
+    with pytest.raises(HTTPException) as refused:
+        deliver_job_credential(model_id, CREDENTIAL)
 
-    assert failed.value.status_code == 400
+    assert refused.value.status_code == 400
+    assert [path.name for path in directory.iterdir()] == [earlier]
     assert not (tmp_path / "escaped").exists()

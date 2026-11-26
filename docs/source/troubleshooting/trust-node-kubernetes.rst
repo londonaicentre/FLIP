@@ -105,7 +105,7 @@ Start with the pod's events and logs:
      - The FL participant kit is not on the node.
      - Step 3 of :doc:`../deploy-flip/deploy-flip-node-kubernetes`, then deploy again.
    * - FL client in ``Init`` after an upgrade, with ``hostPath type check failed``
-     - The upgrade was run without the path the kit is staged at.
+     - The kit file's ``FL_KIT_DIR`` is not where the kit is staged.
      - :ref:`ts-k8s-fl-client-kit-path`
    * - ``omop-db-0`` and ``xnat-db-0`` never ready, with no logs, on Ubuntu 26.04
      - AppArmor denies signals inside containers.
@@ -199,9 +199,10 @@ the first deploy, and the upgrade was run without it. Before v0.16, every deploy
 ``flClient.kitHostPath`` on the Helm command line with the default ``/opt/flip/fl-kit``, and the upgrade's rollout
 wait did not cover the FL client, so the command exited 0.
 
-From v0.16 a deploy or upgrade without ``KIT_DEST`` or ``FL_CLIENT_KIT_HOST_PATH`` keeps the path the release
-already mounts and says so, and an FL client that was ready before the upgrade must be ready again before the
-command exits 0. Passing either variable is how you move the kit.
+From v0.16 an FL client that was ready before the upgrade must be ready again before the command exits 0. From
+v0.17 the path has one home, the kit file (``fl-kit/`` under its ``FLIP_DATA_ROOT``, else its ``FL_KIT_DIR``):
+``stage-kit`` copies there, every deploy mounts it, and ``KIT_DEST`` and ``FL_CLIENT_KIT_HOST_PATH`` are refused. An upgrade of a release that mounts another path
+than its kit file names stops before it changes anything and prints the line to put in the kit file.
 
 **Check.** Compare the path in the previous revision with the current one:
 
@@ -211,15 +212,14 @@ command exits 0. Passing either variable is how you move the kit.
    helm get values trust-release -n flip-trust --revision <previous> | grep kitHostPath
    helm get values trust-release -n flip-trust | grep kitHostPath
 
-**Fix.** On a checkout older than v0.16, run the same upgrade again with the path the kit is staged at:
+**Fix.** Set ``FL_KIT_DIR=<path the kit is staged at>`` in the kit file (or ``FLIP_DATA_ROOT`` to its parent, when
+the kit is staged at ``fl-kit/`` under it) and run the upgrade again. On a checkout
+older than v0.17, run it with the path on the command line instead:
 
 .. code-block:: shell
 
    make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG=<tag> \
      FL_CLIENT_KIT_HOST_PATH=<path> YES=1
-
-``FL_CLIENT_KIT_HOST_PATH`` is what the targets render; it takes its default from ``KIT_DEST``. Before any upgrade
-of a release someone else deployed, read ``helm get values`` for settings that were passed on the command line.
 
 .. _ts-k8s-xnat-db-roles:
 
@@ -400,17 +400,21 @@ does not allow.
 Deploying with an account limited to one namespace
 ==================================================
 
-**Symptom.** With a kubeconfig that holds the built-in ``admin`` role in the trust's namespace only:
+**Symptom.** With a kubeconfig that holds the built-in ``admin`` role in the trust's namespace only, the
+preflight fails with::
 
-- ``make preflight`` fails with ``Cluster unreachable``, although ``kubectl get pods`` works in the namespace;
-- the deploy fails with ``resourcequotas "trust-release-flip-trust-xnat-container-jobs" is forbidden``, after
-  most of the release has been applied.
+   ✖  RBAC: cannot create ResourceQuota in '<namespace>' — the deploy would stop part-way
 
-**Cause.** The preflight tests reachability with ``kubectl cluster-info``, which lists Services in
-``kube-system``. The chart creates a ResourceQuota for XNAT's conversion jobs, and ``admin`` may read quotas but
-not write them. The make targets also read the nodes and the StorageClasses, and apply the namespace itself.
+On a checkout older than v0.17 the same account sees two other things instead: ``make preflight`` fails with
+``Cluster unreachable`` although ``kubectl get pods`` works in the namespace, and the deploy fails with
+``resourcequotas "trust-release-flip-trust-xnat-container-jobs" is forbidden`` after most of the release has been
+applied.
 
-**Fix.** Have a cluster administrator create the namespace and grant the account these rights beside ``admin``:
+**Cause.** The chart creates a ResourceQuota for XNAT's conversion jobs, and ``admin`` may read quotas but not
+write them. Before v0.17 the preflight also tested reachability with ``kubectl cluster-info``, which lists Services
+in ``kube-system``, and the deploy applied the namespace itself, which needs ``patch`` on it.
+
+**Fix.** Have a cluster administrator create the namespace and grant the account this right beside ``admin``:
 
 .. code-block:: yaml
 
@@ -419,17 +423,17 @@ not write them. The make targets also read the nodes and the StorageClasses, and
    metadata: {name: flip-operator-quota, namespace: <namespace>}
    rules:
      - apiGroups: [""]
-       resources: [resourcequotas, limitranges]
+       resources: [resourcequotas]
        verbs: [get, list, watch, create, update, patch, delete]
-   ---
-   apiVersion: rbac.authorization.k8s.io/v1
-   kind: Role
-   metadata: {name: flip-operator-cluster-info, namespace: kube-system}
-   rules:
-     - apiGroups: [""]
-       resources: [services]
-       verbs: [get, list]
-   ---
+
+Bind it to the account with a RoleBinding. If a deploy already failed on the quota, run it again: nothing needs
+removing.
+
+Two cluster-wide rights are optional. Without them the preflight warns that it could not check for a default
+StorageClass, and ``stage-kit`` and ``stage-vocab`` cannot pick the node, so the administrator stages the kit:
+
+.. code-block:: yaml
+
    apiVersion: rbac.authorization.k8s.io/v1
    kind: ClusterRole
    metadata: {name: flip-operator-cluster-read}
@@ -440,14 +444,9 @@ not write them. The make targets also read the nodes and the StorageClasses, and
      - apiGroups: [storage.k8s.io]
        resources: [storageclasses]
        verbs: [get, list]
-     - apiGroups: [""]
-       resources: [namespaces]
-       resourceNames: [<namespace>]
-       verbs: [get, patch]
 
-Bind each to the account (two RoleBindings and a ClusterRoleBinding). The preflight then passes with one warning,
-that the account cannot create namespaces, which is expected. If a deploy already failed on the quota, run it
-again: nothing needs removing.
+A checkout older than v0.17 also needs ``get`` and ``list`` on Services in ``kube-system``, and ``get`` and
+``patch`` on its own Namespace.
 
 .. _ts-k8s-second-release:
 
@@ -469,7 +468,7 @@ The targets do not know about the other release, so guard against these:
        ``KUBE_CONTEXT``, with a kubeconfig that has no rights in the first namespace
        (:ref:`ts-k8s-namespaced-account`). A slip is then refused by the cluster.
    * - Both releases mount the FL kit from ``/opt/flip/fl-kit`` on the node by default.
-     - Give the second its own ``KIT_DEST``, or deliver its kit as a Secret (``flClient.kit.source: secret``,
+     - Give the second its own ``FL_KIT_DIR`` in its kit file, or deliver its kit as a Secret (``flClient.kit.source: secret``,
        ``make kit-secret``), which puts no file on the node.
    * - Each release's log collector is a DaemonSet that reads every pod's logs on the node, so each trust's log
        store would hold the other's logs.
@@ -1004,7 +1003,8 @@ trust-api heartbeats fail with 401
    kubectl logs -n flip-trust deploy/trust-release-flip-trust-trust-api --tail=20
 
 - ``Not authenticated: API key is missing.``: the API-key **header name** is wrong, not the key.
-  ``TRUST_API_KEY_HEADER`` must match the hub's (the platform default is ``Authorization``, which the chart uses).
+  ``TRUST_API_KEY_HEADER`` must match the hub's. ``sync-kit`` writes the kit's value into the override; a kit
+  without the line leaves the chart on the platform default, ``Authorization``. Re-sync the kit as below.
 - **Key rejected:** the Secret holds a key other than the registered one. Re-sync the kit:
 
   .. code-block:: shell
@@ -1022,7 +1022,8 @@ The FL client gets ``Connection refused [Errno 111]`` connecting to the FL serve
 Other pods in the namespace can reach the FL server address.
 
 **Cause.** The egress policy does not open the FL server's port. By default it allows only DNS, HTTP and HTTPS;
-``sync-kit`` adds the kit's FL port (``FL_EDGE_PORT``, else ``FL_SERVER_PORT``) to ``networkPolicies.allowedEgressPorts``.
+``sync-kit`` adds the kit's FL port (``FL_EDGE_PORT_OVERRIDE``, else ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``) to
+``networkPolicies.allowedEgressPorts``.
 
 **Check:**
 
@@ -1070,8 +1071,12 @@ nothing read back once the TLS handshake starts.
 
 **Cause.** An application-aware firewall at the site's perimeter rejecting TLS on a non-default port. Nothing in the
 cluster changes it. Confirm with the ``openssl`` check on :ref:`deploy-trust-node-network`, from a pod or the admin
-host, then ask the network team to allow the ``ssl`` application to the FL endpoint on its port, or use a site-to-site
-VPN (:ref:`site-to-site-vpn`).
+host.
+
+**Fix.** Dial 443, the production default: the kit's hub-shared block must carry ``FL_EDGE_PORT=443`` (ask the FLIP
+team to refresh an older kit) and no ``FL_EDGE_PORT_OVERRIDE``. Then redeploy with
+``make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>``. A trust that must dial another port needs the
+network team to allow the ``ssl`` application to the FL endpoint on it.
 
 **********
 Governance

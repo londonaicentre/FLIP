@@ -68,7 +68,7 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 
 | Variable | Description |
 | --- | --- |
-| `EXPECTED_TRUST_ID` | Optional self-check. If set, trust-api aborts at startup when the hub-resolved trust id does not match this value |
+| `EXPECTED_TRUST_ID` | Optional self-check. If set, trust-api aborts at startup when the hub-resolved trust id does not match this value. Empty, or still the kit's `<…>` placeholder, leaves the check off |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
 | `IMAGING_API_URL` | Internal URL of the imaging-api |
 | `CENTRAL_HUB_API_URL` | URL of the Central Hub API (for task polling) |

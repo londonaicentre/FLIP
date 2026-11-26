@@ -75,6 +75,11 @@
 
 name: Terraform Apply
 
+# A release apply says so in its title, which is how release.yml's confirm step
+# (.github/scripts/confirm-release-apply.sh) tells it from any other dispatch on
+# main (FLIP#2047). Empty for every other run, which GitHub then titles as usual.
+run-name: "${{ inputs.release_tag && format('Terraform Apply: release {0}', inputs.release_tag) || '' }}"
+
 on:
   # Every push, not only infrastructure ones (FLIP#1186): the hub's images and
   # the UI deploy through this workflow, so a path filter left a flip-api or
@@ -187,6 +192,9 @@ jobs:
       id-token: write # mint the OIDC token
       packages: read # probe GHCR for the release image tag
       actions: read # read this commit's image build runs (the wait step)
+    outputs:
+      # match, mismatch, unreadable or unset: read by the ui-cognito-ids job.
+      ui_cognito_ids: ${{ steps.cognito.outputs.verdict }}
 
     steps:
       - name: Checkout code
@@ -486,28 +494,88 @@ jobs:
       # The UI build reads the Cognito ids from environment variables, because it
       # runs without the credentials to read Terraform state. They change only if
       # the pool or client is replaced; this is the run that would replace them,
-      # so it says so.
-      - name: Check the UI's Cognito ids against Terraform
+      # so it compares them here, where both are in reach, and hands the verdict
+      # to the ui-cognito-ids job. The step never fails: the apply has happened,
+      # and failing this job would also skip the staging restore and stop.
+      - name: Compare the UI's Cognito ids with Terraform
+        id: cognito
         working-directory: deploy/aws
         env:
           UI_POOL_ID: ${{ vars.AWS_COGNITO_USER_POOL_ID }}
           UI_CLIENT_ID: ${{ vars.AWS_COGNITO_APP_CLIENT_ID }}
         run: |
           set -uo pipefail
-          pool="$(terraform output -raw CognitoUserPoolId 2>/dev/null)" || pool=""
-          client="$(terraform output -raw CognitoAppClientId 2>/dev/null)" || client=""
-          if [[ "${pool}" != "${UI_POOL_ID}" || "${client}" != "${UI_CLIENT_ID}" ]]; then
-            echo "::warning title=UI Cognito ids differ::AWS_COGNITO_USER_POOL_ID / AWS_COGNITO_APP_CLIENT_ID on this environment do not match terraform output CognitoUserPoolId / CognitoAppClientId. The published UI signs in against the variables: update them and re-run the ui job."
+          pool="$(terraform output -raw CognitoUserPoolId)" || pool=""
+          client="$(terraform output -raw CognitoAppClientId)" || client=""
+          if [[ -z "${pool}" || -z "${client}" ]]; then
+            verdict=unreadable
+            echo "terraform output CognitoUserPoolId / CognitoAppClientId could not be read."
+          elif [[ -z "${UI_POOL_ID}" && -z "${UI_CLIENT_ID}" ]]; then
+            # A first apply: the pool did not exist, so nobody could have set these.
+            verdict="unset"
+            echo "AWS_COGNITO_USER_POOL_ID and AWS_COGNITO_APP_CLIENT_ID are not set on this environment."
+          else
+            verdict=match
+            if [[ "${pool}" != "${UI_POOL_ID}" ]]; then
+              verdict=mismatch
+              echo "AWS_COGNITO_USER_POOL_ID differs from terraform output CognitoUserPoolId."
+            fi
+            if [[ "${client}" != "${UI_CLIENT_ID}" ]]; then
+              verdict=mismatch
+              echo "AWS_COGNITO_APP_CLIENT_ID differs from terraform output CognitoAppClientId."
+            fi
           fi
+          echo "verdict: ${verdict}"
+          echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
+
+  # Holds the UI and turns the run red on ids nobody could sign in with (FLIP#2047),
+  # without failing the apply job the staging cycle keys on. No environment: aws-prod's
+  # reviewers would have to approve it on every production apply, so the apply job
+  # compares and only its verdict crosses over.
+  #
+  # The remedy it prints is a re-run of the branch's newest apply run: a re-run keeps
+  # that run's commit, so an older one would roll the environment back, and a dispatch
+  # on main without release_tag would pin sha images over a release (see "Release
+  # applies" in the header).
+  ui-cognito-ids:
+    name: Check the UI's Cognito ids against Terraform
+    needs: apply
+    if: always() && needs.apply.result == 'success'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Act on the apply job's verdict
+        env:
+          VERDICT: ${{ needs.apply.outputs.ui_cognito_ids }}
+        run: |
+          set -euo pipefail
+          step="the apply job's step \"Compare the UI's Cognito ids with Terraform\""
+          case "${VERDICT}" in
+            match)
+              echo "The UI's Cognito ids match Terraform."
+              ;;
+            unset)
+              echo "::warning title=UI Cognito ids not set::AWS_COGNITO_USER_POOL_ID and AWS_COGNITO_APP_CLIENT_ID are not set on this environment, as on a first apply. Set them from terraform output CognitoUserPoolId / CognitoAppClientId before the UI can be published."
+              ;;
+            mismatch)
+              echo "::error title=UI Cognito ids differ::This environment's AWS_COGNITO_USER_POOL_ID / AWS_COGNITO_APP_CLIENT_ID do not match terraform output CognitoUserPoolId / CognitoAppClientId (${step} says which). A UI built from them cannot sign anyone in, so it is not published: set the variables to Terraform's values, then re-run all jobs of the newest apply run on this branch (every later run fails this check until they are fixed; an older run would roll the environment back to its commit). Do not dispatch a new apply on main without release_tag: it would take production off the release's images."
+              exit 1
+              ;;
+            *)
+              echo "::error title=Cognito ids not read::terraform output CognitoUserPoolId / CognitoAppClientId could not be read after the apply (verdict '${VERDICT}'; ${step} has Terraform's error), so the UI's ids are unchecked and the UI is not published."
+              exit 1
+              ;;
+          esac
 
   ui:
     name: Publish flip-ui (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
-    needs: apply
+    needs: [apply, ui-cognito-ids]
     # Without a status function the implicit success() also requires apply's own
     # dependencies, and start-staging is always skipped on main, so every
     # production publish was skipped (v0.15.0). always() lifts that; the result
-    # check keeps a held or failed apply from publishing.
-    if: always() && needs.apply.result == 'success'
+    # checks keep a held or failed apply, or ids the UI cannot sign in with, from
+    # publishing.
+    if: always() && needs.apply.result == 'success' && needs.ui-cognito-ids.result == 'success'
     uses: ./.github/workflows/publish_ui.yml
     # The ceiling for publish_ui.yml's jobs: its build job narrows to
     # contents: read, so only the publish job can mint a token.

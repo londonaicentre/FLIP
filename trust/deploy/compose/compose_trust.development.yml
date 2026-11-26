@@ -262,6 +262,9 @@ services:
       DEBUG: ${DEBUG}
       TRUST_API_KEY_HEADER: ${TRUST_API_KEY_HEADER}
       TRUST_API_KEY: ${TRUST_API_KEY}
+      # The kit's wrong-host self-check: trust-api exits when the hub resolves this
+      # host as another trust. Empty leaves the check off.
+      EXPECTED_TRUST_ID: ${EXPECTED_TRUST_ID:-}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       TRUST_NAME: ${TRUST_NAME}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
@@ -333,6 +336,10 @@ services:
       - CHOWN
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      # No calls home: a trust's firewall drops them (FLIP#1784).
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro

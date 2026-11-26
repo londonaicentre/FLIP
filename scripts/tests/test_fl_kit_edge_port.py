@@ -16,7 +16,9 @@ Production and staging share one edge NLB address: ``:8002`` forwards to product
 ``:8003`` to staging's FL server, which listens on 8002. A client's ``connect_to.port`` (FLARE falls
 back to the server's ``fed_learn_port`` when it is absent) therefore chooses the estate.
 
-Flower's kit carries no address, so its SuperNode takes the port from the trust kit's ``FL_EDGE_PORT``.
+Flower's kit carries no address, so its SuperNode takes the port from the trust kit's ``FL_EDGE_PORT``. Both
+backends dial the site's ``FL_EDGE_PORT_OVERRIDE`` instead when set; a FLARE kit's target is rewritten to the
+trust's port by fl-client-init before the client starts (FLIP#2051).
 
 Stdlib-only and executable as a plain script, like the rest of ``scripts/tests``.
 """
@@ -74,7 +76,14 @@ class EdgePort(unittest.TestCase):
 
     def test_flower_supernode_dials_the_edge_port(self):
         compose = (REPO / "trust" / "deploy" / "compose" / "compose_trust.prod.flower.yml").read_text()
-        assert "${NLB_SUBDOMAIN}:${FL_EDGE_PORT:-${FL_SERVER_PORT}}" in compose
+        assert "${NLB_SUBDOMAIN}:${FL_EDGE_PORT_OVERRIDE:-${FL_EDGE_PORT:-${FL_SERVER_PORT}}}" in compose
+
+    def test_nvflare_kits_follow_the_edge_port(self):
+        # fl-client-init writes the port into the kit's fed_client.json (FLIP#2051), the site's override first.
+        compose = (REPO / "trust" / "deploy" / "compose" / "compose_trust.prod.nvflare.yml").read_text()
+        assert "- FL_EDGE_PORT=${FL_EDGE_PORT_OVERRIDE:-${FL_EDGE_PORT:-}}" in compose
+        init = (REPO / "fl-services" / "nvflare" / "fl-client" / "fl-client" / "init.sh").read_text()
+        assert 'python -m flip.nvflare.server_port "$kit/startup/fed_client.json"' in init
 
 
 if __name__ == "__main__":

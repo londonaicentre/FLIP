@@ -13,7 +13,7 @@
 .PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node check-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
-	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
+	seed-omop seed-orthanc seed seed-trusts remove-stray-studies ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance prepare-host-dirs \
 	reconvert-nifti install-kit rotate-internal-service-key
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
@@ -38,6 +38,7 @@ ifeq ($(origin KIT_FILE),undefined)
 KIT_FILE := $(call kit_file,,$(KIT))
 endif
 -include $(KIT_FILE)
+include ../deploy/data_root.mk
 KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
 # A KIT_FILE given on the command line reaches every sub-make as typed, and trust/xnat would resolve
 # a relative one against its own directory, find no kit and fall back to defaults: hand it the full path.
@@ -99,12 +100,12 @@ override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
 
-# Images bind-source base for this kit: the kit's BASE_IMAGES_DOWNLOAD_DIR, or this
-# environment's compose default — the prod composes fall back to
+# Images bind-source base for this kit: the kit's BASE_IMAGES_DOWNLOAD_DIR, else images/ under
+# FLIP_DATA_ROOT, else this environment's compose default — the prod composes fall back to
 # /opt/flip/data/trust-<slot> (see compose_trust.prod.yml), dev to ./data/<KIT>.
-# Must mirror the compose fallbacks exactly: pre-creating any other path leaves the real
-# mount source for Docker to root-create.
-IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
+# Must mirror what compose mounts exactly (TRUST_VARS hands it this path when FLIP_DATA_ROOT is
+# set): pre-creating any other path leaves the real mount source for Docker to root-create.
+IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(call data_root_or,images,$(if $(IS_DEPLOYED),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT))))
 
 include ../deploy/portable.mk
 
@@ -230,8 +231,9 @@ endif
 # `make register-trusts` writes the hub-managed blocks; trust/.env.example is the
 # template the operator copies first.
 # KIT has no default, so non-KIT targets (build, test) load no kit file; with KIT set it is
-# -included at the top (before fl_backend.mk). TRUST_VARS carries only values derived from
-# $(KIT) at make time; every kit-file key reaches compose through --env-file (DOCKER_COMPOSE_CMD).
+# -included at the top (before fl_backend.mk). TRUST_VARS carries values derived from $(KIT) at
+# make time, and the resolved store paths, which override the kit's lines; every other kit-file key
+# reaches compose through --env-file (DOCKER_COMPOSE_CMD).
 # The kit file is authoritative: operators customise ports/paths there, not via make overrides.
 
 # Numeric suffix of the ASSIGNED FL kit slot (Trust_1 -> 1), read from the
@@ -252,7 +254,7 @@ TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # share a store (records are keyed by project alone). data-access-api runs as uid 1000 in the
 # production image (or the kit's FLIP_UID, FLIP#1731) and as the host user under the dev compose,
 # so that is who must own it.
-COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter prod,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
+COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(call data_root_or,cohort-snapshots,$(if $(filter prod,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM))))
 COHORT_SNAPSHOT_OWNER := $(if $(filter prod,$(__DCKR_SUFFIX)),$(API_UID):$(API_GID),$(shell id -u):$(shell id -g))
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
@@ -280,7 +282,7 @@ MONAILABEL_OVERRIDE := $(if $(filter true,$(strip $(MONAI_LABEL))),-f deploy/com
 # relative value at xnat/ — abspath'ing it from trust/ would silently resolve one level
 # too high and mount a non-existent directory. Keeps the default in step with
 # trust/xnat/Makefile's XNAT_DATA_DIR.
-__MONAI_LABEL_XNAT_DIR := $(or $(strip $(XNAT_DATA_DIR)),$(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM)))
+__MONAI_LABEL_XNAT_DIR := $(or $(strip $(XNAT_DATA_DIR)),$(call data_root_or,xnat,$(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))))
 MONAI_LABEL_XNAT_ARCHIVE_DIR := $(abspath $(if $(filter /%,$(__MONAI_LABEL_XNAT_DIR)),$(__MONAI_LABEL_XNAT_DIR),xnat/$(__MONAI_LABEL_XNAT_DIR)))/xnat-data/archive
 export MONAI_LABEL_XNAT_ARCHIVE_DIR
 
@@ -326,10 +328,23 @@ MONAI_LABEL_STATUS_MSG :=$(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — ser
 # (e.g. "Guy's and St Thomas' Trust") — unquoted it splits in the recipe's
 # `VAR=val cmd` shell prefix ("EC2: not found"); single-quoted it breaks on the
 # apostrophe. Double quotes handle both (trust names never contain $/backtick/").
+# Compose is handed the OMOP and Orthanc dirs only when the kit leaves the line unset (the
+# resolved default). A line the kit sets reaches compose through --env-file alone: the shell
+# environment beats --env-file, and make reads a kit line differently from compose (it keeps
+# quotes and does not expand ~), so passing make's reading could move a live site's mount.
+# Under FLIP_DATA_ROOT the stores' paths exist only here (the composes fall back to the defaults the kits
+# had before), so compose is handed each one, resolved like the dirs the recipes prepare (FLIP#2113).
+TRUST_DATA_DIR_VARS = $(if $(FLIP_DATA_ROOT),\
+	OMOP_DATA_DIR="$(OMOP_DATA_ABS)" ORTHANC_STORAGE_DIR="$(ORTHANC_STORAGE_ABS)" \
+	BASE_IMAGES_DOWNLOAD_DIR="$(abspath $(IMAGES_BASE))",\
+	$(if $(KIT),$(if $(OMOP_DATA_DIR),,OMOP_DATA_DIR="$(OMOP_DATA_ABS)")) \
+	$(if $(KIT),$(if $(ORTHANC_STORAGE_DIR),,ORTHANC_STORAGE_DIR="$(ORTHANC_STORAGE_ABS)")))
+
 TRUST_VARS = \
 	TRUST_NETWORK_NAME=$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	COHORT_SNAPSHOT_STORAGE_DIR="$(COHORT_SNAPSHOT_DIR_HOST)" \
+	$(TRUST_DATA_DIR_VARS) \
 	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
 # Non-KIT targets such as `make build` do not load a trust kit, but Docker
@@ -416,7 +431,8 @@ endef
 
 # Guard: the explicit (un)seed verbs refuse a trust whose kit turns the sample data off, unless FORCE_SEED=1:
 # its own name, as a plain FORCE=1 given to an outer make (upgrade-onprem-trust, release-instance) reaches every
-# sub-make. A DRY_RUN=1 of the two that honour it (seed-orthanc, unseed-orthanc) writes nothing, so it passes.
+# sub-make. A DRY_RUN=1 of the ones that honour it (seed-orthanc, unseed-orthanc, remove-stray-studies) writes
+# nothing, so it passes.
 # They need the kit file to tell, not a complete one: without it, or with a mistyped value, the setting would
 # read as true.
 define refuse_seed_when_off
@@ -424,7 +440,7 @@ define refuse_seed_when_off
 	@[ -f "$(KIT_FILE)" ] || { echo "❌ Kit file $(KIT_FILE_LABEL) not found: $@ reads TRUST_DATA_SEED from it."; exit 1; }
 	$(require_trust_data_seed)
 	@if [ "$(TRUST_DATA_SEED_EFFECTIVE)" = false ] && [ "$(FORCE_SEED)" != 1 ] && \
-	    [ "$(if $(filter seed-orthanc unseed-orthanc,$@),$(DRY_RUN))" != 1 ]; then \
+	    [ "$(if $(filter seed-orthanc unseed-orthanc remove-stray-studies,$@),$(DRY_RUN))" != 1 ]; then \
 	    echo "❌ $(KIT) has TRUST_DATA_SEED=false: its OMOP and PACS hold its own data, which $@ would change. FORCE_SEED=1 runs it anyway."; \
 	    exit 1; \
 	fi
@@ -476,7 +492,7 @@ endef
 XNAT_AETITLE_SET_EMPTY := $(if $(filter undefined,$(origin XNAT_AETITLE)),,$(if $(strip $(XNAT_AETITLE)),,yes))
 XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(KIT_FILE_LABEL),the $(origin XNAT_AETITLE))
 require-xnat-aetitle:
-	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'XNAT'),:)
+	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'FLIP_XNAT'),:)
 
 # Guard: refuse to act on the compose project this kit resolves to when it is already held
 # by a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
@@ -596,14 +612,6 @@ prepare-host-dirs:
 	  echo "❌ prepare-host-dirs sets directory owners to the containers' uids, which needs root."; \
 	  echo "   Run it as root on the trust host (sudo -E make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))),"; \
 	  echo "   or ask the host owner to."; exit 1; }
-	@# The seed markers are written beside the OMOP and Orthanc dirs by the operator's own bring-up
-	@# (OMOP_SEED_MARKER / ORTHANC_SEED_MARKER below), so that parent is theirs to create: made here
-	@# it would be root's, and ensure-seeded would fail on the marker after a complete seed.
-	@for d in "$(OMOP_DATA_ABS)" "$(ORTHANC_STORAGE_ABS)"; do \
-	  parent="$$(dirname "$$d")"; [ -d "$$parent" ] || { \
-	    echo "❌ $$parent does not exist. Create it as yourself first (mkdir -p $$parent): the bring-up writes"; \
-	    echo "   the seed markers beside the data dirs, and a parent made here would be root's."; exit 1; }; \
-	done
 	@base="$(IMAGES_BASE)"; mkdir -p "$$base"; \
 	[ "$$($(call stat_fmt,%u) "$$base")" = "$(API_UID)" ] || chown $(API_UID):$(API_GID) "$$base"
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
@@ -619,9 +627,8 @@ prepare-host-dirs:
 # Pull/build behaviour: see UP_PULL_FLAGS above. require-xnat-aetitle goes first so a bad
 # kit is refused before anything is created or fetched.
 #
-# FIRST-INSTALL VERB. Its ensure-seeded step (re-)seeds the data volumes whenever the
-# seed markers differ from the kit's PROJECTS / data version (never with TRUST_DATA_SEED=false),
-# and its up-xnat step runs xnat-reset, which wipes the XNAT archive and database — never run
+# FIRST-INSTALL VERB. Its ensure-seeded step seeds an empty OMOP or PACS (never with
+# TRUST_DATA_SEED=false), and its up-xnat step runs xnat-reset, which wipes the XNAT archive and database — never run
 # it, or restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
 up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(require_kit_file)
@@ -738,7 +745,7 @@ endef
 #
 # Deliberately NOT up-trust, and not restart-trust: up-trust is the first-install verb,
 # whose up-xnat step runs xnat-reset (wiping the XNAT archive and database) and whose
-# ensure-seeded step can replace the data volumes. A policy edit has no business going
+# ensure-seeded step seeds an empty OMOP or PACS. A policy edit has no business going
 # anywhere near either. Nor does it pull images or pre-create data dirs: --pull never keeps
 # a dev compose's pull_policy: always from swapping the image under the edit, and the net
 # dirs of a live trust already exist (as in _upgrade-trust-apply).
@@ -837,12 +844,11 @@ restart-trust: down-trust up-trust
 # ── Release upgrade (FLIP#1204) ───────────────────────────────────────────
 # Move a LIVE trust to a release, data intact: "pull the target tag, recreate what
 # changed, touch no data". Deliberately not a prerequisite chain through up-trust —
-# that is the first-install verb, and both of its data steps rewrite a live site:
-# ensure-seeded re-seeds OMOP/Orthanc whenever the seed markers differ from the kit
-# (a .data_version bump or changed PROJECTS replaces those projects' rows and studies),
-# and up-xnat runs xnat-reset (`sudo rm -rf $XNAT_DATA_DIR`, archive AND database).
+# that is the first-install verb, and its data steps belong to a first install:
+# ensure-seeded loads the sample data into an empty OMOP or PACS, and up-xnat runs
+# xnat-reset (`sudo rm -rf $XNAT_DATA_DIR`, archive AND database).
 # restart-trust inherits all of that. A deliberate re-seed stays an explicit
-# `make -C trust ensure-seeded`, never a side effect of an upgrade. Use this for every redeploy of
+# `make -C trust seed`, never a side effect of an upgrade. Use this for every redeploy of
 # an existing site; use up-trust only to install one.
 #
 # Two phases, because the kit is -include'd at parse time: phase 1 lets the resolver
@@ -900,7 +906,8 @@ _upgrade-trust-apply:
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
 	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
-	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
+	@echo "⬆️  $(KIT): kit pinned to $(DOCKER_TAG), images pulled, containers recreated and XNAT upgraded. The trust containers were not checked."
+	@echo "   Verify: every container is up (docker compose -p $(TRUST_PROJECT) ps) and trust-api /health reports the new version and hub_key_match=true."
 
 # EC2 variant — no host-port override, --pull always. Networks and the trust's
 # data are provisioned on the instance by trust/deploy/ansible/aws-ec2.yml, so the
@@ -1013,16 +1020,13 @@ down-fl-clients-kit:
 # The two data bind sources, resolved to what the compose file mounts, as absolute paths:
 # the sub-makes in omop-db/ and orthanc/ run from their own directories, so a relative
 # kit value (./omop-db/volumes/Trust_1/db_data) would resolve one level too deep there.
-# The seed markers sit BESIDE each store (the store itself is owned by the container uid):
-# volumes/Trust_<N>/.seeded next to db_data, and orthanc/.orthanc-storage-trust<N>.seeded
-# next to the storage dir (the default storage dirs share a parent, hence the name).
-OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
-ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-trust$(TRUST_NUM)))
-OMOP_SEED_MARKER = $(dir $(OMOP_DATA_ABS)).seeded
-ORTHANC_SEED_MARKER = $(dir $(ORTHANC_STORAGE_ABS)).$(notdir $(ORTHANC_STORAGE_ABS)).seeded
-# The data version everything is seeded at: the pin, or HF_TRUST_DATA_REVISION to override
-# (main, a sha) — the same resolution the omop-db and orthanc Makefiles apply.
-TRUST_DATA_REVISION = $(or $(HF_TRUST_DATA_REVISION),$(shell tr -d ' \n\r\t' < .data_version))
+# ONE default each, handed to compose in TRUST_VARS when the kit leaves the line unset, so the
+# directory prepared and owned here is the one compose mounts (FLIP#2047). The deployed defaults are the prod
+# compose's own fallbacks, which a site that never set the line already mounts: never move them.
+# They are not per slot, so two trusts on one host must each set the line (the onboarding
+# checklist fails a kit that leaves it unset) or FLIP_DATA_ROOT.
+OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),$(call data_root_or,omop,$(if $(IS_DEPLOYED),/opt/flip/omop/db_data,./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))))
+ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),$(call data_root_or,orthanc,$(if $(IS_DEPLOYED),/opt/flip/orthanc/orthanc-storage,./orthanc/orthanc-storage-trust$(TRUST_NUM)))))
 
 # The containers are found by their compose labels rather than by name, so this works
 # on a second FLIP_INSTANCE too (container names are never set, see AGENTS.md).
@@ -1049,46 +1053,53 @@ wait-pacs:
 	  sleep 2; \
 	done; echo "❌ Orthanc ($(KIT)) not ready after 120s — docker logs $(call trust_container,orthanc)"; exit 1
 
-# Seed this trust if (and only if) it is not already seeded with exactly these PROJECTS at
-# this data version, for this partition. Each half keeps a marker beside its store saying
-# what it holds; a marker that matches means nothing to do (no fetch, no upload), a missing
-# one means a fresh volume, and a differing one — a .data_version bump, a changed PROJECTS,
-# a re-partition — means re-seed: OMOP replaces the listed projects' rows (--clean projects,
-# so other projects and any Synthea rows stay), Orthanc clears those projects' studies first
-# (CLEAR=1) and re-uploads. This is what a .data_version bump does to a seeded trust now;
-# there is no FORCE, because nothing here can clobber data a seed did not put there.
-# Run by up-trust; safe to call on its own after changing PROJECTS or the pin:
+# Load the sample data into each store that is still empty: OMOP with no image_occurrence row
+# (persons alone may be Synthea's, which load-synthea-ehr adds), Orthanc with no study. A store
+# that holds anything is left alone, so a later `up` fetches and uploads nothing — asked of the
+# stores themselves, with no record kept beside them (FLIP#2111). Neither a trust/.data_version
+# bump nor a changed PROJECTS reaches a seeded trust from here: re-seed it explicitly with
+# `make -C trust seed KIT=<CODE> PROJECTS="…" CLEAR=1` (the release checklist says so whenever
+# the pin moved). A seed that failed part-way leaves a store that is not empty: re-run the seed.
+# The node self-test (deploy/scripts/selftest_node.sh) makes the same two probes.
+# Run by up-trust; safe to call on its own:
 #   make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project prostate_project"
 # A real trust, whose OMOP and PACS hold its own data, sets TRUST_DATA_SEED=false in its kit:
-# nothing is then fetched, loaded or marked, whatever the markers or the pin say. Any value but
-# true or false is refused rather than read as true, which would seed a real trust.
+# nothing is then asked, fetched or loaded. Any value but true or false is refused rather than
+# read as true, which would seed a real trust.
 ensure-seeded: $(if $(filter true,$(TRUST_DATA_SEED_EFFECTIVE)),wait-omop-db wait-pacs)
 	$(require_kit)
 	$(require_trust_data_seed)
 ifeq ($(TRUST_DATA_SEED_EFFECTIVE),false)
 	@echo "⏭️  Sample data is off for $(KIT) (TRUST_DATA_SEED=false): nothing loaded into OMOP or the PACS."
 else
-	@want=$$(printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(TRUST_DATA_REVISION)"); \
-	if [ "$$(cat '$(OMOP_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
-	  echo "✅ OMOP ($(KIT)) already seeded: $(PROJECTS) @ $(TRUST_DATA_REVISION)"; \
+	@if docker exec $(call trust_container,omop-db) psql -U '$(OMOP_POSTGRES_USER)' -d '$(OMOP_POSTGRES_DB)' \
+	    -tAc 'SELECT 1 FROM omop.image_occurrence LIMIT 1' 2>/dev/null | grep -qx 1; then \
+	  echo "✅ OMOP ($(KIT)) already holds data, left as it is (re-seed: make -C trust seed-omop KIT=$(KIT))"; \
 	else \
 	  $(MAKE) seed-omop KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) || exit 1; \
 	fi; \
-	if [ "$$(cat '$(ORTHANC_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
-	  echo "✅ PACS ($(KIT)) already seeded: $(PROJECTS) @ $(TRUST_DATA_REVISION)"; \
+	if curl -fs --max-time 30 -u "$(ORTHANC_USERNAME):$(ORTHANC_PASSWORD)" "http://127.0.0.1:$(PACS_UI_PORT)/statistics" 2>/dev/null \
+	    | grep -Eq '"CountStudies"[[:space:]]*:[[:space:]]*[1-9]'; then \
+	  echo "✅ PACS ($(KIT)) already holds studies, left as they are (re-seed: make -C trust seed-orthanc KIT=$(KIT) CLEAR=1)"; \
 	else \
-	  clear=$$([ -f '$(ORTHANC_SEED_MARKER)' ] && echo 1); \
-	  $(MAKE) seed-orthanc KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) $${clear:+CLEAR=1} || exit 1; \
+	  $(MAKE) seed-orthanc KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) || exit 1; \
 	fi
 endif
 
 # Load the public Synthea-in-OMOP EHR cohort into a running trust omop-db — the populate step for
 # the EHR risk-prediction tutorial (fl-tutorials/.../ehr_risk_prediction; the shipped mock OMOP has
-# no condition rows). Run once per trust with that trust's index + published OMOP port, e.g.
+# no condition rows). On any trust, from its kit: the kit's OMOP port and credentials, and its
+# SOURCE_TRUST (the slot unless given) as the Synthea half, so two sites never load the same people;
+# refused where the kit turns the sample data off, as the seed verbs are (FLIP#2107):
+#   make -C trust load-synthea-ehr KIT=BDMS HUB=prod
+# Without KIT, a dev trust by its index + published OMOP port, as before:
 #   make -C trust load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
 #   make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
 load-synthea-ehr:
-	$(OMOP_DB_CMD) load-synthea-ehr TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT)
+	$(if $(KIT),$(refuse_seed_when_off))
+	$(OMOP_DB_CMD) load-synthea-ehr TRUST_INDEX=$(or $(TRUST_INDEX),$(SOURCE_TRUST),1) OMOP_DB_PORT=$(OMOP_DB_PORT) \
+	  $(if $(KIT),OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
+	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB))
 
 # Load a licence holder's converted ADNI biomarker cohort into a running trust omop-db — the populate
 # step for the biomarker causal-discovery tutorial on a LOCAL dev stack (nothing ADNI-derived may be
@@ -1110,8 +1121,8 @@ load-adni-cohort:
 # untouched); the DICOM vocabulary is loaded first when absent, so the rows'
 # imaging concepts resolve whether or not the licensed core vocabulary
 # (`load-omop-vocab`, a separate credentialed step) has been loaded yet.
-# Persists in the bind-mounted volume; ensure-seeded re-runs it on a
-# .data_version bump.
+# Persists in the bind-mounted volume; after a .data_version bump, re-run it
+# (with seed-orthanc CLEAR=1, or `seed` for both) to move the trust to the new data.
 # The default is every project whose OMOP tables AND DICOM set are both published, because
 # ensure-seeded loads both halves from the pinned tag and a project missing either one fails
 # the bring-up. Since FLIP#1221 that is cxr_project alone: spleen and brain_mri publish their
@@ -1143,8 +1154,7 @@ seed-omop:
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
-	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(CLEAN),CLEAN=$(CLEAN)) \
-	  OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_ABS)
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(CLEAN),CLEAN=$(CLEAN))
 
 # The PACS half: this trust's slice of each project's DICOMs into its running
 # Orthanc, selected by the same source_trust column, so OMOP and PACS agree by
@@ -1159,12 +1169,13 @@ seed-orthanc:
 	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
-	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_ABS) PROJECTS="$(PROJECTS)" \
+	  PROJECTS="$(PROJECTS)" \
 	  $(if $(DICOM_SOURCE),DICOM_SOURCE=$(DICOM_SOURCE)) $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) \
 	  $(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 # Both halves for one trust, then for the shipped dev roster — unconditionally, unlike
-# ensure-seeded (use these to add projects to a running trust, or to force a re-seed).
+# ensure-seeded (use these to add projects to a running trust, or to re-seed one after a
+# .data_version bump, with CLEAR=1 so Orthanc replaces the studies it already holds).
 #   make -C trust seed KIT=GSTT PROJECTS="cxr_project prostate_project"
 #   make -C trust seed-trusts PROJECTS="cxr_project prostate_project"
 seed: seed-omop seed-orthanc
@@ -1186,18 +1197,29 @@ unseed-omop:
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
-	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) \
-	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR))
 
 unseed-orthanc:
 	$(refuse_seed_when_off)
 	$(ORTHANC_CMD) unseed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
-	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_DIR) PROJECTS="$(PROJECTS)" \
+	  PROJECTS="$(PROJECTS)" \
 	  $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 unseed: unseed-orthanc unseed-omop
+
+# Before seeding arkplus_project on a trust the pre-FLIP#2084 loader filled (AICP, BDMS): remove
+# those rows, which carry other person ids, or every Ark+ study is in OMOP twice. PACS needs
+# nothing: the published DICOMs are the same instances. DRY_RUN=1 first; it only counts.
+#   make -C trust remove-stray-studies KIT=BDMS PROJECTS=arkplus_project DRY_RUN=1
+remove-stray-studies:
+	$(refuse_seed_when_off)
+	$(OMOP_DB_CMD) remove-stray-studies TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
+	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
+	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
+	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 # Publish a new data version to aicentreflip/trust-data (FLIP#1100): ONE commit on
 # main that replaces exactly the artefacts passed, then ONE tag = VERSION. The
@@ -1218,15 +1240,12 @@ publish-trust-data:
 
 # Unit tests + lint for the trust-level data tooling: publish_trust_data.py, seed_trust.sh
 # (the one seeding procedure the Kubernetes hook and the EC2 play both execute, so it runs
-# where no service suite would see it — shellcheck is the only automated signal it has), and
-# the seed-marker contract between ensure-seeded above and the two writers it dispatches to
-# (tests/test_seed_marker_contract.sh — dry-run only, needs no service). The seeders'
-# own suites are `make -C orthanc test` and `make -C omop-db local_test`.
+# where no service suite would see it — shellcheck is the only automated signal it has). The
+# seeders' own suites are `make -C orthanc test` and `make -C omop-db local_test`.
 test-trust-data-tools:
 	uv run --no-project --with pytest --with 'huggingface_hub>=1.6' pytest tests -q
 	uvx ruff@0.14.7 check publish_trust_data.py tests && uvx ruff@0.14.7 format --check publish_trust_data.py tests
 	uvx --from shellcheck-py==0.11.0.1 shellcheck seed_trust.sh
-	bash tests/test_seed_marker_contract.sh
 
 tests:
 	cd data-access-api && make test && \

@@ -47,14 +47,16 @@ def test_the_registration_task_takes_its_names_from_the_keys():
     assert "FL_KIT_SLOT_NAMES" not in ECS_FLOWER
 
 
-def test_a_new_superlink_task_definition_replays_the_registration():
-    """The SuperLink runs without --database: a replaced task has no registered SuperNode."""
+def test_a_new_superlink_or_fl_api_task_definition_replays_the_registration():
+    """The SuperLink runs without --database and the fl-api keeps its node → trust name map in memory: a
+    replaced task of either has lost what the registration wrote."""
     superlink = hcl_block(
         strip_comments((AWS_DIR / "ecs_tasks.tf").read_text()), 'resource "aws_ecs_task_definition" "fl_server_net_1"'
     )
     assert "--database" not in superlink
     register = hcl_block(ECS_FLOWER, 'resource "null_resource" "flower_register_supernode_keys"')
     assert re.search(r"superlink\s*=\s*aws_ecs_task_definition\.fl_server_net_1\[0\]\.arn", register)
+    assert re.search(r"fl_api\s*=\s*aws_ecs_task_definition\.fl_api_net_1\[0\]\.arn", register)
 
 
 def test_flip_api_is_told_the_flower_kit_prefix_on_a_flower_hub_only():
@@ -102,6 +104,12 @@ def test_add_fl_kits_reads_the_registration_tasks_own_report():
     assert '*"All SuperNode keys registered successfully."*' in ADD_KITS
     assert 'echo "    OK: ${pub_key##*/} node_id=${node_id}"' in REGISTER
     assert '*"OK: supernode_credentials_${number}.pub node_id="*' in ADD_KITS
+
+    # A mapping-only failure: exit 3 and an "ERROR: FL API at" line, which add-fl-kits accepts and reports.
+    assert REGISTER.count("exit 3") == 2
+    assert REGISTER.count('echo "ERROR: FL API at ${fl_api_address} ') == 2
+    assert 'run_one_shot flower-register-supernode-keys register-supernode-keys "fl-api-${NET}" "" 3' in ADD_KITS
+    assert '"${TASK_EXIT_CODE}" == "3" || "${register_log}" == *"ERROR: FL API at "*' in ADD_KITS
 
 
 def test_the_copy_tasks_command_override_runs_in_a_shell():

@@ -19,8 +19,8 @@
 #
 #   /app/fl-client-init.sh <kit dir>     # the dir holding the kit's local/ and startup/
 #
-# Reads NUM_AVAILABLE_GPUS, MEMORY_PER_GPU_IN_GIB, LOG_LEVEL, FL_SITE_PRIVACY_* and ACCESS_POLICY_FILE, as
-# the client would. Any failure, an invalid site privacy configuration included, fails the step, and the
+# Reads NUM_AVAILABLE_GPUS, MEMORY_PER_GPU_IN_GIB, LOG_LEVEL, FL_SITE_PRIVACY_*, ACCESS_POLICY_FILE and
+# FL_EDGE_PORT, as the client would. Any failure, an invalid site privacy configuration included, fails the step, and the
 # client, which waits for it, does not start (fail closed).
 set -euo pipefail
 
@@ -78,3 +78,7 @@ render log_config '${LOG_LEVEL}' "LOG_LEVEL=$LOG_LEVEL"
 # Site privacy policy (FLIP#851, FLIP#1259): render local/privacy.json from FL_SITE_PRIVACY_* or the
 # governance document's [fl_privacy.nvflare] section, or remove a stale render when neither is set.
 python -m flip.nvflare.site_policy "$kit/local/privacy.json"
+
+# The FL server port the trust dials (FLIP#2051): NVFLARE reads it only from startup/fed_client.json,
+# so set it there from FL_EDGE_PORT. Unset leaves the kit's own port.
+python -m flip.nvflare.server_port "$kit/startup/fed_client.json"

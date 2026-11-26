@@ -41,10 +41,12 @@ receiver queries succeed while every retrieval times out (FLIP#993).
 from __future__ import annotations
 
 import json
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from kitfile import is_placeholder
 from naming import Names, fl_client_image
 
 #: Secret object -> container environment variable, per service. This is the contract's
@@ -289,13 +291,19 @@ def _event_table_exports() -> dict[str, Any]:
 
 
 def _trust_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
+    # An empty or still-scaffolded value is not a header name; keep the platform default.
+    key_header = kit.get("TRUST_API_KEY_HEADER", "").strip()
+    if is_placeholder(key_header):
+        key_header = "Authorization"
     env = {
         "ENV": "production",
         "LOG_LEVEL": _log_level(kit),
         "CENTRAL_HUB_API_URL": kit.get("CENTRAL_HUB_API_URL", ""),
         "TRUST_NAME": kit.get("TRUST_NAME", names.code),
         "POLL_INTERVAL_SECONDS": kit.get("POLL_INTERVAL_SECONDS", "5"),
-        "TRUST_API_KEY_HEADER": kit.get("TRUST_API_KEY_HEADER", "Authorization"),
+        "TRUST_API_KEY_HEADER": key_header,
+        # The wrong-host self-check; empty leaves it off.
+        "EXPECTED_TRUST_ID": kit.get("EXPECTED_TRUST_ID", ""),
         "TRUST_INTERNAL_SERVICE_KEY_HEADER": kit.get(
             "TRUST_INTERNAL_SERVICE_KEY_HEADER", "X-Trust-Internal-Service-Key"
         ),
@@ -525,7 +533,11 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
         env["SUPERNODE_NAME"] = kit.get("FL_KIT_SLOT", "")
         slot = kit.get("FL_KIT_SLOT_NUMBER", "1")
         superlink = kit.get("NLB_SUBDOMAIN", "")
-        port = kit.get("FL_EDGE_PORT", "").strip() or kit.get("FL_SERVER_PORT", "").strip()
+        port = (
+            kit.get("FL_EDGE_PORT_OVERRIDE", "").strip()
+            or kit.get("FL_EDGE_PORT", "").strip()
+            or kit.get("FL_SERVER_PORT", "").strip()
+        )
         if not superlink.strip() or not port:
             # `--superlink ":"` deploys cleanly and the SuperNode then exits with code 600.
             raise ValueError("FL_BACKEND=flower needs NLB_SUBDOMAIN and FL_EDGE_PORT (or FL_SERVER_PORT) in the kit")
@@ -542,10 +554,10 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
         ]
     flare_workspace: list[dict[str, str]] = []
     if backend != "flower":
-        # The FLARE client runs from /app/startup (it chmods the scripts there) and renders
-        # privacy.json and its log config into /app/local, so both must be writable. A stage
-        # volume cannot be mounted writable here (the kit stays read-only), so the client gets
-        # local volumes and the kit is copied in before the image's own entrypoint runs.
+        # Copies the kit from its read-only stage volume into local volumes at /app/<part>, then
+        # runs the image's entrypoint. Nothing here renders local/resources.json, log_config.json
+        # or privacy.json (fl-client-init does on Compose and Helm), and the entrypoint refuses to
+        # start without them.
         flare_workspace = [{"name": f"fl-{part}", "source": "local"} for part in FLARE_WORKSPACE]
         container["volumeMounts"] += [{"name": f"fl-{part}", "mountPath": f"/app/{part}"} for part in FLARE_WORKSPACE]
         copies = " && ".join(
@@ -585,6 +597,44 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
     )
 
 
+def governance_document(ref: str) -> Path:
+    """The kit's ``ACCESS_POLICY_FILE`` on this host: relative to ``trust/``, as Compose's
+    ``--project-directory trust`` resolves its own mount of the same file."""
+    document = Path(ref)
+    return document if document.is_absolute() else (Path(__file__).resolve().parents[2] / document).resolve()
+
+
+def refuse_site_privacy(kit: dict[str, str]) -> None:
+    """Refuse a kit that asks for an FL site privacy filter, in either of its two forms.
+
+    On Compose and Helm an init step (``fl-client-init``, after the governance extract) renders
+    the client's ``privacy.json`` before the client starts. Nothing does on SPCS, so the trust
+    would come up with no site filter while its kit asks for one (fail closed, FLIP#2047).
+    """
+    # Any name with the prefix, not the three known ones: the client refuses a misspelt
+    # name, so on Compose a typo stops it, and here it must not deploy with no filter.
+    asked = next((key for key, value in kit.items() if key.startswith("FL_SITE_PRIVACY_") and value.strip()), None)
+    ref = kit.get("ACCESS_POLICY_FILE", "").strip()
+    if not asked and ref:
+        try:
+            section = tomllib.loads(governance_document(ref).read_text()).get("fl_privacy")
+        except (OSError, ValueError) as e:
+            raise ValueError(
+                f"ACCESS_POLICY_FILE={ref!r} cannot be read ({e}), so it cannot be checked for a site privacy filter"
+            ) from None
+        # An empty [fl_privacy.nvflare] is no policy, as flip.nvflare.site_policy reads it.
+        if isinstance(section, dict):
+            section = any(section.values())
+        if section:
+            asked = f"[fl_privacy] in {ref}"
+    if asked:
+        raise ValueError(
+            f"{asked} asks for an FL site privacy filter, which a Snowflake trust does not apply: nothing on\n"
+            "   SPCS renders the FL client's privacy.json, so the client would start without it. Remove the\n"
+            "   setting to deploy with no site filter, or run this trust on Compose or Kubernetes."
+        )
+
+
 def _pacs_env(kit: dict[str, str], names: Names) -> dict[str, str]:
     """The upstream PACS and the DQR schedule, as configure-xnat.sh reads them.
 
@@ -599,7 +649,9 @@ def _pacs_env(kit: dict[str, str], names: Names) -> dict[str, str]:
         "PACS_QR_PORT": kit.get("PACS_QR_PORT", "4242"),
         "PACS_LABEL": kit.get("PACS_LABEL", "Test PACS instance"),
         "PACS_SUPPORTS_EXTENDED_NEGOTIATIONS": kit.get("PACS_SUPPORTS_EXTENDED_NEGOTIATIONS", "true"),
-        "PACS_AVAILABILITY_DAYS": kit.get("PACS_AVAILABILITY_DAYS", "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY"),
+        # No default of its own: a second one here said Monday to Friday while every other
+        # shape retrieves all week. Absent from the kit, configure-xnat.sh's default applies.
+        **({"PACS_AVAILABILITY_DAYS": kit["PACS_AVAILABILITY_DAYS"]} if "PACS_AVAILABILITY_DAYS" in kit else {}),
         "PACS_AVAILABILITY_START": kit.get("PACS_AVAILABILITY_START", "00:00"),
         "PACS_AVAILABILITY_END": kit.get("PACS_AVAILABILITY_END", "24:00"),
         "PACS_THREADS": kit.get("PACS_THREADS", "1"),
@@ -643,7 +695,8 @@ def _xnat_web(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Ren
         "XNAT_CONTAINER_SERVICE_ENABLED": "false",
         "CATALINA_OPTS": (
             f"-Xms{kit.get('XNAT_MIN_HEAP', '1g')} -Xmx{kit.get('XNAT_MAX_HEAP', '4g')} "
-            f"-Dxnat.home={xnat_home} -XX:+UseG1GC -Djava.awt.headless=true"
+            f"-Dxnat.home={xnat_home} -XX:+UseG1GC -Djava.awt.headless=true "
+            "-Djavamelody.update-check-disabled=true"
         ),
     }
     spec = {
@@ -1066,6 +1119,7 @@ def build_all(kit: dict[str, str], code: str, digests: dict[str, str] | None = N
     """
     names = Names(code)
     digests = digests or {}
+    refuse_site_privacy(kit)
     rendered = [
         _xnat_db(kit, names, digests),
         _xnat_web(kit, names, digests),

@@ -175,8 +175,8 @@ section. The ECS FL task definitions serve **both
 FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
 switches the same task families between FLARE and Flower (SuperLink ports/command/creds — Flower
 additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
-`make -C fl-services/flower provision upload-creds-to-s3`, with `FLOWER_EXTRA_SERVER_SANS` covering the
-Cloud Map + public FL hostnames).
+`make -C fl-services/flower provision upload-creds-to-s3 DRYRUN=` (a dry run without `DRYRUN=`), with
+`FLOWER_EXTRA_SERVER_SANS` covering the Cloud Map + public FL hostnames).
 
 > **Deprecated — hub on EC2/compose** ([FLIP#936](https://github.com/londonaicentre/FLIP/issues/936)):
 > running the hub via `compose.prod*.yml` on an EC2 or self-managed host is not a supported

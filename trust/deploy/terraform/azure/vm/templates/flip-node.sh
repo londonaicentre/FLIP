@@ -81,12 +81,28 @@ check_ref() {
     fi
 }
 
+# Without a REF the node stays where its last checkout left it (a detached HEAD): FLIP_REF is first
+# boot's ref, and returning to it would undo every `reprovision REF=` under a running trust. A clone
+# still on its branch (symbolic-ref exits 0) was never pinned, so it takes FLIP_REF. Detached is
+# symbolic-ref's exit 1 on a HEAD that resolves; any other answer (a damaged repo, one git refuses to
+# open) stops here rather than provision from what is on disk.
 checkout() {
-    local ref="${1:-${FLIP_REF}}"
-    check_ref "${ref}"
     if [ ! -d "${REPO_DIR}/.git" ]; then
         git clone --quiet "${FLIP_REPO_URL}" "${REPO_DIR}"
     fi
+    if [ -z "${1:-}" ]; then
+        local on_branch=0
+        git -C "${REPO_DIR}" symbolic-ref --quiet HEAD >/dev/null || on_branch=$?
+        if [ "${on_branch}" -ne 0 ]; then
+            if [ "${on_branch}" -ne 1 ] || ! git -C "${REPO_DIR}" rev-parse --verify --quiet HEAD >/dev/null; then
+                echo "ERROR: cannot read ${REPO_DIR}'s HEAD; not provisioning from it." >&2
+                exit 1
+            fi
+            return 0
+        fi
+    fi
+    local ref="${1:-${FLIP_REF}}"
+    check_ref "${ref}"
     git -C "${REPO_DIR}" fetch --quiet --tags origin
     git -C "${REPO_DIR}" checkout --quiet --detach "${ref}"
 }

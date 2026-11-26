@@ -264,7 +264,8 @@ aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
 > wipes `state/`, rotates the root CA, and so **forces a redeploy of every already-onboarded
 > trust** (the same fleet-wide churn called out above). Only take this route in a maintenance
 > window where redeploying the whole fleet is acceptable, then re-upload:
-> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 HUB=prod`.
+> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 HUB=prod DRYRUN=`
+> (without `DRYRUN=` the upload is a dry run).
 
 ### Activating the new slot on the hub
 

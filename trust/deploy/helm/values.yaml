@@ -88,15 +88,16 @@ governance:
 # and silently stops taking effect — see README "Upgrading: trustData.version replaces the two
 # per-store pins".
 trustData:
-  version: "20261019"
+  version: "20261125"
   hfRepo: "aicentreflip/trust-data"
   # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
   # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
   # and — when `orthanc` is on — the matching studies into Orthanc over its REST API. It
   # replaced the pgdata / Orthanc volume snapshots (the former omopDb.initJob / orthanc.initJob):
-  # both stores start on empty PVCs and are filled here. Idempotent on every upgrade: only the
-  # listed projects' rows are replaced, the vocabulary load skips itself when present, Orthanc
-  # dedupes on SOPInstanceUID. The licensed core vocabulary is still omopDb.vocabLoad.
+  # both stores start on empty PVCs and are filled here. Each half seeds only a store that is still
+  # empty (FLIP#2111): an omop-db with no imaging row, an Orthanc with no study. So an upgrade of a
+  # seeded trust fetches and loads nothing, and a trustData.version bump reaches it only through an
+  # explicit `make -C trust/deploy/helm reseed KIT=<CODE>`. The licensed core vocabulary is still omopDb.vocabLoad.
   seed:
     enabled: true
     omop: true
@@ -134,8 +135,13 @@ trustData:
     # killed between them leaves a database that reports itself loaded while holding an
     # incomplete vocabulary, which every later upgrade then skips. Set true for one upgrade to
     # reload over it (it duplicates concept_relationship rows, which has no unique key), then
-    # put it back.
+    # put it back. On a database that already holds data that reload is all it does; an empty one
+    # is seeded as usual.
     forceDicomVocab: false
+    # Seed a store that already holds data, Orthanc clearing the listed projects' studies first.
+    # Leave false: `make -C trust/deploy/helm reseed KIT=<CODE>` sets it for one run of the seed Job,
+    # which is how a trust moves to a new trustData.version.
+    reseed: false
     # Scratch for the fetched tables, the vocabulary zip and — with `orthanc` on — the DICOM
     # sets and their extraction (~2 GB + ~2 GB for the two default projects).
     workDirSize: 8Gi
@@ -268,8 +274,12 @@ trustApi:
     # HTTP header the hub reads the per-trust API key from. Must match the hub's
     # TRUST_API_KEY_HEADER; the platform default (.env.development.example, the
     # prod/dev compose, and register_trust's Hub-shared block) is "Authorization".
-    # A mismatch makes the hub answer 401 "API key is missing".
+    # A mismatch makes the hub answer 401 "API key is missing". `make sync-kit`
+    # writes the kit's value over this one.
     TRUST_API_KEY_HEADER: "Authorization"  # pragma: allowlist secret
+    # The kit's wrong-host self-check (`make sync-kit` writes the kit's EXPECTED_TRUST_ID):
+    # trust-api exits when the hub resolves it as another trust. Empty leaves the check off.
+    EXPECTED_TRUST_ID: ""
     POLL_INTERVAL_SECONDS: "5"
 
 # ---------------------------------------------------------------------------
@@ -494,6 +504,10 @@ flClient:
     pin: ""
     pullPolicy: Always
   nvflare:
+    # The FL server port the client dials (FLIP#2051), written into the kit's startup/fed_client.json by
+    # the fl-client-init init container. sync-kit fills it from the kit's FL_EDGE_PORT_OVERRIDE, else
+    # FL_EDGE_PORT. Empty keeps the kit's own port.
+    serverPort: ""
     # Site-enforced privacy policy (FLIP#851): rendered into the kit's local/privacy.json
     # by the fl-client-init init container (`python -m flip.nvflare.site_policy`, whose
     # errors are in that container's log) and checked, without writing, by the client's

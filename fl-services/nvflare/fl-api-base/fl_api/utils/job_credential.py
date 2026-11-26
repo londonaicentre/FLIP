@@ -50,8 +50,10 @@ def deliver_job_credential(model_id: str, credential: str | None) -> None:
             detail=f"{JOB_CREDENTIAL_DIR_ENV} is not set: the job could not report to the hub.",
         )
     directory = Path(root)
+    # Checked before anything is touched, so a refused name leaves the earlier credential in place.
+    target = safe_join(directory, model_id)
     directory.mkdir(parents=True, exist_ok=True)
     # A net runs one job at a time, so any other credential here belongs to a job that has ended.
     for other in directory.iterdir():
         other.unlink()
-    safe_join(directory, model_id).write_text(credential)
+    target.write_text(credential)
