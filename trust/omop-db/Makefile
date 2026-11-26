@@ -225,12 +225,20 @@ check-kit:
 # trust's OMOP, so the fetched bundle is simply unused in that case.
 seed-omop-snowflake: check-kit $(if $(CANONICAL_DIR),,fetch-dataset) fetch-vocab-dicom
 	uv run python -m omop_db_tools.snowflake_seed $(SNOWFLAKE_SEED_ARGS) \
-		--vocab-dir data/$(VOCAB_DICOM_BUNDLE) $(if $(filter 1 true,$(IF_NEEDED)),--if-needed,)
+		--vocab-dir data/$(VOCAB_DICOM_BUNDLE)
 
-# The ensure-seeded equivalent: seeds only an OMOP that holds no imaging row yet
-# (FLIP#2111). After a .data_version bump, re-seed with seed-omop-snowflake.
-ensure-seeded-snowflake:
-	$(MAKE) seed-omop-snowflake KIT=$(KIT) IF_NEEDED=1
+# The ensure-seeded equivalent (FLIP#2111): asks the trust's OMOP first, so a seeded one fetches
+# nothing, and seeds only one that holds no imaging row yet. A probe that cannot ask (a bad
+# connection) stops here rather than read as empty. After a .data_version bump, re-seed with
+# seed-omop-snowflake, which always seeds.
+ensure-seeded-snowflake: check-kit
+	@held=$$(uv run python -m omop_db_tools.snowflake_seed --code $(KIT) --connection $(SNOW_CONNECTION) \
+	  --snow $(SNOW) --holds-data) || exit 1; \
+	if [ "$$held" = yes ]; then \
+	  echo "✅ OMOP (FLIP_TRUST_$(KIT)) already holds data, left as it is (re-seed: make seed-omop-snowflake KIT=$(KIT))"; \
+	else \
+	  $(MAKE) seed-omop-snowflake KIT=$(KIT); \
+	fi
 
 unseed-omop-snowflake: check-kit $(if $(CANONICAL_DIR),,fetch-dataset)
 	uv run python -m omop_db_tools.snowflake_seed $(SNOWFLAKE_SEED_ARGS) --remove-only

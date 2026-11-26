@@ -94,9 +94,10 @@ trustData:
   # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
   # and — when `orthanc` is on — the matching studies into Orthanc over its REST API. It
   # replaced the pgdata / Orthanc volume snapshots (the former omopDb.initJob / orthanc.initJob):
-  # both stores start on empty PVCs and are filled here. Idempotent on every upgrade: only the
-  # listed projects' rows are replaced, the vocabulary load skips itself when present, Orthanc
-  # dedupes on SOPInstanceUID. The licensed core vocabulary is still omopDb.vocabLoad.
+  # both stores start on empty PVCs and are filled here. Each half seeds only a store that is still
+  # empty (FLIP#2111): an omop-db with no imaging row, an Orthanc with no study. So an upgrade of a
+  # seeded trust fetches and loads nothing, and a trustData.version bump reaches it only through an
+  # explicit `make -C trust/deploy/helm reseed`. The licensed core vocabulary is still omopDb.vocabLoad.
   seed:
     enabled: true
     omop: true
@@ -136,6 +137,10 @@ trustData:
     # reload over it (it duplicates concept_relationship rows, which has no unique key), then
     # put it back.
     forceDicomVocab: false
+    # Seed a store that already holds data, Orthanc clearing the listed projects' studies first.
+    # Leave false: `make -C trust/deploy/helm reseed` sets it for one run of the seed Job, which is
+    # how a trust moves to a new trustData.version.
+    reseed: false
     # Scratch for the fetched tables, the vocabulary zip and — with `orthanc` on — the DICOM
     # sets and their extraction (~2 GB + ~2 GB for the two default projects).
     workDirSize: 8Gi

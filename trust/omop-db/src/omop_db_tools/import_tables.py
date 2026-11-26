@@ -215,6 +215,16 @@ def remove_strays(engine: Engine, data_dir: Path, projects: list[str], dry_run: 
     print("✅ Dry run: nothing deleted" if dry_run else "✅ Strays removed: " + ", ".join(projects))
 
 
+def holds_imaging(engine: Engine) -> bool:
+    """Whether the database already holds an imaging row: what ``--holds-data`` answers (FLIP#2111).
+
+    Image rows, not persons — ``load-synthea-ehr`` adds persons with no imaging — the question
+    ``make -C trust ensure-seeded`` asks a Compose trust and the Snowflake seeder its own.
+    """
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT 1 FROM omop.image_occurrence LIMIT 1;")).first() is not None
+
+
 def load_project(
     engine: Engine,
     data_dir: Path,
@@ -306,10 +316,19 @@ def main(argv: list[str] | None = None) -> None:
         "projects' tables do not give — rows another loader wrote — and load nothing (FLIP#2084).",
     )
     parser.add_argument("--dry-run", action="store_true", help="With --remove-strays: count, delete nothing.")
+    parser.add_argument(
+        "--holds-data",
+        action="store_true",
+        help="Print yes when the database already holds an imaging row, else no, and load nothing: what "
+        "trust/seed_trust.sh asks before it fetches anything (FLIP#2111).",
+    )
     args = parser.parse_args(argv)
 
     engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
 
+    if args.holds_data:
+        print("yes" if holds_imaging(engine) else "no")
+        return
     if args.remove_strays:
         remove_strays(engine, args.data_dir, args.projects, dry_run=args.dry_run)
         return

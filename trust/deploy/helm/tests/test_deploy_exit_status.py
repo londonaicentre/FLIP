@@ -88,9 +88,11 @@ def _stub(path: Path, body: str) -> Path:
     return path
 
 
-def _make(tmp_path: Path, target: str, **env_overrides: str) -> tuple[subprocess.CompletedProcess, str]:
+def _make(
+    tmp_path: Path, target: str, render_text: str = JOB_RENDER, **env_overrides: str
+) -> tuple[subprocess.CompletedProcess, str]:
     render = tmp_path / "render.yaml"
-    render.write_text(JOB_RENDER)
+    render.write_text(render_text)
     log = tmp_path / "calls.log"
     log.write_text("")
     env = dict(os.environ, HELM_RENDER=str(render), CALL_LOG=str(log), **env_overrides)
@@ -178,3 +180,29 @@ def test_an_unrenderable_chart_fails_xnat_init_instead_of_reporting_xnat_disable
     assert "could not render the chart" in result.stdout
     assert "XNAT is disabled" not in result.stdout
     assert "kubectl" not in log.read_text()
+
+
+SEED_RENDER = JOB_RENDER.replace("xnat-init", "trust-seed")
+
+
+def test_reseed_runs_the_seed_job_once_with_reseed_on(tmp_path):
+    """The hook seeds only an empty store (FLIP#2111), so a pin bump reaches a seeded trust only this way."""
+    result, calls = _make(tmp_path, "reseed", render_text=SEED_RENDER)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--set trustData.seed.reseed=true" in calls, calls
+    assert "delete job -n flip-trust --selector app.kubernetes.io/component=trust-seed" in calls, calls
+    assert "wait job --selector app.kubernetes.io/component=trust-seed" in calls, calls
+    assert "Trust re-seed complete" in result.stdout
+
+
+def test_a_failed_reseed_fails_and_names_itself(tmp_path):
+    result, _ = _make(tmp_path, "reseed", render_text=SEED_RENDER, KUBECTL_WAIT_RC="1")
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "Trust re-seed failed" in result.stdout
+
+
+def test_reseed_with_seeding_off_does_nothing(tmp_path):
+    result, calls = _make(tmp_path, "reseed")  # the render carries no trust-seed Job
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "nothing to re-seed" in result.stdout
+    assert "kubectl" not in calls

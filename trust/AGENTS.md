@@ -315,5 +315,6 @@ tag (`main` to work against content that is not tagged yet). Publishing a versio
 then a bump of `trust/.data_version`, then a re-seed of the trusts that hold sample data: nothing
 re-seeds them on its own. The dev trusts get `make -C trust seed-trusts PROJECTS="…" CLEAR=1` once the
 bump merges; the staging pool and the production sample-data sites follow at the release, whose
-`make release-main-check` checklist names the step whenever the pin moved. Never add a versioned
+`make release-main-check` checklist names the step whenever the pin moved (Kubernetes:
+`make -C trust/deploy/helm reseed`, its hook filling only empty stores; EC2: `make seed RESEED=1`). Never add a versioned
 filename or directory to the dataset.

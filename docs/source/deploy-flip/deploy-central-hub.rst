@@ -413,7 +413,7 @@ Two more things to plan for:
 
        make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
-  Do **not** use that root's ``deploy``: it is a first-install command that re-seeds the trust's data and resets XNAT.
+  Do **not** use that root's ``deploy``: it is a first-install command that resets XNAT.
 
   The hub never checks the trust-internal service key, so a site on a Docker Compose host can also rotate it on its
   own, without the hub and without touching its API key:
@@ -512,8 +512,7 @@ one maintenance window.
 2. **Redeploy the hub and every trust** in the same window: ``deploy-centralhub`` for the hub (see
    :ref:`deploy-central-hub-deploys`), and the upgrade command for each trust's platform (``upgrade-onprem-trust``,
    ``upgrade-trust-k8s``, or an EC2 node's ``make upgrade``; see :ref:`admin-upgrading-sites`). Do not use a
-   first-install command (``up-onprem-trust``, an EC2 node's ``make deploy``) here: it resets XNAT, and on EC2
-   re-seeds the trust's data.
+   first-install command (``up-onprem-trust``, an EC2 node's ``make deploy``) here: it resets XNAT.
 3. **Resume.** Disable Deployment Mode.
 
 .. warning::

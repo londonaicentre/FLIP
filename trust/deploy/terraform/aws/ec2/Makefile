@@ -177,7 +177,9 @@ SAMPLE_DATA_OFF = $(filter false,$(TRUST_DATA_SEED_EFFECTIVE))
 SEED_SKIP_TAGS = $(if $(KIT_BUCKET),$(if $(SAMPLE_DATA_OFF),--skip-tags seed),--skip-tags omop-vocab)
 
 # The vocabulary comes from the kit bucket; without one the seed loads the dataset only, as on the
-# Azure node, and cohort queries need the vocabulary-free form.
+# Azure node, and cohort queries need the vocabulary-free form. Each store is seeded only while it is
+# empty (FLIP#2111); RESEED=1 seeds a seeded one again (Orthanc cleared first), the step after a
+# .data_version bump.
 seed: ## Seed OMOP + Orthanc from the canonical dataset (not with TRUST_DATA_SEED=false), then (with KIT_BUCKET) load the vocabulary (stack stopped)
 	$(require_kit)
 	$(require_trust_data_seed)
@@ -187,7 +189,8 @@ seed: ## Seed OMOP + Orthanc from the canonical dataset (not with TRUST_DATA_SEE
 		-e orthanc_username=$(call kit_get,ORTHANC_USERNAME) -e orthanc_password=$(call kit_get,ORTHANC_PASSWORD) \
 		-e vocab_s3_bucket=$(KIT_BUCKET) -e omop_db_tag=$(call kit_get,DOCKER_TAG) \
 		$(if $(SEED_PROJECTS),-e seed_projects="$(SEED_PROJECTS)") $(if $(SEED_ORTHANC),-e seed_orthanc=$(SEED_ORTHANC)) \
-		$(if $(SOURCE_TRUST),-e source_trust=$(SOURCE_TRUST)) $(if $(filter 1,$(FORCE_DICOM_VOCAB)),-e force_dicom_vocab=true)))
+		$(if $(SOURCE_TRUST),-e source_trust=$(SOURCE_TRUST)) $(if $(filter 1,$(FORCE_DICOM_VOCAB)),-e force_dicom_vocab=true) \
+		$(if $(filter 1,$(RESEED)),-e seed_reseed=true)))
 
 # First install: the stack is stopped before the seed and started after it. The kit is read here, on
 # this workstation, and the node's daemon is driven over the ssh docker context, so the kit never

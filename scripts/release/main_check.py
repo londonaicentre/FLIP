@@ -67,12 +67,12 @@ def after_merge(tag: str, data_version: str | None = None) -> list[str]:
     if data_version:
         steps.append(
             f"The trust-data pin moves to `{data_version}`, and nothing re-seeds a trust that already holds data "
-            "(FLIP#2111). Re-seed every Compose sample-data trust at it with the projects it holds (a Helm or EC2 "
-            "trust re-seeds at its own upgrade): the dev trusts "
-            '(`make -C trust seed-trusts PROJECTS="…" CLEAR=1`), the staging pool, and the production sample-data '
-            'sites, whose operators get `make -C trust seed KIT=<CODE> HUB=prod PROJECTS="…" CLEAR=1` with the '
-            "release. A cut that changed a project's person ids needs `CLEAN=all` or an unseed first, as the bump "
-            "PR says."
+            "(FLIP#2111). Once each sample-data trust runs the release, re-seed it with the projects it holds: "
+            '`make -C trust seed KIT=<CODE> PROJECTS="…" CLEAR=1` on Compose (`seed-trusts … CLEAR=1` for the '
+            "dev pair), `make -C trust/deploy/helm reseed KIT=<CODE>` on Kubernetes, `make seed RESEED=1` from "
+            "an EC2 node's root. That covers the staging pool and the production sample-data sites, whose "
+            "operators get the command with the release. A cut that changed a project's person ids needs "
+            "`CLEAN=all` or an unseed first, as the bump PR says."
         )
     return steps
 

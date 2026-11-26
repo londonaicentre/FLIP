@@ -18,6 +18,7 @@ half is testable offline. ``run_sql`` is exercised through a stubbed executable.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -25,6 +26,8 @@ import pandas as pd
 import pytest
 
 from omop_db_tools import snowflake_seed as seed
+
+OMOP_DB_DIR = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -398,23 +401,46 @@ def test_an_empty_load_fails_the_run_and_says_to_re_seed(canonical: Path, monkey
         seed.main(_main_args(canonical))
 
 
-def test_if_needed_leaves_an_omop_that_holds_data(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(("holds", "answer"), [(True, "yes"), (False, "no")])
+def test_holds_data_answers_and_does_nothing_else(
+    holds: bool, answer: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What ensure-seeded-snowflake asks before it fetches: only the code and the connection are needed."""
     scripts = _fake_snowflake(monkeypatch, [])
-    monkeypatch.setattr(seed, "holds_imaging", lambda *args: True)
+    monkeypatch.setattr(seed, "holds_imaging", lambda *args: holds)
 
-    assert seed.main([*_main_args(canonical), "--if-needed"]) == 0
+    assert seed.main(["--code", "GSTT", "--connection", "review", "--holds-data"]) == 0
 
+    assert capsys.readouterr().out.strip() == answer
     assert scripts == [], "nothing is staged, loaded or counted"
 
 
-def test_if_needed_seeds_an_empty_omop(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    full = _counts(person=2, visit_occurrence=1, procedure_occurrence=1, image_occurrence=1, image_feature=1)
-    scripts = _fake_snowflake(monkeypatch, full)
-    monkeypatch.setattr(seed, "holds_imaging", lambda *args: False)
+def _ensure_seeded_snowflake(tmp_path: Path, answer: str) -> str:
+    """`make -n ensure-seeded-snowflake` with the probe (uv) stubbed to print ``answer``."""
+    stub = tmp_path / "uv"
+    stub.write_text(f"#!/bin/sh\necho {answer}\n")
+    stub.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k not in {"MAKEFLAGS", "MAKELEVEL", "MFLAGS"}}
+    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+    return subprocess.run(
+        ["make", "-n", "-C", str(OMOP_DB_DIR), "ensure-seeded-snowflake", "KIT=GSTT", "SNOW_CONNECTION=review"],
+        capture_output=True, text=True, env=env, check=True,
+    ).stdout  # fmt: skip
 
-    assert seed.main([*_main_args(canonical), "--if-needed"]) == 0
 
-    assert any("COPY INTO" in s for s in scripts)
+def test_ensure_seeded_snowflake_fetches_nothing_for_a_seeded_trust(tmp_path: Path) -> None:
+    """The probe runs before the dataset and vocabulary downloads, which only an empty OMOP needs."""
+    out = _ensure_seeded_snowflake(tmp_path, "yes")
+    # Under -n the recipe is printed as well as run, so a dispatch shows as the sub-make's own lines.
+    assert "\n✅ OMOP (FLIP_TRUST_GSTT) already holds data" in out, out
+    assert "omop_db_tools.dataset fetch" not in out, f"the dataset was fetched for a seeded trust:\n{out}"
+    assert "--vocab-dir" not in out, f"the seed ran for a seeded trust:\n{out}"
+
+
+def test_ensure_seeded_snowflake_seeds_an_empty_trust(tmp_path: Path) -> None:
+    out = _ensure_seeded_snowflake(tmp_path, "no")
+    assert "omop_db_tools.dataset fetch" in out, out
+    assert "--vocab-dir" in out, out
 
 
 # ── unseed ───────────────────────────────────────────────────────────────────────────────

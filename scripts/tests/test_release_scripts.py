@@ -710,8 +710,9 @@ class MainCheck(unittest.TestCase):
         assert not any("trust-data pin" in step for step in main_check.after_merge("v0.13.0"))
         step = main_check.after_merge("v0.13.0", "20261125")[-1]
         assert "The trust-data pin moves to `20261125`" in step
-        assert 'make -C trust seed-trusts PROJECTS="…" CLEAR=1' in step
-        assert "HUB=prod" in step
+        assert 'make -C trust seed KIT=<CODE> PROJECTS="…" CLEAR=1' in step  # Compose
+        assert "make -C trust/deploy/helm reseed KIT=<CODE>" in step  # Kubernetes
+        assert "make seed RESEED=1" in step  # EC2
         body = shlex.split(main_check.create_command("v0.13.0", [], "20261125"))[-1]
         assert "- [ ] The trust-data pin moves to `20261125`" in body
 

@@ -28,9 +28,10 @@ using:
 4. The filtered CSVs are PUT to the ``STAGES.SEED`` internal stage and loaded with COPY INTO.
    A project's delete and its COPYs are one transaction, and the loaded rows are counted
    against the CSVs afterwards.
-5. ``--if-needed`` (``make ensure-seeded-snowflake``) seeds only an OMOP that holds no imaging
-   row yet, the question ``make -C trust ensure-seeded`` asks a Postgres trust (FLIP#2111): no
-   record of what was loaded is kept, so a data-version bump is an explicit re-seed.
+5. ``--holds-data`` answers whether the trust's OMOP already holds an imaging row, the question
+   ``make -C trust ensure-seeded`` asks a Postgres trust (FLIP#2111). ``make ensure-seeded-snowflake``
+   asks it before fetching anything and seeds only an empty OMOP; no record of what was loaded is
+   kept, so a data-version bump is an explicit re-seed.
 
 Everything that talks to Snowflake goes through the ``snow`` CLI with SQL on stdin, as the
 SPCS node shape does (FLIP#1582), running as ``FLIP_<CODE>_OMOP_LOADER``. ``--dry-run`` prints
@@ -580,7 +581,7 @@ def dicom_vocab_present(names: Names, connection: str, snow: str, dry_run: bool)
 
 
 def holds_imaging(names: Names, connection: str, snow: str) -> bool:
-    """Whether this trust's OMOP already holds imaging rows: what ``--if-needed`` skips on.
+    """Whether this trust's OMOP already holds imaging rows: what ``--holds-data`` answers.
 
     Image rows, not persons, as on Postgres, whose ``ensure-seeded`` asks the same question.
     """
@@ -746,10 +747,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--vocab-dir", type=Path, default=None, help="DICOM vocabulary directory.")
     parser.add_argument("--ddl-file", type=Path, default=None, help="Postgres OMOP DDL to translate.")
     parser.add_argument(
-        "--if-needed",
+        "--holds-data",
         action="store_true",
-        help="Do nothing when the trust's OMOP already holds an imaging row, the Snowflake equivalent of "
-        "`make -C trust ensure-seeded`.",
+        help="Print yes when the trust's OMOP already holds an imaging row, else no, and do nothing else: what "
+        "`make ensure-seeded-snowflake` asks before it fetches anything. Needs only --code and --connection.",
     )
     parser.add_argument(
         "--remove-only",
@@ -761,14 +762,14 @@ def main(argv: list[str] | None = None) -> int:
 
     names = names_for(args.code)
 
+    if args.holds_data:
+        print("yes" if holds_imaging(names, args.connection, args.snow) else "no")
+        return 0
+
     if args.remove_only:
         statements = build_unseed_statements(names, args.data_dir, args.projects)
         run_sql(statements, connection=args.connection, snow=args.snow, dry_run=args.dry_run)
         print(f"✅ Unseeded {' '.join(args.projects)} from {names.database}")
-        return 0
-
-    if args.if_needed and not args.dry_run and holds_imaging(names, args.connection, args.snow):
-        print(f"✅ OMOP ({names.database}) already holds data, left as it is (re-seed: seed-omop-snowflake)")
         return 0
 
     validate_data_dir(args.data_dir, args.projects)

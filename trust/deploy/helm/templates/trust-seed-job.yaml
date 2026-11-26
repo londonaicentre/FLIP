@@ -16,9 +16,10 @@ OMOP rows into omop-db and the matching studies into Orthanc, both selected by t
 Orthanc volume snapshots: the two stores start on empty PVCs (omop-db initialises its schema and
 roles on first start; Orthanc its index) and this post-install/post-upgrade hook fills them.
 
-Idempotent and cheap on an upgrade: the OMOP loader replaces only the listed projects' rows, the
-DICOM vocabulary loader skips itself when the vocabulary is present, and Orthanc dedupes on
-SOPInstanceUID. Weight 6 — after the vocab-load hook (5), so on a cluster that loads the licensed
+Each half seeds only a store that is still empty — an omop-db with no imaging row, an Orthanc with
+no study (FLIP#2111) — so an upgrade of a seeded trust fetches and loads nothing, and a store that is
+empty again (a recreated PVC) is filled on the next one. `make -C trust/deploy/helm reseed` runs this
+Job once with trustData.seed.reseed=true to move a seeded trust to a new trustData.version. Weight 6 — after the vocab-load hook (5), so on a cluster that loads the licensed
 vocabulary the rows land in a constrained database, which the loader handles (the DICOM vocabulary
 goes in first, so every imaging concept the rows reference resolves).
 
@@ -94,6 +95,8 @@ spec:
               value: {{ .Values.trustData.seed.dicomVocabBundle | quote }}
             - name: FORCE_DICOM_VOCAB
               value: {{ ternary "1" "" .Values.trustData.seed.forceDicomVocab | quote }}
+            - name: RESEED
+              value: {{ .Values.trustData.seed.reseed | quote }}
             - name: WORK_DIR
               value: /work
             - name: SEED_OMOP

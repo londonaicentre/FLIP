@@ -41,8 +41,8 @@ lists them.
 .. warning::
 
    Several fixes below mention the first-install commands (``make up-onprem-trust``,
-   ``make -C trust/deploy/terraform/aws/ec2 deploy``, ``make -C trust/xnat up-xnat``). They **wipe the XNAT archive**,
-   and the EC2 one re-seeds the trust's data. Never use them to move a live site to a new release; see
+   ``make -C trust/deploy/terraform/aws/ec2 deploy``, ``make -C trust/xnat up-xnat``). They **wipe the XNAT
+   archive**. Never use them to move a live site to a new release; see
    :ref:`admin-upgrading-sites`.
 
 ***********************

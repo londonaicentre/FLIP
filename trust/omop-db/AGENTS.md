@@ -99,8 +99,8 @@ tolerate the DICOM vocab the seed has already loaded):
   reached by `make -C trust/omop-db seed-omop-snowflake KIT=<CODE>` (and `ensure-seeded-snowflake` /
   `unseed-omop-snowflake`). Same canonical source, same `source_trust` selection (it calls
   `dataset.split_for_trust`, it does not reimplement it); the load is an internal stage PUT + `COPY INTO`,
-  and `ensure-seeded-snowflake` (`--if-needed`) seeds only an OMOP with no `IMAGE_OCCURRENCE` row, as on
-  Postgres (FLIP#2111). The OMOP tables are **translated from
+  and `ensure-seeded-snowflake` asks first (`snowflake_seed --holds-data`, before any download) and seeds
+  only an OMOP with no `IMAGE_OCCURRENCE` row, as on Postgres (FLIP#2111). The OMOP tables are **translated from
   `files/OMOPCDM_postgresql_5.4_ddl.sql`** by `snowflake_ddl.py`, never maintained separately, and
   `tests/unit/test_snowflake_ddl.py` fails if a table is missed. The DICOM vocabulary is loaded first and
   skipped when present. Everything runs through `snow sql --stdin` as `FLIP_<CODE>_OMOP_LOADER` (role pinned

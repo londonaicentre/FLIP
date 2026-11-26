@@ -79,6 +79,7 @@ def test_seed_job_runs_the_shared_script_at_a_pinned_ref():
         "PROJECTS",
         "SEED_OMOP",
         "SEED_ORTHANC",
+        "RESEED",
         "ORTHANC_URL",
         "WORK_DIR",
     ):
@@ -131,6 +132,7 @@ def test_seed_values_defaults():
     assert seed["projects"] == "cxr_project"
     assert seed["sourceTrust"] == ""
     assert seed["numTrusts"] == 2
+    assert seed["reseed"] is False, "an upgrade must leave a seeded trust as it is (FLIP#2111)"
     assert seed["sourceRef"]
     assert "initJob" not in VALUES["omopDb"]
     assert "initJob" not in VALUES["orthanc"]

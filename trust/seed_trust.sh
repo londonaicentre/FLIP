@@ -29,7 +29,14 @@
 #   TRUST_DATA_VERSION (the dataset tag) HF_TRUST_DATA_REPO PROJECTS SOURCE_TRUST NUM_TRUSTS
 #   SEED_OMOP / SEED_ORTHANC ("true" to run that half) VOCAB_DICOM_BUNDLE WORK_DIR (scratch)
 #   FORCE_DICOM_VOCAB ("1" to reload the DICOM vocabulary over one that reports itself present)
+#   RESEED ("true" to seed a store that already holds data, Orthanc clearing the listed projects'
+#   studies first: how a trust moves to a new data version)
 #   UV_EXCLUDE_NEWER (the dependency cooldown; default the repository's "3 days")
+#
+# Each half seeds only a store that is still empty (FLIP#2111), the rule `make -C trust
+# ensure-seeded` applies on a Compose host: OMOP with no omop.image_occurrence row (persons alone
+# may be Synthea's), Orthanc with no study. So a re-run — every Helm upgrade runs the hook — fetches
+# and loads nothing on a seeded trust, and a data-version bump is an explicit RESEED=true.
 set -euo pipefail
 
 WORK_DIR="${WORK_DIR:-/work}"
@@ -91,25 +98,34 @@ PY
 
 echo "seed_trust: source_trust ${SOURCE_TRUST} of ${NUM_TRUSTS}; projects [${PROJECTS}]; data version ${TRUST_DATA_VERSION}; tools ${TOOLS_SPEC}"
 
-if [ "${SEED_OMOP:-true}" = "true" ]; then
-  wait_tcp "${OMOP_DB_HOST:?}" "${OMOP_DB_PORT:?}"
-  # shellcheck disable=SC2086
-  tools python -m omop_db_tools.dataset fetch --revision "${TRUST_DATA_VERSION}" --dest "${WORK_DIR}/canonical" --projects ${PROJECTS}
-  VOCAB="${WORK_DIR}/${VOCAB_DICOM_BUNDLE}"
-  [ -f "${VOCAB}.zip" ] || [ -d "${VOCAB}" ] || fetch "https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${TRUST_DATA_VERSION}/omop-vocab/${VOCAB_DICOM_BUNDLE}.zip" "${VOCAB}.zip"
-  # The loader's "already loaded" signal is a single scaffolding concept, committed before the
-  # concepts and relationships it precedes — so a crash, an OOM or an evicted pod between those
-  # loads leaves a database that reports itself loaded while holding an incomplete vocabulary,
-  # and every later run skips straight past it. FORCE_DICOM_VOCAB=1 is the way back, the same
-  # escape `make -C trust/omop-db load-dicom-vocab` has; it reloads, duplicating
-  # concept_relationship rows (no unique key there), which is the lesser of the two states.
-  if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi
-  tools python -m omop_db_tools.load_dicom_vocab --vocab-dir "${VOCAB}" "${VOCAB_MODE}"
-  # shellcheck disable=SC2086
-  tools python -m omop_db_tools.import_tables --trust-index "${SOURCE_TRUST}" --num-trusts "${NUM_TRUSTS}" \
-    --partition source_trust --clean projects --projects ${PROJECTS} --data-dir "${WORK_DIR}/canonical"
-else
+RESEED="${RESEED:-false}"
+
+if [ "${SEED_OMOP:-true}" != "true" ]; then
   echo "seed_trust: OMOP half disabled (SEED_OMOP=${SEED_OMOP:-})"
+else
+  wait_tcp "${OMOP_DB_HOST:?}" "${OMOP_DB_PORT:?}"
+  OMOP_HELD="$(tools python -m omop_db_tools.import_tables --trust-index "${SOURCE_TRUST}" --holds-data)"
+  # FORCE_DICOM_VOCAB=1 runs this half too: it is how a half-loaded vocabulary is repaired, on a
+  # database that already holds rows.
+  if [ "${OMOP_HELD}" = yes ] && [ "${RESEED}" != "true" ] && [ "${FORCE_DICOM_VOCAB:-}" != "1" ]; then
+    echo "seed_trust: OMOP already holds data, left as it is (RESEED=true re-seeds it)"
+  else
+    # shellcheck disable=SC2086
+    tools python -m omop_db_tools.dataset fetch --revision "${TRUST_DATA_VERSION}" --dest "${WORK_DIR}/canonical" --projects ${PROJECTS}
+    VOCAB="${WORK_DIR}/${VOCAB_DICOM_BUNDLE}"
+    [ -f "${VOCAB}.zip" ] || [ -d "${VOCAB}" ] || fetch "https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${TRUST_DATA_VERSION}/omop-vocab/${VOCAB_DICOM_BUNDLE}.zip" "${VOCAB}.zip"
+    # The loader's "already loaded" signal is a single scaffolding concept, committed before the
+    # concepts and relationships it precedes — so a crash, an OOM or an evicted pod between those
+    # loads leaves a database that reports itself loaded while holding an incomplete vocabulary,
+    # and every later run skips straight past it. FORCE_DICOM_VOCAB=1 is the way back, the same
+    # escape `make -C trust/omop-db load-dicom-vocab` has; it reloads, duplicating
+    # concept_relationship rows (no unique key there), which is the lesser of the two states.
+    if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi
+    tools python -m omop_db_tools.load_dicom_vocab --vocab-dir "${VOCAB}" "${VOCAB_MODE}"
+    # shellcheck disable=SC2086
+    tools python -m omop_db_tools.import_tables --trust-index "${SOURCE_TRUST}" --num-trusts "${NUM_TRUSTS}" \
+      --partition source_trust --clean projects --projects ${PROJECTS} --data-dir "${WORK_DIR}/canonical"
+  fi
 fi
 
 if [ "${SEED_ORTHANC:-false}" = "true" ]; then
@@ -117,20 +133,29 @@ if [ "${SEED_ORTHANC:-false}" = "true" ]; then
     # Orthanc's own user map (as the chart holds it); the seeder wants one login.
     eval "$(python3 -c 'import json, os, shlex; u, p = next(iter(json.loads(os.environ["ORTHANC_REGISTERED_USERS"]).items())); print(f"export ORTHANC_USERNAME={shlex.quote(u)} ORTHANC_PASSWORD={shlex.quote(p)}")')"
   fi
-  python3 - <<'PY'
-import base64, os, sys, time, urllib.request
-url = os.environ["ORTHANC_URL"] + "/system"
+  # Waits for Orthanc, then prints how many studies it holds.
+  STUDIES="$(python3 - <<'PY'
+import base64, json, os, sys, time, urllib.request
+url = os.environ["ORTHANC_URL"] + "/statistics"
 auth = base64.b64encode(f'{os.environ["ORTHANC_USERNAME"]}:{os.environ["ORTHANC_PASSWORD"]}'.encode()).decode()
 for _ in range(60):
     try:
-        urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": "Basic " + auth}), timeout=5).close(); sys.exit(0)
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": "Basic " + auth}), timeout=5) as r:
+            print(int(json.load(r).get("CountStudies", 0))); sys.exit(0)
     except Exception:
         time.sleep(5)
 sys.exit(f"{url} not reachable after 5 minutes")
 PY
-  # shellcheck disable=SC2086
-  uv run --no-project "${SEEDER}" --trust-index "${SOURCE_TRUST}" --projects ${PROJECTS} \
-    --revision "${TRUST_DATA_VERSION}" --orthanc-url "${ORTHANC_URL:?}" --cache-dir "${WORK_DIR}/dicom"
+)"
+  if [ "${STUDIES}" -gt 0 ] && [ "${RESEED}" != "true" ]; then
+    echo "seed_trust: Orthanc already holds ${STUDIES} studies, left as they are (RESEED=true re-seeds it)"
+  else
+    CLEAR=""
+    [ "${RESEED}" = "true" ] && CLEAR=--clear-projects
+    # shellcheck disable=SC2086
+    uv run --no-project "${SEEDER}" --trust-index "${SOURCE_TRUST}" --projects ${PROJECTS} \
+      --revision "${TRUST_DATA_VERSION}" --orthanc-url "${ORTHANC_URL:?}" --cache-dir "${WORK_DIR}/dicom" ${CLEAR}
+  fi
 else
   echo "seed_trust: Orthanc half disabled (SEED_ORTHANC=${SEED_ORTHANC:-})"
 fi

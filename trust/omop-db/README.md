@@ -199,8 +199,9 @@ What a run does, in order:
    A mismatch fails the run; since the OMOP then holds rows, `ensure-seeded-snowflake` would skip
    it, so re-run `seed-omop-snowflake`.
 
-Like the Postgres seed it keeps no record of what it loaded (FLIP#2111): `--if-needed` asks whether
-`IMAGE_OCCURRENCE` holds a row, and a `.data_version` bump is an explicit `seed-omop-snowflake`. A
+Like the Postgres seed it keeps no record of what it loaded (FLIP#2111): `ensure-seeded-snowflake` first
+asks whether `IMAGE_OCCURRENCE` holds a row (`--holds-data`, so a seeded trust downloads nothing), and a
+`.data_version` bump is an explicit `seed-omop-snowflake`, which always seeds. A
 `_FLIP_SEED_MARKER` table an earlier release created is no longer read and can be dropped.
 
 Object names follow the epic #1589 naming contract: database `FLIP_TRUST_<CODE>`, schemas `OMOP`
