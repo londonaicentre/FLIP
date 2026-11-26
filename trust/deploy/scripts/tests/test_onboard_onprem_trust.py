@@ -1291,6 +1291,26 @@ def test_58_a_site_without_the_membership_store_dir_is_told_the_exact_root_step(
     _assert(command in uid_row.detail or os.getuid() == 0, "the container uid row too", uid_row.detail)
 
 
+def test_60_flip_data_root_holds_every_store_the_kit_does_not_name() -> None:
+    """One kit line moves every store (FLIP#2113): the checklist judges the folders deploy/data_root.mk resolves."""
+    print("▶ FLIP_DATA_ROOT -> unset stores judged under it, a store's own key still wins, relative refused")
+    with tempfile.TemporaryDirectory() as td:
+        root = f"{td}/locked/aicp-prod"
+        (Path(td) / "locked").mkdir()
+        writable = lambda path, mode: Path(path) != Path(td) / "locked"  # noqa: E731 — root ignores mode bits
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            blocked = _paths(FLIP_DATA_ROOT=root, XNAT_DATA_DIR=f"{td}/xnat")
+        omop = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", {"FLIP_DATA_ROOT": root + "/"}, True, Path(td))
+        relative = _paths(FLIP_DATA_ROOT="data/aicp-prod")
+    _assert(blocked.status == mod.Status.FAIL, "FAIL", f"{blocked.status}: {blocked.detail}")
+    for var, folder in mod.DATA_ROOT_FOLDERS.items():
+        if var != "XNAT_DATA_DIR":
+            _assert(f"{var} (unset, so {root}/{folder};" in blocked.detail, f"{var} under the root", blocked.detail)
+    _assert("XNAT_DATA_DIR" not in blocked.detail, "a store's own key beats the root", blocked.detail)
+    _assert(f"{root}/omop" in omop.detail, "OMOP unset is not a FAIL under a root", f"{omop.status}: {omop.detail}")
+    _assert(relative.status == mod.Status.FAIL and "relative" in relative.detail, "relative root", str(relative))
+
+
 def test_59_standalone_ready_also_names_the_upgrade() -> None:
     """The checklist is the first step of a site upgrade too, where up-onprem-trust would reset XNAT."""
     print("▶ READY footer, standalone: names upgrade-onprem-trust beside the first install")

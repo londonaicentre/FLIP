@@ -108,11 +108,15 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - gid 49999
        - ``BASE_IMAGES_DOWNLOAD_DIR/net-<N>``, group-writable
 
-  Set ``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``, ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR`` and
-  ``XNAT_DATA_DIR`` in the kit to absolute paths on the data disk before they are created. The kit template carries
-  the development values, which are relative and so land inside the checkout; unset ones fall back to per-slot
-  directories under ``/opt/flip``. The checklist's *Data dir paths* row warns on a relative path and fails on one
-  that does not exist yet and that you cannot create, or whose parent you cannot even enter.
+  The simplest way to place them is ``FLIP_DATA_ROOT`` in the kit: one absolute directory that holds every store,
+  each in a fixed folder (``omop``, ``orthanc``, ``xnat``, ``images``, ``cohort-snapshots``). A kit installed from the
+  FLIP UI already sets it to ``/opt/flip/<CODE>-<hub>``; point it at the data disk before the first install to keep
+  the stores off the root filesystem. A store's own setting (``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``,
+  ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR``, ``XNAT_DATA_DIR``) still wins over it. Without
+  ``FLIP_DATA_ROOT``, set those five to absolute paths: the kit template carries the development values, which are
+  relative and so land inside the checkout, and unset ones fall back to per-slot directories under ``/opt/flip``.
+  The checklist's *Data dir paths* row warns on a relative path and fails on one that does not exist yet and that
+  you cannot create, or whose parent you cannot even enter.
 - **Read access to the checkout and the FL kit** (``FL_KIT_DIR``).
 - **Python 3.11 or later** for the readiness checklist and ``make -C trust check-governance``. ``uv`` installs one when
   it can download it; otherwise the host must provide a ``python3.11`` or newer. The checklist refuses an older

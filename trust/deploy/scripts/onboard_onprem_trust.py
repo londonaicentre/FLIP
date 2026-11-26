@@ -1143,7 +1143,7 @@ def check_data_dir(
     """
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
-    raw = kit_vars.get(var_name, "")
+    raw = kit_vars.get(var_name, "") or (data_dir_default(var_name, kit_vars) if data_root(kit_vars) else "")
     if not raw:
         return Check(label, Status.FAIL, f"{var_name} unset in kit file")
     # Resolve relative paths from trust/. Strip a leading "./" for a clean display.
@@ -1211,8 +1211,8 @@ def check_data_dir(
 # Every host-side bind-mount source a kit sets, with the deployed default the Makefiles use when it
 # is unset (trust/Makefile IMAGES_BASE and COHORT_SNAPSHOT_DIR_HOST, trust/xnat/Makefile
 # XNAT_DATA_DIR). The OMOP and Orthanc dirs have no deployed default: `check_data_dir` fails them
-# unset. On an on-prem host every one is a plain mkdir as the invoking user; only over a remote
-# DOCKER_CONTEXT is the membership store prepared by a container.
+# unset, unless the kit sets FLIP_DATA_ROOT. On an on-prem host every one is a plain mkdir as the
+# invoking user; only over a remote DOCKER_CONTEXT is the membership store prepared by a container.
 DATA_DIR_DEFAULTS: dict[str, str | None] = {
     "OMOP_DATA_DIR": None,
     "ORTHANC_STORAGE_DIR": None,
@@ -1221,6 +1221,26 @@ DATA_DIR_DEFAULTS: dict[str, str | None] = {
     "XNAT_DATA_DIR": "/opt/flip/xnat-trust{slot}",
 }
 DATA_DIR_VARS: tuple[str, ...] = tuple(DATA_DIR_DEFAULTS)
+# Each store's folder under the kit's FLIP_DATA_ROOT, which replaces every default above (FLIP#2113,
+# deploy/data_root.mk).
+DATA_ROOT_FOLDERS: dict[str, str] = {
+    "OMOP_DATA_DIR": "omop",
+    "ORTHANC_STORAGE_DIR": "orthanc",
+    "BASE_IMAGES_DOWNLOAD_DIR": "images",
+    "COHORT_SNAPSHOT_STORAGE_DIR": "cohort-snapshots",
+    "XNAT_DATA_DIR": "xnat",
+}
+
+
+def data_root(kit_vars: dict[str, str]) -> str:
+    """The kit's FLIP_DATA_ROOT without a trailing slash, as deploy/data_root.mk reads it; empty when unset."""
+    return kit_vars.get("FLIP_DATA_ROOT", "").strip().rstrip("/")
+
+
+def data_dir_default(var: str, kit_vars: dict[str, str]) -> str | None:
+    """Where a store lives when the kit does not name it: under FLIP_DATA_ROOT, else the Makefiles' default."""
+    root = data_root(kit_vars)
+    return f"{root}/{DATA_ROOT_FOLDERS[var]}" if root else DATA_DIR_DEFAULTS[var]
 
 
 def invoking_ids() -> tuple[int, int]:
@@ -1242,17 +1262,27 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
     """Every data dir is absolute, and the bring-up can create it as this user (FLIP#1723).
 
     The kit template carries the development paths, which are relative: on a deployed trust they
-    resolve inside this checkout, on whatever disk it sits on. An unset one falls back to its
-    /opt/flip default, which a non-root operator usually cannot create — a site installed before
-    the membership store (FLIP#857) has no COHORT_SNAPSHOT_STORAGE_DIR, so its upgrade meets this.
+    resolve inside this checkout, on whatever disk it sits on. An unset one falls back to its folder
+    under FLIP_DATA_ROOT, else its /opt/flip default, which a non-root operator usually cannot create:
+    a site installed before the membership store (FLIP#857) has no COHORT_SNAPSHOT_STORAGE_DIR, so its
+    upgrade meets this.
     """
     label = "Data dir paths"
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
     slot = kit_vars.get("FL_KIT_SLOT_NUMBER", "").strip() or "<N>"
+    root = data_root(kit_vars)
+    if root and not root.startswith("/"):
+        return Check(
+            label,
+            Status.FAIL,
+            f"FLIP_DATA_ROOT is relative ({root}): make refuses it",
+            hints=[f"Set FLIP_DATA_ROOT in {kit_path} to an absolute path on the data disk."],
+        )
     relative: list[str] = []
     blocked: dict[str, str] = {}
-    for var, default in DATA_DIR_DEFAULTS.items():
+    for var in DATA_DIR_DEFAULTS:
+        default = data_dir_default(var, kit_vars)
         raw = kit_vars.get(var, "").strip()
         if raw and not raw.startswith("/"):
             relative.append(var)

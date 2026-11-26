@@ -38,6 +38,7 @@ ifeq ($(origin KIT_FILE),undefined)
 KIT_FILE := $(call kit_file,,$(KIT))
 endif
 -include $(KIT_FILE)
+include ../deploy/data_root.mk
 KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
 # A KIT_FILE given on the command line reaches every sub-make as typed, and trust/xnat would resolve
 # a relative one against its own directory, find no kit and fall back to defaults: hand it the full path.
@@ -99,12 +100,12 @@ override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
 
-# Images bind-source base for this kit: the kit's BASE_IMAGES_DOWNLOAD_DIR, or this
-# environment's compose default — the prod composes fall back to
+# Images bind-source base for this kit: the kit's BASE_IMAGES_DOWNLOAD_DIR, else images/ under
+# FLIP_DATA_ROOT, else this environment's compose default — the prod composes fall back to
 # /opt/flip/data/trust-<slot> (see compose_trust.prod.yml), dev to ./data/<KIT>.
-# Must mirror the compose fallbacks exactly: pre-creating any other path leaves the real
-# mount source for Docker to root-create.
-IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
+# Must mirror what compose mounts exactly (TRUST_VARS hands it this path when FLIP_DATA_ROOT is
+# set): pre-creating any other path leaves the real mount source for Docker to root-create.
+IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(call data_root_or,images,$(if $(IS_DEPLOYED),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT))))
 
 include ../deploy/portable.mk
 
@@ -252,7 +253,7 @@ TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # share a store (records are keyed by project alone). data-access-api runs as uid 1000 in the
 # production image (or the kit's FLIP_UID, FLIP#1731) and as the host user under the dev compose,
 # so that is who must own it.
-COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter prod,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
+COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(call data_root_or,cohort-snapshots,$(if $(filter prod,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM))))
 COHORT_SNAPSHOT_OWNER := $(if $(filter prod,$(__DCKR_SUFFIX)),$(API_UID):$(API_GID),$(shell id -u):$(shell id -g))
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
@@ -280,7 +281,7 @@ MONAILABEL_OVERRIDE := $(if $(filter true,$(strip $(MONAI_LABEL))),-f deploy/com
 # relative value at xnat/ — abspath'ing it from trust/ would silently resolve one level
 # too high and mount a non-existent directory. Keeps the default in step with
 # trust/xnat/Makefile's XNAT_DATA_DIR.
-__MONAI_LABEL_XNAT_DIR := $(or $(strip $(XNAT_DATA_DIR)),$(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM)))
+__MONAI_LABEL_XNAT_DIR := $(or $(strip $(XNAT_DATA_DIR)),$(call data_root_or,xnat,$(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))))
 MONAI_LABEL_XNAT_ARCHIVE_DIR := $(abspath $(if $(filter /%,$(__MONAI_LABEL_XNAT_DIR)),$(__MONAI_LABEL_XNAT_DIR),xnat/$(__MONAI_LABEL_XNAT_DIR)))/xnat-data/archive
 export MONAI_LABEL_XNAT_ARCHIVE_DIR
 
@@ -326,10 +327,17 @@ MONAI_LABEL_STATUS_MSG :=$(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — ser
 # (e.g. "Guy's and St Thomas' Trust") — unquoted it splits in the recipe's
 # `VAR=val cmd` shell prefix ("EC2: not found"); single-quoted it breaks on the
 # apostrophe. Double quotes handle both (trust names never contain $/backtick/").
+# Under FLIP_DATA_ROOT the stores' paths exist only here (the composes fall back to the defaults the kits
+# had before), so compose is handed each one, resolved like the dirs the recipes prepare (FLIP#2113).
+TRUST_DATA_ROOT_VARS = $(if $(FLIP_DATA_ROOT),\
+	OMOP_DATA_DIR="$(OMOP_DATA_ABS)" ORTHANC_STORAGE_DIR="$(ORTHANC_STORAGE_ABS)" \
+	BASE_IMAGES_DOWNLOAD_DIR="$(abspath $(IMAGES_BASE))")
+
 TRUST_VARS = \
 	TRUST_NETWORK_NAME=$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	COHORT_SNAPSHOT_STORAGE_DIR="$(COHORT_SNAPSHOT_DIR_HOST)" \
+	$(TRUST_DATA_ROOT_VARS) \
 	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
 # Non-KIT targets such as `make build` do not load a trust kit, but Docker
@@ -989,8 +997,8 @@ down-fl-clients-kit:
 # The two data bind sources, resolved to what the compose file mounts, as absolute paths:
 # the sub-makes in omop-db/ and orthanc/ run from their own directories, so a relative
 # kit value (./omop-db/volumes/Trust_1/db_data) would resolve one level too deep there.
-OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
-ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-trust$(TRUST_NUM)))
+OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),$(call data_root_or,omop,./omop-db/volumes/Trust_$(TRUST_NUM)/db_data)))
+ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),$(call data_root_or,orthanc,./orthanc/orthanc-storage-trust$(TRUST_NUM))))
 
 # The containers are found by their compose labels rather than by name, so this works
 # on a second FLIP_INSTANCE too (container names are never set, see AGENTS.md).

@@ -290,6 +290,7 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
             "deploy/aws/Makefile",
+            "deploy/data_root.mk",
             "deploy/portable.mk",
             "flip-api/Makefile",  # register-trusts recurses into it to mint the XNAT credentials
             "trust/Makefile",

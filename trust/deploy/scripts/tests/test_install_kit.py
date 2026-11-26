@@ -213,6 +213,10 @@ def _assert_first_install(s: Site, result: subprocess.CompletedProcess[str], bac
     ]
     assert "TRUST_API_KEY" in result.stdout
     assert "make up-onprem-trust KIT=DEMO" in result.stdout
+
+    # Every store under the kit's own data root, not the template's development paths (FLIP#2113).
+    assert values["FLIP_DATA_ROOT"] == "/opt/flip/DEMO-prod"
+    assert not [key for key in install_kit.STORE_KEYS if key in values], "a store path still overrides the root"
     assert "egress IP" in result.stdout
     assert f"rm {s.download / 'kit.enc'}" in result.stdout
     assert not list(s.tmp.iterdir()), "temp dir left behind"

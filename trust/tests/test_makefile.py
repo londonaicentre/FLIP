@@ -79,6 +79,32 @@ class UpgradeTrust(unittest.TestCase):
         assert 'dir="/srv/flip/members"' in out, out
         assert 'COHORT_SNAPSHOT_STORAGE_DIR="/srv/flip/members"' in out, out
 
+    def test_flip_data_root_holds_every_store_the_kit_does_not_name(self):
+        """One kit line moves every store (FLIP#2113): what the recipes prepare and what compose mounts agree."""
+        stores = ("ORTHANC_STORAGE_DIR", "OMOP_DATA_DIR", "XNAT_DATA_DIR", "BASE_IMAGES_DOWNLOAD_DIR")
+        kit = "".join(line + "\n" for line in KIT.splitlines() if line.split("=", 1)[0] not in stores)
+        out = dry_run("_upgrade-trust-apply", kit=kit + "FLIP_DATA_ROOT=/srv/SCR-prod/\n")
+        for env in ("OMOP_DATA_DIR", "ORTHANC_STORAGE_DIR", "BASE_IMAGES_DOWNLOAD_DIR", "COHORT_SNAPSHOT_STORAGE_DIR"):
+            folder = {"OMOP_DATA_DIR": "omop", "ORTHANC_STORAGE_DIR": "orthanc", "BASE_IMAGES_DOWNLOAD_DIR": "images"}
+            assert f'{env}="/srv/SCR-prod/{folder.get(env, "cohort-snapshots")}"' in out, out
+        assert 'dir="/srv/SCR-prod/cohort-snapshots"' in out, out
+        assert "/srv/SCR-prod/xnat" in out, out  # upgrade-xnat names the data dir it keeps
+        assert "/opt/flip" not in out, out
+
+    def test_a_store_key_beats_flip_data_root_and_no_root_changes_nothing(self):
+        out = dry_run("_upgrade-trust-apply", kit=KIT + "FLIP_DATA_ROOT=/srv/SCR-prod\n")
+        assert 'OMOP_DATA_DIR="/nonexistent/omop"' in out, out
+        assert "/nonexistent/xnat" in out, out
+        assert "/srv/SCR-prod/xnat" not in out, out
+        assert 'dir="/srv/SCR-prod/cohort-snapshots"' in out, out  # the kit names no store for it
+        out = dry_run("_upgrade-trust-apply")
+        assert 'OMOP_DATA_DIR="' not in out, f"compose is handed a path the kit did not ask for:\n{out}"
+
+    def test_a_relative_flip_data_root_is_refused(self):
+        result = run_target("_upgrade-trust-apply", kit=KIT + "FLIP_DATA_ROOT=data/SCR-prod\n", dry=True)
+        assert result.returncode != 0, result.stdout
+        assert "FLIP_DATA_ROOT must be an absolute path" in result.stderr, result.stderr
+
     def test_the_prepared_store_image_is_pinned(self):
         """A tag is a moving target, and a docker.io pull fails on a host that reaches only GHCR (FLIP#1784)."""
         out = dry_run("_upgrade-trust-apply")
@@ -494,6 +520,7 @@ class DevelopmentFlRegistry(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for rel in (
+                "deploy/data_root.mk",
                 "deploy/env_mode.mk",
                 "deploy/fl_backend.mk",
                 "deploy/instance.mk",

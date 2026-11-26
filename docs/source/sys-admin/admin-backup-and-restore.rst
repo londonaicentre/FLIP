@@ -236,7 +236,9 @@ names each directory; the table gives the default the production stack uses when
      - Loki logs and Grafana state.
      - Not needed to run the trust.
 
-``<N>`` is ``FL_KIT_SLOT_NUMBER`` from the kit file. To see the exact host paths a running trust uses, inspect its
+``<N>`` is ``FL_KIT_SLOT_NUMBER`` from the kit file. When the kit sets ``FLIP_DATA_ROOT``, the four stores and the
+images cache it does not name are folders under it instead: ``omop``, ``orthanc``, ``xnat``, ``cohort-snapshots``
+and ``images``. To see the exact host paths a running trust uses, inspect its
 containers on the trust host:
 
 .. code-block:: shell
@@ -285,8 +287,8 @@ wipes XNAT (see the warning under `Restoring a trust node`_).
 #. **Dump the OMOP database** if your site loaded anything beyond the mock data, with PostgreSQL's ``pg_dump`` against
    ``127.0.0.1:<OMOP_DB_PORT>`` and the ``OMOP_*`` credentials from your kit file.
 
-Instead of steps 2 to 5, you can snapshot the whole data volume (``/opt/flip`` by default) with your platform's volume
-or snapshot tooling.
+Instead of steps 2 to 5, you can snapshot the whole data volume (``FLIP_DATA_ROOT``, or ``/opt/flip`` by default)
+with your platform's volume or snapshot tooling.
 
 .. note::
 
