@@ -115,7 +115,10 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
   ``up-onprem-trust``. A store's own setting (``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``,
   ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR``, ``XNAT_DATA_DIR``) still wins over it. Without
   ``FLIP_DATA_ROOT``, set those five to absolute paths: the kit template carries the development values, which are
-  relative and so land inside the checkout, and unset ones fall back to defaults under ``/opt/flip``.
+  relative and so land inside the checkout, and unset ones fall back to per-slot defaults under ``/opt/flip``, except
+  ``OMOP_DATA_DIR`` and ``ORTHANC_STORAGE_DIR``, whose fallbacks (``/opt/flip/omop/db_data``,
+  ``/opt/flip/orthanc/orthanc-storage``) are the same for every trust on the host: the checklist fails a kit that
+  leaves either unset with no ``FLIP_DATA_ROOT``.
 
   ``FLIP_DATA_ROOT`` moves no data. On a trust that is already running, every store whose own setting is unset
   would restart on an empty folder under the root: either set each to where it is now, or move the data there with
@@ -287,7 +290,7 @@ the admin manages them.
    * - Trust-local passwords
      - ``make new-trust`` and ``install-kit`` mint a random value for each. A kit scaffolded from an older template still carries
        the mock-stack defaults; replace every one in the *Trust-local credentials* section, or the readiness
-       checklist refuses a ``.prod`` / ``.stag`` kit.
+       checklist refuses the kit of a ``prod`` or ``stag`` trust, whatever its file is called.
      - Yes
    * - ``TRUST_DATA_SEED``
      - ``false`` for a trust whose OMOP database and PACS hold real data. The first start then loads none of FLIP's

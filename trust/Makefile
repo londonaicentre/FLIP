@@ -328,17 +328,23 @@ MONAI_LABEL_STATUS_MSG :=$(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — ser
 # (e.g. "Guy's and St Thomas' Trust") — unquoted it splits in the recipe's
 # `VAR=val cmd` shell prefix ("EC2: not found"); single-quoted it breaks on the
 # apostrophe. Double quotes handle both (trust names never contain $/backtick/").
+# Compose is handed the OMOP and Orthanc dirs only when the kit leaves the line unset (the
+# resolved default). A line the kit sets reaches compose through --env-file alone: the shell
+# environment beats --env-file, and make reads a kit line differently from compose (it keeps
+# quotes and does not expand ~), so passing make's reading could move a live site's mount.
 # Under FLIP_DATA_ROOT the stores' paths exist only here (the composes fall back to the defaults the kits
 # had before), so compose is handed each one, resolved like the dirs the recipes prepare (FLIP#2113).
-TRUST_DATA_ROOT_VARS = $(if $(FLIP_DATA_ROOT),\
+TRUST_DATA_DIR_VARS = $(if $(FLIP_DATA_ROOT),\
 	OMOP_DATA_DIR="$(OMOP_DATA_ABS)" ORTHANC_STORAGE_DIR="$(ORTHANC_STORAGE_ABS)" \
-	BASE_IMAGES_DOWNLOAD_DIR="$(abspath $(IMAGES_BASE))")
+	BASE_IMAGES_DOWNLOAD_DIR="$(abspath $(IMAGES_BASE))",\
+	$(if $(KIT),$(if $(OMOP_DATA_DIR),,OMOP_DATA_DIR="$(OMOP_DATA_ABS)")) \
+	$(if $(KIT),$(if $(ORTHANC_STORAGE_DIR),,ORTHANC_STORAGE_DIR="$(ORTHANC_STORAGE_ABS)")))
 
 TRUST_VARS = \
 	TRUST_NETWORK_NAME=$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	COHORT_SNAPSHOT_STORAGE_DIR="$(COHORT_SNAPSHOT_DIR_HOST)" \
-	$(TRUST_DATA_ROOT_VARS) \
+	$(TRUST_DATA_DIR_VARS) \
 	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
 # Non-KIT targets such as `make build` do not load a trust kit, but Docker
@@ -486,7 +492,7 @@ endef
 XNAT_AETITLE_SET_EMPTY := $(if $(filter undefined,$(origin XNAT_AETITLE)),,$(if $(strip $(XNAT_AETITLE)),,yes))
 XNAT_AETITLE_SOURCE := $(if $(filter file,$(origin XNAT_AETITLE)),$(KIT_FILE_LABEL),the $(origin XNAT_AETITLE))
 require-xnat-aetitle:
-	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'XNAT'),:)
+	@$(if $(XNAT_AETITLE_SET_EMPTY),$(error XNAT_AETITLE is set but empty in $(XNAT_AETITLE_SOURCE). It is XNAT's own AE title (SCP receiver, DQR calling AE and C-MOVE destination): set it, or drop the line to take the default 'FLIP_XNAT'),:)
 
 # Guard: refuse to act on the compose project this kit resolves to when it is already held
 # by a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
@@ -885,7 +891,8 @@ _upgrade-trust-apply:
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
 	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
-	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
+	@echo "⬆️  $(KIT): kit pinned to $(DOCKER_TAG), images pulled, containers recreated and XNAT upgraded. The trust containers were not checked."
+	@echo "   Verify: every container is up (docker compose -p $(TRUST_PROJECT) ps) and trust-api /health reports the new version and hub_key_match=true."
 
 # EC2 variant — no host-port override, --pull always. Networks and the trust's
 # data are provisioned on the instance by trust/deploy/ansible/aws-ec2.yml, so the
@@ -998,8 +1005,13 @@ down-fl-clients-kit:
 # The two data bind sources, resolved to what the compose file mounts, as absolute paths:
 # the sub-makes in omop-db/ and orthanc/ run from their own directories, so a relative
 # kit value (./omop-db/volumes/Trust_1/db_data) would resolve one level too deep there.
-OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),$(call data_root_or,omop,./omop-db/volumes/Trust_$(TRUST_NUM)/db_data)))
-ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),$(call data_root_or,orthanc,./orthanc/orthanc-storage-trust$(TRUST_NUM))))
+# ONE default each, handed to compose in TRUST_VARS when the kit leaves the line unset, so the
+# directory prepared and owned here is the one compose mounts (FLIP#2047). The deployed defaults are the prod
+# compose's own fallbacks, which a site that never set the line already mounts: never move them.
+# They are not per slot, so two trusts on one host must each set the line (the onboarding
+# checklist fails a kit that leaves it unset) or FLIP_DATA_ROOT.
+OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),$(call data_root_or,omop,$(if $(IS_DEPLOYED),/opt/flip/omop/db_data,./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))))
+ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),$(call data_root_or,orthanc,$(if $(IS_DEPLOYED),/opt/flip/orthanc/orthanc-storage,./orthanc/orthanc-storage-trust$(TRUST_NUM)))))
 
 # The containers are found by their compose labels rather than by name, so this works
 # on a second FLIP_INSTANCE too (container names are never set, see AGENTS.md).

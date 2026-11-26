@@ -54,17 +54,21 @@ Bring-up and deployment
 ``invalid spec: :/var/lib/orthanc/db: empty section between colons``
 ====================================================================
 
-**Cause.** ``ORTHANC_STORAGE_DIR`` is missing from the trust's kit file, so the Orthanc data mount has no host
-path.
+**Cause.** ``docker compose`` was run by hand on the development compose file with ``ORTHANC_STORAGE_DIR`` missing
+from the kit file, so the Orthanc data mount has no host path. ``make -C trust up-trust`` does not hit this: it hands
+compose the directory it prepared, the kit's value or the default.
 
-**Fix.** Add it to the kit file's host-local section, with a path on the trust host, then bring the stack up
-again:
+**Fix.** Bring the stack up with ``make``, or add the line to the kit file's host-local section.
+
+A deployed trust (``HUB=stag`` or ``prod``) never shows this error. With ``OMOP_DATA_DIR`` or
+``ORTHANC_STORAGE_DIR`` unset and no ``FLIP_DATA_ROOT`` it mounts ``/opt/flip/omop/db_data`` and ``/opt/flip/orthanc/orthanc-storage``, the
+same two directories for every trust on the host, so the readiness checklist fails the kit until both are set to
+paths of the trust's own. A site already running with a line unset keeps its data by setting it to that path:
 
 .. code-block:: text
 
+   OMOP_DATA_DIR=/opt/flip/omop/db_data
    ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage
-
-A kit created from an older template may lack the key: copy it from ``trust/.env.example``.
 
 .. _ts-compose-disk-full:
 
