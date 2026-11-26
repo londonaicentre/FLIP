@@ -149,23 +149,6 @@ health trust-api 8020
 health imaging-api 8001
 health data-access-api 8010
 
-marker() { # <name> <path>
-    if [ -s "$2" ] && grep -q '^version=' "$2"; then
-        record "$1 seeded" true "$2"
-    else
-        record "$1 seeded" false "missing or empty seed marker $2"
-    fi
-}
-NO_SAMPLE_DATA=""
-if [ "$(sed -n 's/^TRUST_DATA_SEED=//p' "${KIT_OUT}" 2>/dev/null | tail -1)" = false ]; then
-    NO_SAMPLE_DATA="TRUST_DATA_SEED=false, so the stack holds no sample data"
-    skip "omop seeded" "${NO_SAMPLE_DATA}"
-    skip "orthanc seeded" "${NO_SAMPLE_DATA}"
-else
-    marker omop "${DATA_ROOT}/omop/.seeded"
-    marker orthanc "${DATA_ROOT}/.orthanc-storage.seeded"
-fi
-
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1:8042/" 2>/dev/null || true)"
 if [ "${code}" = 401 ]; then
     record "orthanc requires auth" true "401 without credentials"
@@ -178,13 +161,37 @@ fi
 # received.log, which XNAT's SCP writes one line per object it accepts; dicom.log is scanned
 # for the importer failures the Helm chart's smoke-cstore looks for. dicom.log alone is no
 # evidence: XNAT writes it only when something goes wrong, so a working store leaves it empty.
-ORTHANC_AUTH="$(grep -E '^ORTHANC_USERNAME=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-):$(grep -E '^ORTHANC_PASSWORD=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-)"
+kit_value() { sed -n "s/^$1=//p" "${KIT_OUT}" 2>/dev/null | tail -1; }
+ORTHANC_AUTH="$(kit_value ORTHANC_USERNAME):$(kit_value ORTHANC_PASSWORD)"
 # curl against Orthanc with the credentials in a config read from stdin, never in argv, where
 # any process on the node could read them. Base64 needs no quoting (as check_status.py does).
 ORTHANC_TOKEN="$(printf '%s' "${ORTHANC_AUTH}" | base64 | tr -d '\n')"
 orthanc_curl() {
     printf 'header = "Authorization: Basic %s"\n' "${ORTHANC_TOKEN}" | curl -fsS -K - "$@"
 }
+
+# Seeded means the stores hold the sample data: an imaging row in OMOP, a study in Orthanc — the
+# two probes trust/Makefile's ensure-seeded makes, kept in step with it (FLIP#2111).
+NO_SAMPLE_DATA=""
+if [ "$(kit_value TRUST_DATA_SEED)" = false ]; then
+    NO_SAMPLE_DATA="TRUST_DATA_SEED=false, so the stack holds no sample data"
+    skip "omop seeded" "${NO_SAMPLE_DATA}"
+    skip "orthanc seeded" "${NO_SAMPLE_DATA}"
+else
+    OMOP_CTR="$(docker ps --filter status=running --format '{{.Names}}' | grep -E 'omop-db' | head -1)"
+    if [ -n "${OMOP_CTR}" ] && docker exec "${OMOP_CTR}" psql -U "$(kit_value OMOP_POSTGRES_USER)" \
+        -d "$(kit_value OMOP_POSTGRES_DB)" -tAc 'SELECT 1 FROM omop.image_occurrence LIMIT 1' 2>/dev/null | grep -qx 1; then
+        record "omop seeded" true "omop.image_occurrence holds rows (${OMOP_CTR})"
+    else
+        record "omop seeded" false "no imaging row in omop.image_occurrence (${OMOP_CTR:-no running omop-db})"
+    fi
+    if orthanc_curl --max-time 10 "http://127.0.0.1:8042/statistics" 2>/dev/null |
+        grep -Eq '"CountStudies"[[:space:]]*:[[:space:]]*[1-9]'; then
+        record "orthanc seeded" true "Orthanc holds studies"
+    else
+        record "orthanc seeded" false "Orthanc on :8042 holds no study"
+    fi
+fi
 XNAT_CTR="$(docker ps --filter status=running --format '{{.Names}}' | grep -E 'xnat-web' | head -1)"
 RECEIVED_LOG=/data/xnat/home/logs/received.log
 DICOM_LOG=/data/xnat/home/logs/dicom.log

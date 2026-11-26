@@ -383,6 +383,29 @@ class TestUploadDataToXnat:
                         headers=headers,
                     )
 
+    @pytest.mark.asyncio
+    async def test_an_upload_directory_reached_through_a_link_is_rejected(self, headers):
+        """The FL client can write its net's folder: a link there must not lead imaging-api to another net's files."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            other_net = os.path.join(tmp_dir, "net1", "ACC123")
+            os.makedirs(other_net)
+            with open(os.path.join(other_net, "scan.nii"), "wb") as f:
+                f.write(b"another net's study")
+            os.makedirs(os.path.join(tmp_dir, "net2"))
+            os.symlink(other_net, os.path.join(tmp_dir, "net2", "upload"))
+            with patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", tmp_dir):
+                with pytest.raises(ValueError, match="Path traversal detected in net ID"):
+                    await upload_data_to_xnat(
+                        central_hub_project_id="hub-proj-1",
+                        accession_id="ACC123",
+                        net_id="net2",
+                        scan_id="SCAN1",
+                        resource_id="NIFTI",
+                        files_relative_paths_to_upload=["scan.nii"],
+                        exist_ok=False,
+                        headers=headers,
+                    )
+
 
 # ── upload_data_to_xnat: the requests it sends ──
 

@@ -39,7 +39,7 @@ imaging-api/app/routers/example_get_experiment_response.json
 
 # Trust
 orthanc/orthanc-storage-*
-# The seed marker written beside each storage dir by `make seed-orthanc` (FLIP#1187).
+# Seed markers releases before FLIP#2111 wrote beside each storage dir; nothing reads them now.
 orthanc/.orthanc-storage-*.seeded
 xnat/plugins/*.jar
 xnat/plugins/.*.part

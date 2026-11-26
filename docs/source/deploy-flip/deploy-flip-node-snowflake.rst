@@ -171,8 +171,8 @@ Add ``DRY_RUN=true`` to any target that talks to Snowflake to print the SQL inst
 
 **The OMOP tables** are loaded from the trust's own source, or for a test node seeded with
 ``make -C trust/omop-db seed-omop-snowflake`` (see ``trust/omop-db/README.md``). A re-seed reloads
-inside one transaction and fails, without marking the project as seeded, if the row counts it
-loaded do not match what it staged.
+inside one transaction and fails if the row counts it loaded do not match what it staged. The OMOP then
+holds rows, so ``ensure-seeded-snowflake`` would skip it: re-run ``seed-omop-snowflake``.
 
 **The self-test is the gate.** ``make selftest`` runs a job inside the account, waits for it, prints
 its log and exits non-zero unless every check passed. It checks the node from the inside: every API

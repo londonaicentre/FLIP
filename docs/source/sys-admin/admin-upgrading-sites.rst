@@ -31,7 +31,7 @@ Two rules apply throughout:
 .. warning::
 
    **Never use the first-install commands to move a live site.** ``make up-onprem-trust``, ``make -C trust
-   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` re-seed the mock data and **wipe
+   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` **wipe
    the XNAT archive**. Use only the upgrade commands below.
 
 .. list-table:: Upgrade command per deployment shape
@@ -84,9 +84,8 @@ the release that runs each job in its project's NVFLARE study (FLIP#1678). Such 
 its project's study, and a job-pod site on an older release has no job image for that study, so the job does not
 start there. Every other site is unaffected: a site that runs jobs inside the FL client ignores the study.
 
-After the upgrade, and again whenever a project is approved at the site, such a site runs
-``make -C trust/deploy/helm sync-project-studies``. It gives each approved project its entry in NVFLARE's study
-file, which the site maintains; a project without one has no job image and its jobs do not start there.
+The site builds each project's study entry itself, when the project's job starts, so there is nothing to run after
+the upgrade or after an approval.
 
 Step 2 — Replace the Hub-shared block (refreshed kit only)
 ==========================================================
@@ -432,7 +431,7 @@ Docker context as ``make deploy`` in ``trust/deploy/terraform/aws/ec2``.
    make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
 
 It takes the same options as the on-premises upgrade and never re-seeds data. ``make deploy`` remains the
-first-install command: it re-seeds OMOP and Orthanc and resets the XNAT archive.
+first-install command: it seeds an empty OMOP and Orthanc and resets the XNAT archive.
 
 .. _upgrade-rolling-back:
 

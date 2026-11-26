@@ -162,7 +162,7 @@ then pass `LOCATION=<region>` to `plan`.
 ## Network and outbound traffic
 
 The node only makes outbound connections, and nothing listens on it. The hub admits it by its
-API key and its FL kit's mTLS certificates, never by its source address, so no target here keeps
+API key and the credentials in its FL kit, never by its source address, so no target here keeps
 a fixed IP for it.
 
 - **A site's own subnet (`SUBNET_ID=<subnet resource id>` on `plan` and `destroy`).** The node

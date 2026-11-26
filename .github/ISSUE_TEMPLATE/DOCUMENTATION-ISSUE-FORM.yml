@@ -14,7 +14,7 @@ name: Documentation
 description: Propose documentation changes, additions, or improvements
 title: "[Docs]: "
 labels: ["documentation"]
-type: Documentation
+type: Task
 projects: ["londonaicentre/10"]
 body:
   - type: dropdown

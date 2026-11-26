@@ -138,7 +138,7 @@ Your host needs **outbound only** (no inbound ports are opened on your side):
 | Host | Port | Purpose |
 |------|------|---------|
 | `app.flip.aicentre.co.uk` | 443 (HTTPS) | API polling |
-| `fl.app.flip.aicentre.co.uk` | 8002 (gRPC/TCP) | FL training/eval traffic |
+| `fl.app.flip.aicentre.co.uk` | 8002 (TLS/TCP) | FL training/eval traffic |
 
 ---
 
