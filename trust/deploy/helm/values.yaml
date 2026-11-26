@@ -880,6 +880,32 @@ xnat:
     # connections at once and a restarted xnat-web briefly doubles them (FLIP#662).
     maxConnections: 300
     sharedBuffers: "512MB"
+    # Before an upgrade moves xnat-db to a newer PostgreSQL major, dump the xnat database beside
+    # the running cluster for the new server to restore on its first start (FLIP#2071, FLIP#1812).
+    # A pre-upgrade hook, so every path — `make upgrade-trust-k8s`, a plain `helm upgrade`, the
+    # auto-upgrade agent — takes the dump. It does nothing when the volume is already on the
+    # image's major (so on a pinned xnat, and on every ordinary release upgrade).
+    migrateDump:
+      enabled: true
+      # Bounds both of the hook's waits: for xnat-web's pods to go, and for the dump to finish.
+      # On expiry xnat-web is scaled back to where it was and the upgrade fails rather than
+      # applying a release with no dump behind it. The Job's own deadline is this plus 300s.
+      timeoutSeconds: 1800
+      # Stopping xnat-web is a Kubernetes API call, which the xnat-db image cannot make (no curl,
+      # no kubectl), so that half runs in uv's image — the same mirrored digest as
+      # trustData.seed.image, standard library only, nothing installed at run time.
+      image:
+        repository: ghcr.io/londonaicentre/mirror/astral-sh/uv
+        tag: "python3.13-bookworm-slim"
+        digest: "sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca"
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
     image:
       repository: ghcr.io/londonaicentre/xnat-db
       tag: stag

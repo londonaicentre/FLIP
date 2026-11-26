@@ -9,7 +9,10 @@
 .ruff_cache/
 __pycache__/
 *.pyc
-*.py
+# Operator and CI python at the chart root. config/*.py ships: the xnat-db migrate hook reads its
+# scripts with .Files.Get, and a packaged chart has no checkout to fetch them from (FLIP#2071).
+/check_status.py
+/sync_k8s_kit.py
 tests/
 ci/
 scripts/

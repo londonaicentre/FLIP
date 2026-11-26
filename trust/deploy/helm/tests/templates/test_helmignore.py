@@ -37,7 +37,20 @@ def test_helmignore_excludes_everything_a_release_does_not_need() -> None:
     patterns = {
         line.strip() for line in HELMIGNORE.read_text().splitlines() if line.strip() and not line.startswith("#")
     }
-    for required in ("tests/", "__pycache__/", ".mypy_cache/", "*.py", "*.md", "k8s-trust-*.yaml", "Makefile", "ci/"):
+    for required in (
+        "tests/",
+        "__pycache__/",
+        ".mypy_cache/",
+        # The chart root's operator/CI python, named one by one rather than as `*.py`: the xnat-db
+        # migrate hook's scripts live in config/ and are read with .Files.Get (FLIP#2071), so a
+        # blanket exclusion would package a chart whose hook has nothing to run.
+        "/check_status.py",
+        "/sync_k8s_kit.py",
+        "*.md",
+        "k8s-trust-*.yaml",
+        "Makefile",
+        "ci/",
+    ):
         assert required in patterns, f".helmignore no longer excludes {required!r}"
 
 
@@ -56,6 +69,11 @@ def test_the_packaged_chart_holds_only_the_shipped_entries(tmp_path: Path) -> No
     (package,) = out.glob("*.tgz")
 
     with tarfile.open(package) as tar:
-        top_level = {name.split("/", 2)[1] for name in tar.getnames() if "/" in name}
+        names = set(tar.getnames())
+        top_level = {name.split("/", 2)[1] for name in names if "/" in name}
 
     assert top_level == SHIPPED, f"the package ships {sorted(top_level - SHIPPED)} beyond {sorted(SHIPPED)}"
+    # The hook scripts are read from the package at render time, so they have to be in it, and the
+    # chart root's own python has to stay out of it.
+    assert "flip-trust/config/xnat_db_migrate_scale.py" in names
+    assert not [name for name in names if name.count("/") == 1 and name.endswith(".py")]
