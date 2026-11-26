@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""Snowflake OMOP seeding: SQL generation, marker logic, partition filtering, unseed (FLIP#1580).
+"""Snowflake OMOP seeding: SQL generation, the --if-needed check, partition filtering, unseed (FLIP#1580).
 
 Nothing here touches a Snowflake account, a network or the ``snow`` CLI: the module's whole
 design is that the SQL is produced first and executed (or printed) second, so the interesting
@@ -64,7 +64,6 @@ def test_names_follow_the_epic_naming_contract(names: seed.Names) -> None:
     assert names.seed_stage == "@FLIP_TRUST_GSTT.STAGES.SEED"
     assert names.loader_role == "FLIP_GSTT_OMOP_LOADER"
     assert names.warehouse == "FLIP_GSTT_WH"
-    assert names.marker_table == "FLIP_TRUST_GSTT.OMOP._FLIP_SEED_MARKER"
 
 
 @pytest.mark.parametrize("code", ["", "a'; DROP DATABASE X; --", "GS TT", "9GSTT", "GSTT.OMOP"])
@@ -78,63 +77,50 @@ def test_the_session_pins_the_loader_role(names: seed.Names) -> None:
     assert seed.sql_session_preamble(names)[0] == "USE ROLE FLIP_GSTT_OMOP_LOADER;"
 
 
-# ── marker ───────────────────────────────────────────────────────────────────────────────
+# ── --if-needed: seed only an empty OMOP (FLIP#2111) ──────────────────────────────────────
 
 
-def test_marker_text_matches_the_postgres_seeded_file() -> None:
-    marker = seed.Marker(projects=("cxr_project", "spleen_project"), source_trust=2, provenance="version=20261001")
-    assert marker.text() == "projects=cxr_project spleen_project\nsource_trust=2\nversion=20261001\n"
+def _missing(table: str):
+    def fail(*_args, **_kwargs):
+        raise seed.SnowflakeSeedError(
+            "`snow sql` failed with exit code 1: 002003 (42S02): SQL compilation error: "
+            f"Object 'FLIP_TRUST_GSTT.OMOP.{table}' does not exist or not authorized."
+        )
+
+    return fail
 
 
-def test_provenance_prefers_a_local_tree_over_a_tag() -> None:
-    assert seed.provenance_for("20261001", None) == "version=20261001"
-    assert seed.provenance_for("20261001", "/abs/canonical") == "source=/abs/canonical"
+def test_imaging_rows_are_what_the_check_reads(names: seed.Names) -> None:
+    """Image rows, not persons, as on Postgres: Synthea adds persons with no imaging."""
+    assert seed.sql_holds_imaging(names) == "SELECT 1 AS loaded FROM FLIP_TRUST_GSTT.OMOP.IMAGE_OCCURRENCE LIMIT 1;"
+
+
+def test_an_omop_with_imaging_rows_holds_data(monkeypatch: pytest.MonkeyPatch, names: seed.Names) -> None:
+    monkeypatch.setattr(seed, "run_sql", lambda *args, **kwargs: [{"LOADED": 1}])
+    assert seed.holds_imaging(names, "flip-test", "snow") is True
+    monkeypatch.setattr(seed, "run_sql", lambda *args, **kwargs: [])
+    assert seed.holds_imaging(names, "flip-test", "snow") is False
+
+
+def test_a_fresh_trust_without_the_table_holds_none(monkeypatch: pytest.MonkeyPatch, names: seed.Names) -> None:
+    monkeypatch.setattr(seed, "run_sql", _missing("IMAGE_OCCURRENCE"))
+    assert seed.holds_imaging(names, "flip-test", "snow") is False
+
+
+def test_any_other_failure_of_the_check_raises(monkeypatch: pytest.MonkeyPatch, names: seed.Names) -> None:
+    monkeypatch.setattr(seed, "run_sql", _missing("CONCEPT"))
     with pytest.raises(seed.SnowflakeSeedError):
-        seed.provenance_for(None, None)
-
-
-def test_a_matching_marker_is_a_no_op() -> None:
-    wanted = seed.Marker(projects=("cxr_project",), source_trust=1, provenance="version=20261001")
-    assert seed.projects_to_reseed(wanted, wanted) == []
-
-
-@pytest.mark.parametrize(
-    "current",
-    [
-        None,
-        seed.Marker(projects=("cxr_project",), source_trust=1, provenance="version=20260911"),
-        seed.Marker(projects=("cxr_project",), source_trust=2, provenance="version=20261001"),
-        seed.Marker(projects=("spleen_project",), source_trust=1, provenance="version=20261001"),
-    ],
-    ids=["no marker", "version bump", "repartition", "different projects"],
-)
-def test_a_differing_marker_reseeds_every_listed_project(current: seed.Marker | None) -> None:
-    wanted = seed.Marker(projects=("cxr_project", "spleen_project"), source_trust=1, provenance="version=20261001")
-    assert seed.projects_to_reseed(wanted, current) == ["cxr_project", "spleen_project"]
-
-
-def test_the_marker_table_holds_exactly_one_row(names: seed.Names) -> None:
-    marker = seed.Marker(projects=("cxr_project",), source_trust=1, provenance="version=20261001")
-    statements = seed.sql_write_marker(names, marker)
-    assert statements[0] == "DELETE FROM FLIP_TRUST_GSTT.OMOP._FLIP_SEED_MARKER;"
-    assert statements[1].startswith("INSERT INTO FLIP_TRUST_GSTT.OMOP._FLIP_SEED_MARKER")
-    assert "'cxr_project', 1, 'version=20261001'" in statements[1]
-
-
-def test_marker_values_are_escaped(names: seed.Names) -> None:
-    marker = seed.Marker(projects=("it's",), source_trust=1, provenance="source=/a'b")
-    assert "'it''s'" in seed.sql_write_marker(names, marker)[1]
-    assert "'source=/a''b'" in seed.sql_write_marker(names, marker)[1]
+        seed.holds_imaging(names, "flip-test", "snow")
 
 
 # ── DDL and loading SQL ──────────────────────────────────────────────────────────────────
 
 
-def test_create_tables_includes_the_marker_table(names: seed.Names) -> None:
+def test_create_tables_is_the_translated_ddl_alone(names: seed.Names) -> None:
     ddl = "CREATE TABLE IF NOT EXISTS PERSON (person_id SERIAL PRIMARY KEY NOT NULL);"
     statements = seed.sql_create_tables(names, ddl)
+    assert len(statements) == 1
     assert statements[0].startswith("CREATE TABLE IF NOT EXISTS FLIP_TRUST_GSTT.OMOP.PERSON")
-    assert statements[-1] == seed.sql_create_marker_table(names)
 
 
 def test_put_is_absolute_and_overwrites(tmp_path: Path) -> None:
@@ -269,13 +255,6 @@ def test_a_seed_run_is_ordered_ddl_clean_load(canonical: Path, tmp_path: Path, n
     assert create < delete < copy
 
 
-def test_the_seed_statements_do_not_write_the_marker(canonical: Path, tmp_path: Path, names: seed.Names) -> None:
-    """The marker is written by ``main`` only after the loaded rows have been counted."""
-    assert not any(
-        "_FLIP_SEED_MARKER" in s and not s.startswith("CREATE") for s in _seed_statements(canonical, tmp_path, names)
-    )
-
-
 def test_a_projects_delete_and_load_are_one_transaction(canonical: Path, tmp_path: Path, names: seed.Names) -> None:
     """A load that fails after the delete must not leave the project's tables empty."""
     statements = _seed_statements(canonical, tmp_path, names)
@@ -396,29 +375,46 @@ def _main_args(canonical: Path) -> list[str]:
         "cxr_project",
         "--data-dir",
         str(canonical),
-        "--revision",
-        "20261001",
     ]
 
 
-def test_the_marker_is_written_after_the_counts_match(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_rows_are_counted_after_the_load(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     full = _counts(person=2, visit_occurrence=1, procedure_occurrence=1, image_occurrence=1, image_feature=1)
     scripts = _fake_snowflake(monkeypatch, full)
 
     assert seed.main(_main_args(canonical)) == 0
 
-    kinds = ["copy" if "COPY INTO" in s else "count" if "COUNT(*)" in s else "marker" for s in scripts[1:]]
-    assert kinds == ["copy", "count", "marker"]
-    assert "INSERT INTO FLIP_TRUST_GSTT.OMOP._FLIP_SEED_MARKER" in scripts[-1]
+    assert ["copy" if "COPY INTO" in s else "count" if "COUNT(*)" in s else "?" for s in scripts[1:]] == [
+        "copy",
+        "count",
+    ]
 
 
-def test_an_empty_load_fails_the_run_and_writes_no_marker(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    scripts = _fake_snowflake(monkeypatch, _counts(person=0))
+def test_an_empty_load_fails_the_run_and_says_to_re_seed(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--if-needed would skip the half-loaded OMOP next time, so the error names the explicit seed."""
+    _fake_snowflake(monkeypatch, _counts(person=0))
 
-    with pytest.raises(seed.SnowflakeSeedError, match="person: 0 of 2"):
+    with pytest.raises(seed.SnowflakeSeedError, match="person: 0 of 2.*Re-run seed-omop-snowflake"):
         seed.main(_main_args(canonical))
 
-    assert not any("INSERT INTO FLIP_TRUST_GSTT.OMOP._FLIP_SEED_MARKER" in s for s in scripts)
+
+def test_if_needed_leaves_an_omop_that_holds_data(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scripts = _fake_snowflake(monkeypatch, [])
+    monkeypatch.setattr(seed, "holds_imaging", lambda *args: True)
+
+    assert seed.main([*_main_args(canonical), "--if-needed"]) == 0
+
+    assert scripts == [], "nothing is staged, loaded or counted"
+
+
+def test_if_needed_seeds_an_empty_omop(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    full = _counts(person=2, visit_occurrence=1, procedure_occurrence=1, image_occurrence=1, image_feature=1)
+    scripts = _fake_snowflake(monkeypatch, full)
+    monkeypatch.setattr(seed, "holds_imaging", lambda *args: False)
+
+    assert seed.main([*_main_args(canonical), "--if-needed"]) == 0
+
+    assert any("COPY INTO" in s for s in scripts)
 
 
 # ── unseed ───────────────────────────────────────────────────────────────────────────────
@@ -430,11 +426,6 @@ def test_unseed_deletes_by_person_and_loads_nothing(canonical: Path, names: seed
     assert any(
         s.startswith("DELETE FROM FLIP_TRUST_GSTT.OMOP.PERSON WHERE person_id IN (1, 2, 3, 4)") for s in statements
     )
-
-
-def test_unseed_leaves_the_marker_alone(canonical: Path, names: seed.Names) -> None:
-    statements = seed.build_unseed_statements(names, canonical, ["cxr_project"])
-    assert not any("_FLIP_SEED_MARKER" in s for s in statements)
 
 
 def test_unseed_checks_every_project_before_deleting_any(canonical: Path, names: seed.Names) -> None:
@@ -498,23 +489,6 @@ def test_a_failing_cli_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 )
 def test_snow_json_parsing(stdout: str, expected: list[dict[str, object]]) -> None:
     assert seed.parse_snow_json(stdout) == expected
-
-
-def test_read_marker_tolerates_either_case_from_the_cli(monkeypatch: pytest.MonkeyPatch, names: seed.Names) -> None:
-    monkeypatch.setattr(
-        seed,
-        "run_sql",
-        lambda *args, **kwargs: [
-            {"PROJECTS": "cxr_project spleen_project", "SOURCE_TRUST": "2", "PROVENANCE": "version=x"}
-        ],
-    )
-    marker = seed.read_marker(names, "flip-test", "snow", dry_run=False)
-    assert marker == seed.Marker(("cxr_project", "spleen_project"), 2, "version=x")
-
-
-def test_read_marker_is_none_on_an_empty_table(monkeypatch: pytest.MonkeyPatch, names: seed.Names) -> None:
-    monkeypatch.setattr(seed, "run_sql", lambda *args, **kwargs: [])
-    assert seed.read_marker(names, "flip-test", "snow", dry_run=False) is None
 
 
 def test_a_dry_run_plans_the_vocabulary_load(monkeypatch: pytest.MonkeyPatch, names: seed.Names) -> None:

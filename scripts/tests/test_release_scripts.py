@@ -26,6 +26,7 @@ import contextlib
 import io
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -692,8 +693,6 @@ class MainCheck(unittest.TestCase):
         assert main_check.problems(release_pr(statusCheckRollup=failed), flip_utils_changed=False)
 
     def test_create_command_carries_the_title_checklist_and_owed_items(self):
-        import shlex
-
         argv = shlex.split(main_check.create_command("v0.13.0", ["Delete JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB"]))
         assert argv[:7] == ["gh", "pr", "create", "--base", "main", "--head", "develop"]
         assert argv[argv.index("--title") + 1] == "Release v0.13.0 (develop → main)"
@@ -705,6 +704,28 @@ class MainCheck(unittest.TestCase):
         assert "deploy-ui" not in body  # the apply publishes the UI (#1186)
         assert "open the live demo host" in body  # published by the same run, to its own host (#2012)
         assert "- [ ] Delete JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" in body
+
+    def test_a_release_that_moves_the_trust_data_pin_names_the_re_seed(self):
+        """Nothing re-seeds a trust that holds data (FLIP#2111), so the checklist is where a bump is remembered."""
+        assert not any("trust-data pin" in step for step in main_check.after_merge("v0.13.0"))
+        step = main_check.after_merge("v0.13.0", "20261125")[-1]
+        assert "The trust-data pin moves to `20261125`" in step
+        assert 'make -C trust seed-trusts PROJECTS="…" CLEAR=1' in step
+        assert "HUB=prod" in step
+        body = shlex.split(main_check.create_command("v0.13.0", [], "20261125"))[-1]
+        assert "- [ ] The trust-data pin moves to `20261125`" in body
+
+    def test_the_pin_counts_as_moved_only_when_develop_changes_it(self):
+        def fake_git(*args, **kwargs):
+            if args[0] == "diff":
+                return moved
+            return "20261125\n" if args[0] == "show" else ""
+
+        with mock.patch.object(main_check, "git", fake_git):
+            moved = ""
+            assert main_check.data_version_moved() is None
+            moved = main_check.DATA_VERSION
+            assert main_check.data_version_moved() == "20261125"
 
 
 if __name__ == "__main__":

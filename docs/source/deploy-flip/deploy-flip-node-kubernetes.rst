@@ -484,9 +484,9 @@ shares, the same one as the VM node self-test, against the deployed release:
    * - trust-api / imaging-api / data-access-api health
      - Each answers its own ``/health`` with ``"status":"ok"``.
    * - omop seeded
-     - ``omop.person`` has rows.
+     - ``omop.image_occurrence`` has rows (persons alone may be Synthea's).
    * - orthanc seeded
-     - Orthanc holds instances.
+     - Orthanc holds studies.
    * - orthanc requires auth
      - Orthanc answers 401 without credentials.
    * - xnat c-store

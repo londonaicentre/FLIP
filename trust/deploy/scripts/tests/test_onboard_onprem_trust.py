@@ -834,10 +834,10 @@ def test_37_uncreatable_data_dir_fails() -> None:
     with tempfile.TemporaryDirectory() as td:
         locked = Path(td) / "locked"
         locked.mkdir()
-        (locked / "pacs").mkdir()  # exists, but its parent (where the seed marker goes) is not writable
+        (locked / "pacs").mkdir()  # exists, under a parent this user cannot write: nothing is created there
         writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
         with mock.patch.object(mod.os, "access", side_effect=writable):
-            marker = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs")
+            existing = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs")
             check = _paths(
                 OMOP_DATA_DIR=f"{locked}/omop",
                 ORTHANC_STORAGE_DIR=f"{td}/orthanc",
@@ -849,7 +849,8 @@ def test_37_uncreatable_data_dir_fails() -> None:
     _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
     _assert(f"OMOP_DATA_DIR ({locked} is not writable)" in check.detail, "names the var and parent", check.detail)
     _assert(f"COHORT_SNAPSHOT_STORAGE_DIR ({locked} is not writable)" in check.detail, "store counted", check.detail)
-    _assert(marker.status == mod.Status.FAIL and "seed marker" in marker.detail, "marker parent checked", str(marker))
+    # Nothing is written beside a data dir any more (FLIP#2111): an existing dir under a root-owned parent is fine.
+    _assert(existing.status == mod.Status.PASS, "an existing dir's parent is not checked", str(existing))
     _assert(unset.status == mod.Status.PASS, "unset dirs judged at their /opt/flip defaults", str(unset))
 
 
@@ -1043,18 +1044,6 @@ def test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded() -> None:
             _assert(result.status == mod.Status.WARN, f"{value!r}: status is WARN", result.detail)
             _assert(any("TRUST_DATA_SEED=false" in h for h in result.hints), "hint says the sample data is off")
             _assert(not any("seeds it" in h for h in result.hints), "and does not say up-trust seeds it", str(result))
-
-
-def test_48_sample_data_off_needs_no_seed_marker_dir() -> None:
-    """TRUST_DATA_SEED=false writes no seed marker, so a data dir's unwritable parent is no FAIL (FLIP#1687)."""
-    print("▶ existing data dir under an unwritable parent, sample data off -> PASS")
-    with tempfile.TemporaryDirectory() as td:
-        locked = Path(td) / "locked"
-        (locked / "pacs").mkdir(parents=True)
-        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
-        with mock.patch.object(mod.os, "access", side_effect=writable):
-            check = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs", TRUST_DATA_SEED="false")
-    _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
 
 
 def test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist() -> None:
@@ -1372,7 +1361,6 @@ def main() -> None:
     test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root()
     test_46_swarm_worker_fails_naming_the_manager()
     test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded()
-    test_48_sample_data_off_needs_no_seed_marker_dir()
     test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist()
     test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list()
     test_51_log_level_debug_fails_a_deployed_kit()
@@ -1386,42 +1374,10 @@ def main() -> None:
     test_59_standalone_ready_also_names_the_upgrade()
     test_60_log_level_passes_only_a_level_quieter_than_debug()
     test_61_an_empty_trust_local_password_is_not_a_rotated_one()
-    test_62_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)
-
-
-def test_62_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked() -> None:
-    """A site root installed: the folder above its data dirs is root's. Only a first install seeds (FLIP#1985)."""
-    print("\n[60] existing data dirs under a root-owned parent: first install FAIL, upgrade PASS")
-    with tempfile.TemporaryDirectory() as td:
-        locked = Path(td) / "locked"
-        (locked / "omop").mkdir(parents=True)
-        (locked / "pacs").mkdir()
-        kit = {"OMOP_DATA_DIR": f"{locked}/omop", "ORTHANC_STORAGE_DIR": f"{locked}/pacs"}
-        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
-        with mock.patch.object(mod.os, "access", side_effect=writable):
-            first = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod")
-            upgrade = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod", upgrade=True)
-            missing = mod.check_data_dir_paths(
-                {**kit, "COHORT_SNAPSHOT_STORAGE_DIR": f"{locked}/snapshots"}, True, "k", upgrade=True
-            )
-    _assert(first.status == mod.Status.FAIL and "seed marker" in first.detail, "first install: FAIL", str(first))
-    _assert(upgrade.status == mod.Status.PASS, "upgrade: PASS", f"{upgrade.status}: {upgrade.detail}")
-    _assert(
-        missing.status == mod.Status.FAIL and "COHORT_SNAPSHOT_STORAGE_DIR" in missing.detail,
-        "upgrade: a dir it would still create is checked",
-        str(missing),
-    )
-    with mock.patch.object(sys, "argv", ["prog", "SITE", "--gate", "--upgrade"]):
-        with mock.patch.object(mod, "run_checks", side_effect=SystemExit) as run:
-            try:
-                mod.main()
-            except SystemExit:
-                pass
-    _assert(run.call_args.args[3] is True, "--upgrade reaches the row", str(run.call_args))
 
 
 if __name__ == "__main__":

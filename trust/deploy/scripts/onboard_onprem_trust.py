@@ -1103,14 +1103,6 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     )
 
 
-def sample_data_off(kit_vars: dict[str, str]) -> bool:
-    """TRUST_DATA_SEED=false, as trust/Makefile reads it; a refused value is not "off" (check_sample_data fails)."""
-    try:
-        return not trust_kit_lib.trust_data_seed(kit_vars)
-    except ValueError:
-        return False
-
-
 def check_sample_data(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
     """TRUST_DATA_SEED (FLIP#1687): on or off, or a FAIL for a value up-trust would refuse."""
     if not kit_present:
@@ -1229,10 +1221,6 @@ DATA_DIR_DEFAULTS: dict[str, str | None] = {
     "XNAT_DATA_DIR": "/opt/flip/xnat-trust{slot}",
 }
 DATA_DIR_VARS: tuple[str, ...] = tuple(DATA_DIR_DEFAULTS)
-# The seeders write their markers beside these two dirs (trust/Makefile OMOP_SEED_MARKER /
-# ORTHANC_SEED_MARKER), as the invoking user, so that parent must be writable even when the dirs
-# themselves belong to a container uid.
-SEED_MARKER_DIR_VARS = ("OMOP_DATA_DIR", "ORTHANC_STORAGE_DIR")
 
 
 def invoking_ids() -> tuple[int, int]:
@@ -1250,18 +1238,13 @@ def prepare_host_dirs_command(kit: str) -> str:
     return f"{command} {quote_make_assignment('HUB', hub)}" if hub else command
 
 
-def check_data_dir_paths(
-    kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>", upgrade: bool = False
-) -> Check:
+def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>") -> Check:
     """Every data dir is absolute, and the bring-up can create it as this user (FLIP#1723).
 
     The kit template carries the development paths, which are relative: on a deployed trust they
     resolve inside this checkout, on whatever disk it sits on. An unset one falls back to its
     /opt/flip default, which a non-root operator usually cannot create — a site installed before
     the membership store (FLIP#857) has no COHORT_SNAPSHOT_STORAGE_DIR, so its upgrade meets this.
-
-    An upgrade never seeds, so it writes no seed marker beside the OMOP and Orthanc dirs: a site
-    that root installed is not refused for that folder (FLIP#1985).
     """
     label = "Data dir paths"
     if not kit_present:
@@ -1285,14 +1268,6 @@ def check_data_dir_paths(
             continue
         if nearest != path and not os.access(nearest, os.W_OK):
             blocked[var] = f"{unset}{nearest} is not writable"
-        elif (
-            var in SEED_MARKER_DIR_VARS
-            and not upgrade
-            and not sample_data_off(kit_vars)
-            and path.parent.exists()
-            and not os.access(path.parent, os.W_OK)
-        ):
-            blocked[var] = f"{path.parent} is not writable, and the seed marker is written there"
     if kit_vars.get("FLIP_UID", "").strip() == str(invoking_ids()[0]):
         create = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
     else:
@@ -1375,7 +1350,7 @@ def kit_file_label(kit_file: Path, repo_root: Path) -> str:
         return str(kit_file)
 
 
-def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None, upgrade: bool = False) -> list[Check]:
+def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[Check]:
     kit_file = kit_file or repo_root / "trust" / f".env.{kit}"
     kit_path = kit_file_label(kit_file, repo_root)
     kit_vars = read_kit_vars(kit_file)
@@ -1403,7 +1378,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None, upgrade:
         check_sample_data(kit_vars, kit_present, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root, image_uid=999),
-        check_data_dir_paths(kit_vars, kit_present, kit_path, kit, upgrade),
+        check_data_dir_paths(kit_vars, kit_present, kit_path, kit),
         check_container_uid(kit_vars, kit_present, kit_path, kit),
     ]
 
@@ -1430,11 +1405,6 @@ def main() -> None:
         help="Running as the gate of a make verb (up-onprem-trust, upgrade-onprem-trust): on READY, "
         "let it continue rather than suggest a command.",
     )
-    parser.add_argument(
-        "--upgrade",
-        action="store_true",
-        help="Judge the kit for an upgrade of a running site (upgrade-onprem-trust), which never seeds.",
-    )
     args = parser.parse_args()
 
     # The governance and site-privacy checks run stdlib tomllib under this interpreter.
@@ -1459,7 +1429,7 @@ def main() -> None:
     print(f"  {BOLD}Checks:{RESET}")
     print()
 
-    checks = run_checks(kit, repo_root, kit_file, args.upgrade)
+    checks = run_checks(kit, repo_root, kit_file)
     label_width = max(len(c.label) + 1 for c in checks)  # +1 for the trailing ":"
     for c in checks:
         render_check(c, label_width)

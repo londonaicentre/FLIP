@@ -270,7 +270,8 @@ make -C fl-tutorials seed-brain-mri KIT=GSTT   # seeding runs from fl-tutorials 
 **Trust data has one path — seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
 Orthanc on empty volumes and then seeds them from the published canonical tables at the version
 pinned in `trust/.data_version` — the one pin for OMOP and Orthanc together, a data version being a
-git tag on `aicentreflip/trust-data`. The seed markers, what re-seeds, and the publishing rule:
+git tag on `aicentreflip/trust-data`. Only an empty store is seeded, so a pin bump is an explicit
+re-seed (the release checklist names it). What seeds, and the publishing rule:
 [`trust/AGENTS.md`](trust/AGENTS.md#trust-data-seeding-and-versioning).
 
 ### Demo Video Recorder
@@ -371,7 +372,7 @@ warning. The resolver refuses (exit 5) a tag any site image was never built at �
 `sha-` build is path-filtered, so most `sha-` tags lack orthanc / omop-db / xnat-* / the FL client; the
 opt-outs are `FL_TAG=` and the kit's `OMOP_DB_TAG` / `ORTHANC_TAG` / `XNAT_TAG` (on Helm:
 `flClient|omopDb|orthanc|xnat.image.pin`, which beat `global.image.tag`). `up-trust` / `up-onprem-trust` / `restart-trust` / the EC2 root's `deploy` stay the
-**first-install** verbs: they run `ensure-seeded` (re-seeds on a data-version bump) and `xnat-reset`, so never use them to move a live site.
+**first-install** verbs: they run `ensure-seeded` (seeds an empty OMOP or PACS) and `xnat-reset`, so never use them to move a live site.
 The heartbeat reply carries `hub_version` + an AES-key fingerprint; trust-api's `/health` reports
 `hub_version` / `hub_key_match` / `hub_key_fingerprint` (forgotten when a heartbeat fails), and the onboarding
 checklist's *Hub-shared block current* row judges the KIT's key against that fingerprint — a refreshed kit on a

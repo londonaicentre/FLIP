@@ -143,8 +143,6 @@ class HostDirsArePreparedNotEscalated(unittest.TestCase):
         # its owner to the net dirs, which imaging-api then cannot write); xnat-db-data is Postgres's own
         # after its first boot, so it is created and never re-owned (FLIP#1731 review).
         assert '= "1000" ] || chown 1000:1000 "$base"' in out, out
-        assert 'parent="$(dirname "$d")"' in out, out  # never root-creates the markers' parent
-        assert "the bring-up writes" in out, out
         xnat_chown = next(line for line in out.splitlines() if "chown 1001:1001 /nonexistent/xnat " in line)
         assert "xnat-db-data" not in xnat_chown, xnat_chown
 
@@ -698,8 +696,6 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     gate = next(line for line in output.splitlines() if "onboard_onprem_trust.py" in line)
                     args = shlex.split(gate)
                     assert "--gate" in args, gate
-                    # Only the upgrade's gate skips the seed-marker folder: it never seeds (FLIP#1985).
-                    assert ("--upgrade" in args) == (target == "upgrade-onprem-trust"), gate
                     assert Path(args[args.index("--kit-file") + 1]) == kit_file, gate
                     if target == "upgrade-onprem-trust":
                         plan = next(line for line in output.splitlines() if "site_upgrade.py plan" in line)

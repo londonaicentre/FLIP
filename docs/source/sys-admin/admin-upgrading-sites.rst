@@ -31,8 +31,8 @@ Two rules apply throughout:
 .. warning::
 
    **Never use the first-install commands to move a live site.** ``make up-onprem-trust``, ``make -C trust
-   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` re-seed the mock data and **wipe
-   the XNAT archive**. Use only the upgrade commands below.
+   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` **wipe
+   the XNAT archive**, and the EC2 one re-seeds the mock data. Use only the upgrade commands below.
 
 .. list-table:: Upgrade command per deployment shape
    :header-rows: 1

@@ -11,8 +11,8 @@
 #
 """trust/Makefile's upgrade verb never reaches a first-install step (FLIP#1204).
 
-`up-trust` re-seeds OMOP / Orthanc whenever the seed markers differ from the kit and runs
-`xnat-reset`; `upgrade-trust` exists so a live site can move to a release without either. These
+`up-trust` seeds an empty OMOP / Orthanc and runs `xnat-reset`; `upgrade-trust` exists so a live
+site can move to a release without either. These
 dry-run the targets against a scratch kit, so a refactor that reuses up-trust's prerequisites
 fails here rather than on a live site.
 """
@@ -138,10 +138,10 @@ class UpgradeTrust(unittest.TestCase):
 
 
 class SampleDataOff(unittest.TestCase):
-    """TRUST_DATA_SEED=false: a real trust's first install fetches, loads and marks nothing (FLIP#1687)."""
+    """TRUST_DATA_SEED=false: a real trust's first install asks, fetches and loads nothing (FLIP#1687)."""
 
     KIT_OFF = KIT + "TRUST_DATA_SEED=false\n"
-    SEED_STEPS = ("seed-omop", "seed-orthanc", ".seeded", "pg_isready")
+    SEED_STEPS = ("seed-omop", "seed-orthanc", "image_occurrence", "/statistics", "pg_isready")
 
     def test_a_first_install_loads_nothing_even_after_a_data_version_bump(self):
         for extra in ((), ("HF_TRUST_DATA_REVISION=main",)):
@@ -217,6 +217,63 @@ class SampleDataOff(unittest.TestCase):
         result = run_target("guard", kit=kit, probe="guard:\n\t$(refuse_seed_when_off)\n\t@echo GUARD-PASSED\n")
         assert result.returncode == 0, result.stdout + result.stderr
         assert "GUARD-PASSED" in result.stdout, result.stdout
+
+
+class EnsureSeeded(unittest.TestCase):
+    """ensure-seeded loads only an empty store, asking the store itself rather than a marker file (FLIP#2111)."""
+
+    KIT_DB = KIT + "OMOP_POSTGRES_USER=site_user\nOMOP_POSTGRES_DB=site_db\nORTHANC_USERNAME=o\nORTHANC_PASSWORD=p\n"
+
+    def _ensure(self, omop_row: str, studies: str, *extra: str) -> tuple[str, str]:
+        """`make -n ensure-seeded` against stub stores: what the probes asked, and the recipe that followed.
+
+        ``omop_row`` is what psql prints for the image_occurrence probe ("" for an empty table) and
+        ``studies`` Orthanc's CountStudies ("" for an Orthanc that does not answer).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            stub, asked = Path(tmp), Path(tmp) / "asked.log"
+            docker = f'echo "docker $*" >> "{asked}"; [ "$1" = ps ] && echo cid; [ "$1" = exec ] && echo "{omop_row}"'
+            curl = f'echo "curl $*" >> "{asked}"; [ -n "{studies}" ] && echo \'{{ "CountStudies" : {studies} }}\''
+            for name, body in (("docker", docker), ("curl", curl)):
+                (stub / name).write_text(f"#!/bin/sh\n{body}\nexit 0\n")
+                (stub / name).chmod(0o755)
+            env = {"PATH": f"{stub}:{os.environ['PATH']}"}
+            result = run_target("ensure-seeded", *extra, kit=self.KIT_DB, dry=True, env=env)
+            assert result.returncode == 0, result.stdout + result.stderr
+            return (asked.read_text() if asked.exists() else ""), result.stdout
+
+    # Under -n the recipe is printed as well as run, so a dispatch is told apart by the sub-make's own line.
+    OMOP_SEED = "make -C ./omop-db seed-omop TRUST_INDEX=9"
+    PACS_SEED = "make -C ./orthanc seed-orthanc TRUST_INDEX=9"
+
+    def test_empty_stores_are_seeded_after_probes_with_the_kit_login_and_port(self):
+        """Image rows, not persons: load-synthea-ehr adds persons to a database no project was seeded into."""
+        asked, out = self._ensure("", "0")
+        assert "exec cid psql -U site_user -d site_db -tAc SELECT 1 FROM omop.image_occurrence LIMIT 1" in asked
+        assert "-u o:p http://127.0.0.1:8099/statistics" in asked, asked
+        assert self.OMOP_SEED in out, out
+        assert self.PACS_SEED in out, out
+        assert "CLEAR=1 " not in out.split(self.PACS_SEED, 1)[1], "an empty PACS has nothing to clear"
+
+    def test_stores_that_hold_data_are_left_alone_even_after_a_data_version_bump(self):
+        """A seeded trust re-seeds only when asked: the release checklist names the step when the pin moves."""
+        for extra in ((), ("HF_TRUST_DATA_REVISION=main",), ("PROJECTS=cxr_project arkplus_project",)):
+            _, out = self._ensure("1", "12", *extra)
+            assert self.OMOP_SEED not in out, f"{extra}:\n{out}"
+            assert self.PACS_SEED not in out, f"{extra}:\n{out}"
+            assert "\n✅ OMOP (SCR) already holds data" in out, out
+            assert "\n✅ PACS (SCR) already holds studies" in out, out
+
+    def test_each_store_is_judged_on_its_own(self):
+        _, out = self._ensure("1", "0")
+        assert self.OMOP_SEED not in out, out
+        assert self.PACS_SEED in out, out
+
+    def test_a_store_that_does_not_answer_is_seeded_and_so_fails_loudly(self):
+        """An unreachable store is never read as a seeded one: the seed's own error says what is wrong."""
+        _, out = self._ensure("", "")
+        assert self.OMOP_SEED in out, out
+        assert self.PACS_SEED in out, out
 
 
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")

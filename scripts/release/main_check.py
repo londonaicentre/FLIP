@@ -17,9 +17,10 @@
 Read-only: opens, merges and approves nothing. It finds the open PR titled ``Release vX.Y.Z (develop → main)``
 (or ``PR``) and fails unless GitHub reports it MERGEABLE, ``validate_branch_origin`` passed,
 ``check-version-bump`` passed whenever ``flip-utils/**`` changed (it runs only then), and the release-notes
-preview comment is present. It then prints the after-merge checklist. With no such PR it prints the
-``gh pr create`` command to open one, its body carrying the checklist and the owed after-merge items (one per
-line in ``OWED``).
+preview comment is present. It then prints the after-merge checklist, with a re-seed step when the release
+moves the trust-data pin (``trust/.data_version``): nothing re-seeds a trust that already holds data
+(FLIP#2111). With no such PR it prints the ``gh pr create`` command to open one, its body carrying the
+checklist and the owed after-merge items (one per line in ``OWED``).
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from release_lib import REPO, ReleaseError, git, parse_tag  # noqa: E402
 PREVIEW_MARKER = "<!-- release-notes-preview -->"  # pr-release-notes-preview.yml
 ORIGIN_WORKFLOW = "Validate PR Source Branch"  # validate_branch_origin.yml
 VERSION_WORKFLOW = "Check version bump for PR to main"  # check-version-bump.yml, only on flip-utils/** changes
+DATA_VERSION = "trust/.data_version"  # the trust-data pin, a tag on aicentreflip/trust-data
 
 
 def title(tag: str) -> str:
@@ -44,9 +46,12 @@ def title(tag: str) -> str:
     return f"Release {tag} (develop → main)"
 
 
-def after_merge(tag: str) -> list[str]:
-    """What happens after the merge, in order (the skill's *After the bump PR merges*)."""
-    return [
+def after_merge(tag: str, data_version: str | None = None) -> list[str]:
+    """What happens after the merge, in order (the skill's *After the bump PR merges*).
+
+    ``data_version`` is the trust-data pin the release moves to, when it moves one.
+    """
+    steps = [
         "Merge with a **merge commit** — never squash or rebase.",
         "Two prod Terraform applies follow: the push apply at `sha-<short7>`, then `release.yml`'s apply at "
         f"`{tag}` once the fourteen image builds are green. Either can hold on the FL gate; only the user attests "
@@ -59,6 +64,17 @@ def after_merge(tag: str) -> list[str]:
         "Sites upgrade themselves: point operators to *Site upgrade* and "
         "`docs/source/sys-admin/admin-upgrading-sites.rst`.",
     ]
+    if data_version:
+        steps.append(
+            f"The trust-data pin moves to `{data_version}`, and nothing re-seeds a trust that already holds data "
+            "(FLIP#2111). Re-seed every Compose sample-data trust at it with the projects it holds (a Helm or EC2 "
+            "trust re-seeds at its own upgrade): the dev trusts "
+            '(`make -C trust seed-trusts PROJECTS="…" CLEAR=1`), the staging pool, and the production sample-data '
+            'sites, whose operators get `make -C trust seed KIT=<CODE> HUB=prod PROJECTS="…" CLEAR=1` with the '
+            "release. A cut that changed a project's person ids needs `CLEAN=all` or an unseed first, as the bump "
+            "PR says."
+        )
+    return steps
 
 
 def _passed(rollup: list[dict], workflow: str) -> bool | None:
@@ -89,7 +105,7 @@ def problems(pr: dict, flip_utils_changed: bool) -> list[str]:
     return out
 
 
-def create_command(tag: str, owed: list[str]) -> str:
+def create_command(tag: str, owed: list[str], data_version: str | None = None) -> str:
     """The ``gh pr create`` command that opens the release PR, with its body skeleton."""
     lines = [
         "## Summary",
@@ -99,7 +115,7 @@ def create_command(tag: str, owed: list[str]) -> str:
         "",
         "## Merge and after",
         "",
-        *(f"- [ ] {step}" for step in after_merge(tag)),
+        *(f"- [ ] {step}" for step in after_merge(tag, data_version)),
         *(f"- [ ] {item}" for item in owed),
     ]
     body = "\n".join(lines)
@@ -130,10 +146,14 @@ def view(pr: str) -> dict:
     return json.loads(out)
 
 
-def flip_utils_changed() -> bool:
-    """Whether develop changes flip-utils/** relative to main."""
-    git("fetch", "--quiet", "origin", "main", "develop")
-    return bool(git("diff", "--name-only", "origin/main", "origin/develop", "--", "flip-utils/"))
+def develop_changes(path: str) -> bool:
+    """Whether develop changes ``path`` relative to main, as last fetched."""
+    return bool(git("diff", "--name-only", "origin/main", "origin/develop", "--", path))
+
+
+def data_version_moved() -> str | None:
+    """The trust-data pin develop moves ``main`` to, or None when the release keeps the pin."""
+    return git("show", f"origin/develop:{DATA_VERSION}").strip() if develop_changes(DATA_VERSION) else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,19 +166,21 @@ def main(argv: list[str] | None = None) -> int:
     try:
         parse_tag(a.tag)
         owed = [line.strip() for line in Path(a.owed).read_text().splitlines() if line.strip()] if a.owed else []
+        git("fetch", "--quiet", "origin", "main", "develop")
+        data_version = data_version_moved()
         number = a.pr or find_pr(a.tag)
         if not number:
             print(f"No open PR titled '{title(a.tag)}'. To open it (only when asked to):\n")
-            print(create_command(a.tag, owed))
+            print(create_command(a.tag, owed, data_version))
             return 1
-        found = problems(view(number), flip_utils_changed())
+        found = problems(view(number), develop_changes("flip-utils/"))
         for line in found:
             print(f"  ✗ {line}")
         if found:
             print(f"❌ #{number} is not ready to merge")
             return 1
         print(f"✅ #{number} is ready. Merging is the user's call. After the merge:")
-        for i, step in enumerate([*after_merge(a.tag), *owed], 1):
+        for i, step in enumerate([*after_merge(a.tag, data_version), *owed], 1):
             print(f"  {i}. {step}")
     except (ReleaseError, subprocess.CalledProcessError, OSError) as e:
         print(f"❌ {e}", file=sys.stderr)

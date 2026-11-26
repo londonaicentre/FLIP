@@ -165,7 +165,7 @@ make debug-data-access-api     # Debug data-access-api only
 make tests                     # Run tests on all 3 API services
 make build                     # Build all trust Docker images
 make create-networks           # Create Docker overlay networks
-make ensure-seeded KIT=GSTT [PROJECTS="…"]  # What up-trust runs after compose up: seed unless the markers already say so (#1187), or the kit says TRUST_DATA_SEED=false
+make ensure-seeded KIT=GSTT [PROJECTS="…"]  # What up-trust runs after compose up: seed each store that is still empty (#1187, #2111), unless the kit says TRUST_DATA_SEED=false
 make seed KIT=GSTT PROJECTS="cxr_project"  # Seed a RUNNING trust unconditionally: OMOP rows + DICOMs by source_trust (#1100), from the published tag
 make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for one half; CLEAR=1, DRY_RUN=1 on the PACS half
 make seed-omop KIT=GSTT PROJECTS=brain_mri_project CANONICAL_DIR=/abs/canonical   # local tables instead of the tag (#1221); CLEAN=all = wipe every project first
@@ -174,7 +174,7 @@ make seed-orthanc KIT=GSTT PROJECTS=brain_mri_project DICOM_SOURCE=/abs/dicom TA
 make unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911  # take a project OUT (rows by its person ids, studies by its accessions, as those tables name them) — the move off a re-cut project; other projects untouched
 make seed KIT=GSTT SOURCE_TRUST=1  # Override the OMOP partition; defaults to the FL kit slot, which is a convention, not an invariant (see README "Which partition a trust is seeded with")
 make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=… DELETE=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc). DELETE= retires a file from main (earlier tags keep it)
-make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck over seed_trust.sh, and the seed-marker contract harness (tests/test_seed_marker_contract.sh)
+make test-trust-data-tools  # publisher + Makefile pytest (tests/, ensure-seeded among them) + ruff, and shellcheck over seed_trust.sh
 make check-governance KIT=GSTT   # Validate the trust's governance document — both halves, on the host's Python (no project sync), starts nothing
 make reload-governance KIT=GSTT  # Re-apply an edited governance document to a LIVE trust: recreates data-access-api (+ on FLARE fl-governance-init, fl-client-init and the fl-clients), then checks the service logs the document's digest; touches no data
 make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch, in imaging-api's container; report only without LAUNCH (deploy/helm/TROUBLESHOOTING.md §2.3e)
@@ -258,12 +258,15 @@ dataset publishes a DICOM set for as well as tables — spleen and brain_mri reg
 locally) from the published canonical tables at the pinned
 `trust/.data_version`: OMOP rows via `omop_db_tools.import_tables` (the DICOM vocabulary first,
 skipped if present) and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the same
-`source_trust` column, so a trust's OMOP rows and the studies in its PACS agree by construction. Each
-half leaves a marker beside its store (`volumes/Trust_<N>/.seeded`, `orthanc/.orthanc-storage-trust<N>.seeded`)
-recording projects/partition/version; a matching marker means a later `up` fetches and uploads
-nothing and the volumes just persist on the host, a differing one (a `.data_version` bump, a changed
-`PROJECTS`) re-seeds those projects — rows replaced, studies cleared and re-uploaded. There is no
-`FORCE` and no snapshot: the pre-#1187 `trust<N>_pgdata.tar` / `trust<N>_orthanc_data.tar` volume
+`source_trust` column, so a trust's OMOP rows and the studies in its PACS agree by construction.
+`ensure-seeded` seeds a store only while it is empty — OMOP with no `image_occurrence` row (persons
+alone may be Synthea's), Orthanc with no study — and asks the stores themselves, so it keeps no
+record on the host and needs no `sudo` (FLIP#2111; the `.seeded` marker files it used to write are
+gone, and any left on a host are ignored). A later `up` therefore fetches and uploads nothing, and
+neither a `.data_version` bump nor a changed `PROJECTS` reaches a seeded trust from there: move one
+with `make -C trust seed KIT=<CODE> PROJECTS="…" CLEAR=1` (rows replaced, studies cleared and
+re-uploaded), or `seed-trusts … CLEAR=1` for the dev pair. A seed that failed part-way leaves a store
+that is not empty, so re-run the seed itself rather than `up`. There is no snapshot: the pre-#1187 `trust<N>_pgdata.tar` / `trust<N>_orthanc_data.tar` volume
 tarballs, `update-*-data` scripts and `export-pgdata` are gone. The first bring-up on a fresh host
 posts ~2 GB of DICOM per trust through Orthanc's REST API (minutes); the OMOP half is seconds. The
 omop-db image's init scripts need `DATA_ACCESS_POSTGRES_PASSWORD` in the container env (compose
@@ -284,13 +287,13 @@ pre-#2084 loader filled (AICP, BDMS) first runs `make -C trust remove-stray-stud
 path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no trust service.
 
 **A real trust turns seeding off (FLIP#1687).** `TRUST_DATA_SEED=false` in the kit (unset = `true`) makes
-`ensure-seeded`, so `up-trust`, `up-onprem-trust` and `restart-trust`, fetch, load and mark nothing whatever the
-markers or the pin say (no Hugging Face or PyPI request either), and the EC2 root's `seed` (so its `deploy`) skips
+`ensure-seeded`, so `up-trust`, `up-onprem-trust` and `restart-trust`, ask, fetch and load nothing whatever the
+stores hold (no Hugging Face or PyPI request either), and the EC2 root's `seed` (so its `deploy`) skips
 its sample-data play, loading only the vocabulary from `KIT_BUCKET`. Any other value is refused, since read as true it would seed a real
 OMOP, and `up-trust` checks it before starting a container. `sync-kit` maps it onto `trustData.seed.enabled:
 false`, and every Helm Makefile render or deploy that names the `KIT` passes it as `--set` too, so a
 missing or stale override cannot seed. The onboarding checklist's data-dir hints and the
-node self-test (`SELFTEST_TRUST_DATA_SEED=false`: the seed-marker checks are skipped with the reason) follow it, as
+node self-test (`SELFTEST_TRUST_DATA_SEED=false`: the seeded checks are skipped with the reason) follow it, as
 does the Kubernetes self-test (`selftest_k8s.py`, from the release's `trustData.seed` values, so the chart default
 `seed.orthanc: false` counts too). Both skip the C-STORE (and, on Kubernetes, `orthanc seeded` and the dcm2niix
 conversion) only while Orthanc also reports no instance: an Orthanc holding studies is stored into XNAT whatever
@@ -309,4 +312,8 @@ spleen uploader, Ansible, the Helm chart) fetches `resolve/<tag>/<path>`, so old
 reachable at their tags forever and are never duplicated. `HF_TRUST_DATA_REVISION` overrides the
 tag (`main` to work against content that is not tagged yet). Publishing a version is
 `make -C trust publish-trust-data VERSION=<tag> …` — one commit on the dataset plus one tag —
-then a bump of `trust/.data_version`. Never add a versioned filename or directory to the dataset.
+then a bump of `trust/.data_version`, then a re-seed of the trusts that hold sample data: nothing
+re-seeds them on its own. The dev trusts get `make -C trust seed-trusts PROJECTS="…" CLEAR=1` once the
+bump merges; the staging pool and the production sample-data sites follow at the release, whose
+`make release-main-check` checklist names the step whenever the pin moved. Never add a versioned
+filename or directory to the dataset.

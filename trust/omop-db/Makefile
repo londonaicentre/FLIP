@@ -116,8 +116,8 @@ load-adni-cohort:
 		--cohort "$(ADNI_COHORT)" --trust-index $(TRUST_INDEX) --num-trusts $(NUM_TRUSTS)
 
 # Seed a RUNNING trust omop-db with the listed projects' rows for this trust
-# (FLIP#1100). Idempotent to re-run; `make -C trust ensure-seeded` runs it at
-# bring-up and again on a .data_version bump. Scoped, not destructive — only the
+# (FLIP#1100). Idempotent to re-run; `make -C trust ensure-seeded` runs it at a
+# first bring-up, on an empty database. Scoped, not destructive — only the
 # listed projects' own rows are replaced (by their person_ids), so Synthea EHR
 # rows and other projects stay. Loads by `source_trust`, the same column the
 # per-project DICOM sets are keyed on, so this trust's OMOP rows and the studies
@@ -129,28 +129,19 @@ load-adni-cohort:
 # supplies TRUST_INDEX, SOURCE_TRUST, the port and the credentials from the kit;
 # direct use:
 #   make seed-omop TRUST_INDEX=2 OMOP_DB_PORT=5436 PROJECTS="spleen_project cxr_project"
-# Writes a .seeded marker BESIDE the trust's db_data (so it follows the data,
-# whichever checkout runs the scripts) recording projects, partition and data
-# version — what ensure-seeded compares against to decide whether to re-seed.
-# TRUST_INDEX names the TRUST — its FL kit slot, and so its volume and marker.
+# TRUST_INDEX names the TRUST — its FL kit slot.
 # SOURCE_TRUST names the OMOP PARTITION to load into it. They are two axes that
 # coincide by convention on the shipped GSTT/KCH roster, not by construction:
 # kit slots are claimed from a pool in registration order, so a re-registered or
 # third trust can hold slot 2 while its data is partition 1. Separating them
-# leaves an override for that case; overriding TRUST_INDEX instead would move
-# the volume and the marker along with the partition.
+# leaves an override for that case.
 TRUST_INDEX ?= 1
 SOURCE_TRUST ?= $(TRUST_INDEX)
 PROJECTS ?= cxr_project spleen_project
-# OMOP_DATA_DIR_TRUST_<N> arrives absolute from trust/Makefile; the default is this
-# directory's own volumes tree (direct use). Either way the marker lands beside db_data.
-SEED_DATA_DIR = $(or $(OMOP_DATA_DIR_TRUST_$(TRUST_INDEX)),volumes/Trust_$(TRUST_INDEX)/db_data)
-SEED_MARKER = $(dir $(SEED_DATA_DIR)).seeded
 
 # CANONICAL_DIR=<dir> loads from a local canonical tree (<dir>/<project>/<table>.csv, what
 # `omop_db_tools.dataset build` writes) instead of fetching the published tag — how a project
-# is proven on a running trust BEFORE its data version is tagged (FLIP#1221). The marker then
-# records source=<dir> in place of version=, since no published revision produced those rows.
+# is proven on a running trust BEFORE its data version is tagged (FLIP#1221).
 CANONICAL_DIR ?=
 SEED_DATA_SOURCE = $(or $(CANONICAL_DIR),data/canonical)
 SEED_PROVENANCE = $(if $(CANONICAL_DIR),source=$(CANONICAL_DIR),version=$(HF_TRUST_DATA_REVISION))
@@ -165,14 +156,13 @@ seed-omop: $(if $(CANONICAL_DIR),,fetch-dataset) load-dicom-vocab
 	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.import_tables \
 		--trust-index $(SOURCE_TRUST) --num-trusts $(NUM_TRUSTS) --partition $(PARTITION) \
 		--clean $(CLEAN) --projects $(PROJECTS) --data-dir $(SEED_DATA_SOURCE)
-	@mkdir -p $(dir $(SEED_MARKER)) && printf 'projects=%s\nsource_trust=%s\n%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(SEED_PROVENANCE)" > $(SEED_MARKER)
-	@echo "✅ Seeded trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) with: $(PROJECTS) (source_trust $(SOURCE_TRUST); marker: $(SEED_MARKER))"
+	@echo "✅ Seeded trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) with: $(PROJECTS) (source_trust $(SOURCE_TRUST); $(SEED_PROVENANCE))"
 
 # Unseed: take the listed projects' rows OUT of a running trust, as the tables at
 # HF_TRUST_DATA_REVISION describe them (or CANONICAL_DIR=), and load nothing. The move off a
 # re-cut project whose person ids all changed — e.g. `make unseed-omop PROJECTS=spleen_project
 # HF_TRUST_DATA_REVISION=20260911` removes the pre-FLIP#1221 spleen cut, then `seed-omop` loads
-# the new one — without `CLEAN=all`'s wipe of every other project. Marker left as is.
+# the new one — without `CLEAN=all`'s wipe of every other project.
 unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
 	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.import_tables \
 		--trust-index $(SOURCE_TRUST) --remove-only --projects $(PROJECTS) --data-dir $(SEED_DATA_SOURCE)
@@ -192,7 +182,7 @@ remove-stray-studies: $(if $(CANONICAL_DIR),,fetch-dataset)
 # Snowflake-hosted OMOP (FLIP#1580)
 # ─────────────────────────────────────────────────────────────────────────────
 # The Snowflake twin of seed-omop/unseed-omop above: same canonical source, same
-# source_trust selection, same marker semantics, a different load mechanism
+# source_trust selection, a different load mechanism
 # (internal stage + COPY INTO instead of INSERT). It lives here rather than in
 # trust/deploy/snowflake/ so that the dataset fetch and the partition split have
 # exactly one implementation; the node shape's Makefile (FLIP#1582) forwards to
@@ -216,7 +206,6 @@ DRY_RUN ?=
 SNOWFLAKE_SEED_ARGS = --code $(KIT) --connection $(SNOW_CONNECTION) --snow $(SNOW) \
 	--projects $(PROJECTS) --source-trust $(SOURCE_TRUST) --num-trusts $(NUM_TRUSTS) \
 	--partition $(PARTITION) --data-dir $(SEED_DATA_SOURCE) \
-	$(if $(CANONICAL_DIR),--canonical-dir $(CANONICAL_DIR),--revision $(HF_TRUST_DATA_REVISION)) \
 	$(if $(filter 1 true,$(DRY_RUN)),--dry-run,)
 
 check-kit:
@@ -238,8 +227,8 @@ seed-omop-snowflake: check-kit $(if $(CANONICAL_DIR),,fetch-dataset) fetch-vocab
 	uv run python -m omop_db_tools.snowflake_seed $(SNOWFLAKE_SEED_ARGS) \
 		--vocab-dir data/$(VOCAB_DICOM_BUNDLE) $(if $(filter 1 true,$(IF_NEEDED)),--if-needed,)
 
-# The ensure-seeded equivalent: a marker recording exactly these projects, this
-# partition and this version means no fetch, no upload, no SQL.
+# The ensure-seeded equivalent: seeds only an OMOP that holds no imaging row yet
+# (FLIP#2111). After a .data_version bump, re-seed with seed-omop-snowflake.
 ensure-seeded-snowflake:
 	$(MAKE) seed-omop-snowflake KIT=$(KIT) IF_NEEDED=1
 
@@ -300,9 +289,8 @@ build:
 
 # Docker creates a missing bind-mount source itself — as root — so a build stack
 # started before anything else touched volumes/ leaves volumes/ and
-# volumes/Trust_<N>/ root-owned, and seed-omop, which writes its per-trust marker
-# beside db_data, then fails with "Permission denied". Create the sources as the
-# invoking user first; postgres
+# volumes/Trust_<N>/ root-owned, which the invoking user can then neither reuse nor
+# remove. Create the sources as the invoking user first; postgres
 # still chowns db_data itself to uid 999 at init, only the parents need to be
 # ours. A parent we cannot write to fails loudly here rather than one target
 # later, with the fix spelled out.

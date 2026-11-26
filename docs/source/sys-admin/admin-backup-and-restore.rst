@@ -304,7 +304,7 @@ FLIP has no restore command for a trust. When you restore one with your own tool
 
    **Never run a first-install command on a restored site.** ``make up-onprem-trust``, ``make -C trust up-trust``,
    ``make -C trust restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` delete the whole
-   ``XNAT_DATA_DIR`` (archive, database and dumps) and may re-seed OMOP and Orthanc. Starting a stopped site with them
+   ``XNAT_DATA_DIR`` (archive, database and dumps), and the EC2 one re-seeds OMOP and Orthanc. Starting a stopped site with them
    has the same effect.
 
 - **The upgrade command touches no data.** It recreates the trust containers on their existing directories (see

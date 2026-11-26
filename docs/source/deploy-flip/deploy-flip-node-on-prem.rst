@@ -58,16 +58,14 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
     directory later needs root, so a second install on the same tree does too. Decide before the first install:
     a live site's data carries the ids it was installed with, and ``make upgrade-onprem-trust`` refuses a kit that
     turns ``FLIP_UID`` on, changes it or clears it afterwards.
-  - **Keep the images' own users** (the table below). Create the directory the data dirs sit in yourself
-    (``mkdir -p /data/flip``, say: your own bring-up writes the seed markers beside the data dirs, so that parent
-    must be yours), then have whoever prepares the host run, once, as root:
+  - **Keep the images' own users** (the table below). Have whoever prepares the host run, once, as root:
 
     .. code-block:: shell
 
        make -C trust prepare-host-dirs KIT=<CODE> HUB=prod
 
     It creates every directory below with its owner (the FL kit it only gives to its uid, once you have unpacked
-    it), refuses to create that parent, and deletes nothing, so it is safe to re-run.
+    it) and deletes nothing, so it is safe to re-run.
 
   On the first route ``make up-onprem-trust`` creates the XNAT tree itself; on the second it only checks the
   ownership, and a failed check names the fix.
