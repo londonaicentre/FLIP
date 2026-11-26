@@ -146,6 +146,14 @@ jobs:
 
           echo "✅ Built base image."
 
+      # The apps run in this environment and nothing installs their dependencies at run time
+      # (FLIP#1418), so the runtime user must not be able to rewrite it (FLIP#1573). Runs before the
+      # push: an image whose import path is writable by the user apps run as is never published.
+      - name: Check base image environment is read-only to the runtime user
+        run: |
+          fl-services/flower/scripts/check_image_env_readonly.sh \
+            "$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}"
+
       - name: Push Base Image
         env:
           TAGS: ${{ steps.tags.outputs.base_tags }}
@@ -184,6 +192,12 @@ jobs:
 
           echo "✅ Built SuperLink."
 
+      # The ServerApp runs in this image (FLIP#1573) — see the base-image check above.
+      - name: Check SuperLink environment is read-only to the runtime user
+        run: |
+          fl-services/flower/scripts/check_image_env_readonly.sh \
+            "$REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}"
+
       - name: Push SuperLink Image
         env:
           TAGS: ${{ steps.tags.outputs.server_tags }}
@@ -219,6 +233,12 @@ jobs:
             -t $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA fl-services/flower/supernode
 
           echo "✅ Built SuperNode."
+
+      # The ClientApps run in this image (FLIP#1573) — see the base-image check above.
+      - name: Check SuperNode environment is read-only to the runtime user
+        run: |
+          fl-services/flower/scripts/check_image_env_readonly.sh \
+            "$REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}"
 
       - name: Push SuperNode Image
         env:

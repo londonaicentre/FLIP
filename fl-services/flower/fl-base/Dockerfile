@@ -55,14 +55,47 @@ COPY flip-utils/flip/ /opt/flip-utils/flip/
 # flwr/base's own version (test_flip_utils_lock_carries_the_fl_base_images_flwr pins the two), so pip keeps that
 # install and the lock pins flwr's dependencies; `pip check` fails the build if they no longer fit.
 # uv builds the flip-utils wheel, so hatchling comes within the 72h cooldown; pip would fetch the newest.
+#
+# The install runs as root and ends by handing the whole import path to root, read-only to everyone
+# else (FLIP#1573). flwr/base ships `/python/venv` owned by `app` and ends `USER app`, so an install
+# left as-is gives the ServerApp and the ClientApps write access to the environment they import:
+# app code could rewrite `flip`, `flwr` or `torch` in site-packages and every later run in that
+# container would import the rewritten copy. Since FLIP#1418 the image environment is the only
+# environment a run gets, so it has to survive the run.
+#
+# It is all one RUN on purpose. A `chown -R` in a later layer rewrites every file it touches into
+# that layer, which for this venv (torch + MONAI) added ~7 GB to an image every trust pulls; in the
+# layer that installs them there is nothing to duplicate.
+#
+# Both prefixes: `sys.prefix` is the venv, `sys.base_prefix` the interpreter whose stdlib it reuses —
+# together they cover every sys.path entry outside the app's own working dir.
+#
+# compileall runs while the tree is still writable, so no import needs to write bytecode afterwards
+# (an uncached import still works read-only, it just recompiles on every start). It tolerates
+# failures because site-packages legitimately carries .py files that do not compile under this
+# interpreter — vendored samples, py2 and non-UTF-8 fixtures; a real breakage surfaces in the
+# `pip check` above it and in fl-services/flower/scripts/check_image_env_readonly.py, which asserts
+# the flip and flwr trees are fully cached.
+#
+# `chmod -R go-w` only clears write bits, so exec bits on the venv's console scripts survive.
+#
+# HOME is /app for root too, so anything uv or pip caches lands root-owned in the app's own HOME:
+# `--no-cache` on both and the `rm -rf /app/.cache` below keep it out of the image, and keep the
+# final `chmod 1777 /app/.cache` (which runs as `app`) able to do its job.
+USER root
 RUN cd /opt/flip-utils \
- && python -m uv export --frozen --extra flower --extra full --no-dev --no-emit-project -o /tmp/flip-utils.txt \
+ && python -m uv export --frozen --no-cache --extra flower --extra full --no-dev --no-emit-project -o /tmp/flip-utils.txt \
  && python -m pip install --no-cache-dir --require-hashes -r /tmp/flip-utils.txt \
       --extra-index-url https://download.pytorch.org/whl/cu132 \
  && python -m uv build --wheel --no-cache --out-dir /tmp/dist \
  && python -m pip install --no-cache-dir --no-deps /tmp/dist/*.whl \
  && python -m pip check \
- && rm -r /tmp/flip-utils.txt /tmp/dist
+ && rm -rf /tmp/flip-utils.txt /tmp/dist /app/.cache \
+ && PREFIXES="$(python -c 'import sys; print(sys.prefix, sys.base_prefix)')" \
+ && { python -m compileall -q $PREFIXES || echo "compileall: some files did not compile (tolerated, see above)"; } \
+ && chown -R root:root $PREFIXES \
+ && chmod -R go-w $PREFIXES
+USER app
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to
 # register SuperNode public keys with the SuperLink).
