@@ -57,7 +57,9 @@ ROWS = (
     "hub heartbeat",
     "declared endpoints reachable",
     "undeclared destinations blocked",
+    "no configuration drift",
 )
+DRIFT_REFS = ("SATRE 5.5.01", "SATRE 2.4.03", "SATRE 2.4.04")
 # Two well-known hosts no trust node has a reason to reach, tried on 443 to see what the node's network lets out.
 # A sample: a node that blocks both may still allow others. test_trust_endpoints.py keeps them off the declared list.
 UNDECLARED = ("example.com", "www.wikipedia.org")
@@ -210,6 +212,18 @@ def check_hub_heartbeat(
         f"trust-api has no accepted heartbeat on record after {waited}s: its last one failed or was refused "
         "(a wrong TRUST_API_KEY looks like this). Its log says which",
     )
+
+
+def drift(differences: list[str], compared: str) -> Check:
+    """The drift row: what differs between the running node and what it was deployed from, or that nothing does.
+
+    Each platform finds the differences its own way (Helm's manifest, Compose's configuration); ``compared`` says
+    what was compared, so a pass states its own reach.
+    """
+    name = "no configuration drift"
+    if differences:
+        return Check(name, trust_checks.Status.FAIL, "; ".join(differences), refs=DRIFT_REFS)
+    return Check(name, trust_checks.Status.PASS, compared, refs=DRIFT_REFS)
 
 
 def probe(node: Node, pod: str, targets: list[str]) -> dict[str, str]:
@@ -658,6 +672,7 @@ def run_checks(
     no_study: str = "",
     no_hub: str = "",
     hub_wait_seconds: int = 90,
+    find_drift: Callable[[], Check] | None = None,
     conversion_timeout: int = 600,
     fl_settle_seconds: int = 45,
 ) -> list[Check]:
@@ -666,7 +681,8 @@ def run_checks(
     ``ready`` is the platform's own answer to "is every service up". ``no_omop`` and ``no_orthanc`` say why the node
     holds no sample data, and skip the rows that need it. ``no_study`` says why no study may be sent at all (a site
     holding real data), and skips the C-STORE and the conversion whatever Orthanc holds. ``no_hub`` says why the node
-    is not expected to reach a hub (a hubless self-test).
+    is not expected to reach a hub (a hubless self-test). ``find_drift`` is the platform's comparison of the running
+    node with what it was deployed from; without one the row is skipped.
     """
     checks: list[Check] = []
 
@@ -729,4 +745,8 @@ def run_checks(
         attempt("hub heartbeat", lambda: check_hub_heartbeat(node, hub_wait_seconds))
         attempt("declared endpoints reachable", lambda: check_declared_reachable(node, backend, fl_enabled))
     attempt("undeclared destinations blocked", lambda: check_undeclared_blocked(node, fl_enabled))
+    if find_drift:
+        attempt("no configuration drift", find_drift)
+    else:
+        skip("no configuration drift", "no declared configuration was given to compare the node with")
     return checks

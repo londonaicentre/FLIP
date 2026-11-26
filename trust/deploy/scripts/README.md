@@ -111,7 +111,10 @@ a re-run.
   data, Orthanc requires auth, a C-STORE reaches XNAT, dcm2niix converts it, the FL client stays
   up, the hub heartbeat, and the two egress rows (FLIP#2077): the hub API and FL server answer
   from the containers that use them, and a sample of destinations no trust needs does not (one
-  that answers is a warning for the site's IT team, never a failure). Each asks its question from inside a container the node already runs,
+  that answers is a warning for the site's IT team, never a failure). The last row is drift
+  (FLIP#2078): what differs between the running node and what it was deployed from, found by
+  each platform's own comparison (`kubectl diff` of the Helm manifest; `docker compose config
+  --hash` and image IDs). Each asks its question from inside a container the node already runs,
   through a small interface (`Node`). `ROWS` is the list both platforms report, held by a test on
   each side.
 - **`check_node.py`** (`make -C trust check-node KIT=<CODE>`, or `make check-onprem-trust

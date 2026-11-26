@@ -566,12 +566,17 @@ build:
 # one sample study to XNAT (left in the prearchive) and converts one in a throwaway project, unless the
 # kit has TRUST_DATA_SEED=false: then the node holds the site's own data and no study is sent.
 # Report under CHECKS_OUT.
+# Its drift row compares the running containers with what the compose files and this kit render to now
+# (`docker compose config --hash`, with the files and variables up-trust uses), so run it from the checkout
+# the stack was started from.
 check-node:
 	$(require_kit_file)
-	@python3 deploy/scripts/check_node.py --site --project $(TRUST_PROJECT) \
+	@$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) \
+	  -p $(TRUST_PROJECT) config --hash '*' \
+	| python3 deploy/scripts/check_node.py --site --project $(TRUST_PROJECT) \
 	  --xnat-stack $(INSTANCE_PREFIX)xnat$(TRUST_NUM) --backend $(FL_BACKEND) --title 'Trust node check: $(KIT)' \
 	  --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' \
-	  --out '$(subst ','"'"',$(CHECKS_OUT))'
+	  --out '$(subst ','"'"',$(CHECKS_OUT))' --declared-hashes /dev/stdin
 
 # The root on-prem verbs delegate here so readiness checks exactly the kit that
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.

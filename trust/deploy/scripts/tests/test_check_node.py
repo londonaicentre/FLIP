@@ -262,6 +262,89 @@ def test_earlier_rows_keep_their_verdict() -> None:
     _assert(check_node.earlier_rows(None) == [], "no file, no rows")
 
 
+class DriftNode(FakeDocker):
+    """A project whose containers are given as {name: (service, config hash, image name, image id)}."""
+
+    def __init__(self, containers: dict[str, tuple[str, str, str, str]], host_images: dict[str, str]) -> None:
+        super().__init__()
+        self.containers, self.host_images = containers, host_images
+
+    def _run(self, args, stdin=None, timeout=120):
+        self.calls.append((args, stdin))
+        if args[:2] == ["docker", "ps"]:
+            return True, "\n".join(self.containers)
+        if args[:3] == ["docker", "image", "inspect"]:
+            return (args[-1] in self.host_images), self.host_images.get(args[-1], "No such image")
+        service, config_hash, image, image_id = self.containers[args[-1]]
+        labels = {"com.docker.compose.service": service, "com.docker.compose.config-hash": config_hash}
+        if service == "oneoff":
+            labels["com.docker.compose.oneoff"] = "True"
+        return True, json.dumps([{"Config": {"Labels": labels, "Image": image}, "Image": image_id}])
+
+
+def test_drift_names_each_service_that_no_longer_matches() -> None:
+    declared = {"trust-api": "h1", "orthanc": "h2", "omop-db": "h3"}
+    images = {
+        "ghcr.io/x/trust-api:v1": "sha256:aaa",
+        "ghcr.io/x/orthanc:v1": "sha256:bbb",
+        "ghcr.io/x/omop-db:v1": "sha256:ccc",
+    }
+    clean = {
+        "t-trust-api-1": ("trust-api", "h1", "ghcr.io/x/trust-api:v1", "sha256:aaa"),
+        "t-orthanc-1": ("orthanc", "h2", "ghcr.io/x/orthanc:v1", "sha256:bbb"),
+        "t-omop-db-1": ("omop-db", "h3", "ghcr.io/x/omop-db:v1", "sha256:ccc"),
+        "t-run-9": ("oneoff", "zz", "ghcr.io/x/trust-api:v1", "sha256:aaa"),  # a `compose run` is nobody's drift
+    }
+    check = check_node.check_drift(DriftNode(clean, images), declared)
+    _assert(
+        check.status is trust_checks.Status.PASS and "3 services match" in check.detail, "a clean project", check.detail
+    )
+    _assert("XNAT's stack not compared" in check.detail, "a pass says what it did not compare")
+    _assert(check.refs == ("SATRE 5.5.01", "SATRE 2.4.03", "SATRE 2.4.04"), "it cites its requirements")
+
+    drifted = {
+        **clean,
+        "t-trust-api-1": ("trust-api", "EDITED", "ghcr.io/x/trust-api:v1", "sha256:aaa"),
+        "t-orthanc-1": ("orthanc", "h2", "ghcr.io/x/orthanc:v1", "sha256:OLD"),
+        "t-extra-1": ("shell", "h9", "busybox", "sha256:ddd"),
+    }
+    del drifted["t-omop-db-1"]
+    said = check_node.check_drift(DriftNode(drifted, images), declared).detail
+    for expected in (
+        "trust-api: its configuration differs from the compose files and kit",
+        "orthanc: runs an older ghcr.io/x/orthanc:v1 than this host now holds",
+        "t-extra-1 runs a service the compose files do not declare",
+        "omop-db: declared, and has no container",
+    ):
+        _assert(expected in said, expected, said)
+    lost = dict(images)
+    del lost["ghcr.io/x/orthanc:v1"]
+    said = check_node.check_drift(DriftNode(clean, lost), declared).detail
+    _assert(
+        "orthanc: its image ghcr.io/x/orthanc:v1 is no longer on this host to compare with" in said,
+        "an image that cannot be looked up is a difference, never a silent pass",
+        said,
+    )
+
+
+def test_drift_without_a_declared_configuration_could_not_run_and_only_reads() -> None:
+    check = trust_checks.run("no configuration drift", lambda: check_node.check_drift(DriftNode({}, {}), {}))
+    _assert(check.status is trust_checks.Status.ERROR, "an empty `compose config --hash` is could not run, not a pass")
+    node = DriftNode({"t-trust-api-1": ("trust-api", "h1", "img", "sha256:a")}, {"img": "sha256:a"})
+    check_node.check_drift(node, {"trust-api": "h1"})
+    verbs = {" ".join(args[1:3]) for args, _ in node.calls}
+    _assert(
+        verbs <= {"ps -a", "inspect t-trust-api-1", "image inspect"},
+        "docker is only asked to list and inspect",
+        str(verbs),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        hashes = Path(tmp) / "hashes"
+        hashes.write_text("trust-api abc\northanc def\n\n")
+        _assert(check_node.read_declared(hashes) == {"trust-api": "abc", "orthanc": "def"}, "the hashes file is read")
+    _assert(check_node.read_declared(None) is None, "no file: the row is skipped, not run")
+
+
 def _rows(checks) -> list[str]:
     return [c.name for c in checks]
 
@@ -294,6 +377,8 @@ def main() -> None:
     test_cstore_reads_the_receipt_from_received_log()
     test_cstore_keeps_the_credential_out_of_argv_and_runs_nothing_a_container_prints()
     test_earlier_rows_keep_their_verdict()
+    test_drift_names_each_service_that_no_longer_matches()
+    test_drift_without_a_declared_configuration_could_not_run_and_only_reads()
     test_both_platforms_report_the_same_rows()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

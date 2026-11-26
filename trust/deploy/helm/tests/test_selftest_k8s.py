@@ -33,6 +33,27 @@ sys.modules["selftest_k8s"] = selftest
 _spec.loader.exec_module(selftest)
 
 
+def _owned(kind, name, **writers):
+    """An object as `kubectl get --show-managed-fields` returns it: each writer and the field paths it owns."""
+
+    def tree(paths):
+        root: dict = {}
+        for path in paths:
+            node = root
+            for key in path.split("/"):
+                node = node.setdefault(key, {})
+        return root
+
+    managed = [
+        {"manager": manager, "time": "2026-11-25T14:00:00Z", "fieldsV1": tree(paths)}
+        for manager, paths in writers.items()
+    ]
+    return {"kind": kind, "metadata": {"name": name, "managedFields": managed}}
+
+
+_ENV = 'f:spec/f:template/f:spec/f:containers/k:{"name":"trust-api"}/f:env/k:{"name":"%s"}/f:value'
+
+
 class FakeCluster:
     """Answers the questions selftest_k8s asks of a cluster, from canned values."""
 
@@ -71,6 +92,13 @@ class FakeCluster:
         self.fl_target = "fl.hub.example:8002"
         self.unreachable = {"https://example.com/", "https://www.wikipedia.org/"}  # what the node's network blocks
         self.answers = {}  # a target that answers something other than "reached"
+        self.diff = (0, "")  # kubectl diff of the release's manifest: exit code and output
+        # The release's objects with who wrote which fields: Helm the spec, the cluster's controllers the status.
+        self.objects = [
+            _owned(
+                "Deployment", "trust-api", helm=[_ENV % "ENV"], **{"kube-controller-manager": ["f:status/f:replicas"]}
+            )
+        ]
         self.imaging_row = "1"
         self.orthanc_creds = "flip:s3cret"
         self.orthanc_statistics = '{"CountInstances": 250, "CountStudies": 25}'
@@ -101,6 +129,12 @@ class FakeCluster:
 
     def mounts(self, pod, container):
         return self.fl_mounts if container == "fl-client" else []
+
+    def manifest_diff(self):
+        return self.diff
+
+    def manifest_objects(self):
+        return self.objects
 
     def exec(self, pod, script, stdin=None):
         self.exec_log.append((pod, script, stdin))
@@ -1064,6 +1098,144 @@ def test_a_hubless_run_skips_the_declared_endpoints_and_still_samples_the_networ
     checks = _checks(_values(), smoke=lambda: (0, "ok", ""))
     assert checks["declared endpoints reachable"].status.value == "skipped"
     assert checks["undeclared destinations blocked"].status.value == "pass"
+
+
+# ── drift (FLIP#2078) ───────────────────────────────────────────────────────────────
+
+_LIVE, _MERGED = "/tmp/LIVE-1/", "/tmp/MERGED-2/"
+_API = "apps.v1.Deployment.flip-trust.trust-release-flip-trust-trust-api"
+_SECRET = "v1.Secret.flip-trust.trust-release-flip-trust-secrets"
+_POLICY = "networking.k8s.io.v1.NetworkPolicy.flip-trust.trust-release-flip-trust-egress"
+KUBECTL_DIFF = f"""diff -u -N {_LIVE}{_API} {_MERGED}{_API}
+--- {_LIVE}{_API}
++++ {_MERGED}{_API}
+-        image: ghcr.io/londonaicentre/trust-api:patched
++        image: ghcr.io/londonaicentre/trust-api:v0.16.0
+diff -u -N {_LIVE}{_SECRET} {_MERGED}{_SECRET}
+-  aes-key: hunter2
++  aes-key: ***
+diff -u -N {_LIVE}{_POLICY} {_MERGED}{_POLICY}
+"""
+
+
+def test_a_release_that_matches_its_manifest_has_no_drift():
+    check = selftest.check_drift(FakeCluster())
+    assert check.status.value == "pass", check
+    assert check.refs == ("SATRE 5.5.01", "SATRE 2.4.03", "SATRE 2.4.04")
+
+
+def test_a_field_added_by_hand_is_drift_even_though_applying_the_manifest_would_keep_it():
+    """`kubectl set env` adds a variable; kubectl diff shows nothing, the API server's record of who wrote it does."""
+    patched = _owned("Deployment", "trust-api", helm=[_ENV % "ENV"], **{"kubectl-set": [_ENV % "CHANGED_BY_HAND"]})
+    check = selftest.check_drift(FakeCluster(objects=[patched]))
+    assert check.status.value == "fail"
+    assert check.detail == (
+        "Deployment trust-api: spec.template.spec.containers[trust-api].env[CHANGED_BY_HAND].value "
+        "set by kubectl-set on 2026-11-25T14:00:00Z, not by Helm"
+    )
+
+
+def test_a_field_set_by_hand_that_helm_also_sets_is_not_an_addition():
+    """patch-kit-secrets writes keys the chart templates too; were the values to differ, kubectl diff says so."""
+    key = "f:data/f:trust-api-key"
+    shared = _owned("Secret", "trust-secrets", helm=[key], **{"kubectl-patch": [key]})
+    assert selftest.check_drift(FakeCluster(objects=[shared])).status.value == "pass"
+
+
+def test_a_real_kubectl_set_env_is_read_as_one_change():
+    """The shape the API server returns: the list item's own marker, then the two fields set under it."""
+    item = 'f:spec/f:template/f:spec/f:containers/k:{"name":"trust-api"}/f:env/k:{"name":"CHANGED_BY_HAND"}'
+    patched = _owned(
+        "Deployment",
+        "trust-api",
+        helm=[_ENV % "ENV"],
+        **{"kubectl-set": [f"{item}/.", f"{item}/f:name", f"{item}/f:value"]},
+    )
+    detail = selftest.check_drift(FakeCluster(objects=[patched])).detail
+    assert detail.startswith("Deployment trust-api: spec.template.spec.containers[trust-api].env[CHANGED_BY_HAND].name")
+    assert "and 1 more set by kubectl-set" in detail
+
+
+def test_a_volume_bound_by_k3s_is_the_clusters_own_bookkeeping():
+    """k3s writes as `k3s`, not `kube-controller-manager`: seen on a k3s trust, on every claim (FLIP#2096 review)."""
+    claim = _owned("PersistentVolumeClaim", "orthanc", helm=["f:spec/f:resources"], k3s=["f:spec/f:volumeName"])
+    assert selftest.check_drift(FakeCluster(objects=[claim])).status.value == "pass"
+
+
+def test_a_kit_key_written_by_patch_kit_secrets_is_not_drift_even_once_helm_no_longer_owns_it():
+    """On Helm 3 `kubectl patch` takes the key over for good; a differing value is still kubectl diff's to report."""
+    rotated = _owned("Secret", "trust-secrets", helm=["f:type"], **{"kubectl-patch": ["f:data/f:trust-api-key"]})
+    assert selftest.check_drift(FakeCluster(objects=[rotated])).status.value == "pass"
+
+
+def test_an_object_deleted_by_hand_is_drift_naming_it_not_a_check_that_could_not_run():
+    gone = f"diff -u -N {_LIVE}{_POLICY} {_MERGED}{_POLICY}\n+kind: NetworkPolicy\n"
+    check = selftest.check_drift(FakeCluster(diff=(1, gone)))
+    assert check.status.value == "fail"
+    assert "NetworkPolicy trust-release-flip-trust-egress differs" in check.detail
+
+
+def test_objects_without_field_ownership_could_not_be_compared():
+    bare = {"kind": "ConfigMap", "metadata": {"name": "governance"}}
+    check = selftest.trust_checks.run(
+        "no configuration drift", lambda: selftest.check_drift(FakeCluster(objects=[bare]))
+    )
+    assert check.status.value == "error"
+
+
+def test_a_restart_or_a_label_is_not_drift():
+    restart = "f:spec/f:template/f:metadata/f:annotations/f:kubectl.kubernetes.io~1restartedAt"
+    restarted = _owned("Deployment", "trust-api", helm=[_ENV % "ENV"], **{"kubectl-rollout": [restart]})
+    labelled = _owned(
+        "ConfigMap", "governance", helm=["f:data/f:doc"], **{"kubectl-label": ["f:metadata/f:labels/f:x"]}
+    )
+    check = selftest.check_drift(FakeCluster(objects=[restarted, labelled]))
+    assert check.status.value == "pass", check
+    assert "all 2 objects" in check.detail
+
+
+def test_objects_that_cannot_be_read_could_not_run():
+    check = selftest.trust_checks.run("no configuration drift", lambda: selftest.check_drift(FakeCluster(objects=None)))
+    assert check.status.value == "error"
+
+
+def test_each_object_that_differs_is_named_and_its_content_never_printed():
+    check = selftest.check_drift(FakeCluster(diff=(1, KUBECTL_DIFF)))
+    assert check.status.value == "fail"
+    assert check.detail == (
+        "Deployment trust-release-flip-trust-trust-api differs from the release's manifest; "
+        "Secret trust-release-flip-trust-secrets differs from the release's manifest; "
+        "NetworkPolicy trust-release-flip-trust-egress differs from the release's manifest"
+    )
+    assert "hunter2" not in check.detail
+
+
+@pytest.mark.parametrize(
+    "diff", [(2, "error: the server doesn't have a resource type"), (1, "something this check cannot read")]
+)
+def test_a_comparison_that_did_not_run_could_not_run(diff):
+    check = selftest.trust_checks.run("no configuration drift", lambda: selftest.check_drift(FakeCluster(diff=diff)))
+    assert check.status.value == "error", check
+
+
+def test_the_comparison_only_reads(monkeypatch):
+    """helm get manifest, then kubectl diff: a server-side dry run that changes nothing."""
+    ran = []
+
+    def fake_run(args, **kwargs):
+        ran.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="kind: ConfigMap\n", stderr="")
+
+    monkeypatch.setattr(selftest.subprocess, "run", fake_run)
+    cluster = selftest.KubectlCluster("ns", "rel", "ctx")
+    assert cluster.manifest_diff() == (0, "")
+    cluster.manifest_objects()
+    assert [a[a.index("ns") + 1 :] for a in ran] == [
+        ["get", "manifest", "rel"],
+        ["diff", "-f", "-"],
+        ["get", "manifest", "rel"],
+        ["get", "-f", "-", "-o", "json", "--show-managed-fields", "--ignore-not-found"],
+    ]
 
 
 def test_the_release_reports_the_rows_every_platform_reports():

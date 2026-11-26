@@ -13,14 +13,15 @@
 
 The Kubernetes form of the node checks every trust shape runs (trust/deploy/scripts/node_checks.py, whose
 `ROWS` lists them): services ready, the FL kit, the three APIs, OMOP and Orthanc, a real C-STORE into XNAT
-(smoke-cstore.sh), a dcm2niix conversion, the FL client, and the hub heartbeat. A row that needs sample data the
-release does not load is skipped, saying why. Without `--hub` it needs no hub: the heartbeat row is skipped, and an
-unreachable hub or FL server is not a failure. It runs from the operator's machine through kubectl, as `status` and
-`smoke-cstore` do, and writes the report every trust check writes.
+(smoke-cstore.sh), a dcm2niix conversion, the FL client, the hub heartbeat, the two egress rows, and drift. A
+row that needs sample data the release does not load is skipped, saying why. Without `--hub` it needs no hub:
+the heartbeat row is skipped, and an unreachable hub or FL server is not a failure. It runs from the operator's
+machine through kubectl, as `status` and `smoke-cstore` do, and writes the report every trust check writes.
 
 The checks run in pods the release already has, so the self-test adds no RBAC and no NetworkPolicy exception to
-the trust. Unless Orthanc is empty it sends one study to XNAT, which stays in the prearchive, and the conversion
-check starts one dcm2niix Job, the same way a cohort pull does, in a throwaway XNAT project it deletes afterwards.
+the trust. Drift alone is read from outside, with the operator's own helm and kubectl (`kubectl diff`). Unless
+Orthanc is empty it sends one study to XNAT, which stays in the prearchive, and the conversion check starts one
+dcm2niix Job, the same way a cohort pull does, in a throwaway XNAT project it deletes afterwards.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -60,6 +62,8 @@ class Cluster(node_checks.Node, Protocol):
     """A node that is a Helm release: the shared checks' Node, plus the workloads its readiness is read from."""
 
     def workloads(self) -> list[dict]: ...
+    def manifest_diff(self) -> tuple[int, str]: ...
+    def manifest_objects(self) -> list[dict] | None: ...
 
 
 def _is_ready(pod: dict) -> bool:
@@ -170,6 +174,39 @@ class KubectlCluster:
                     return next((f"{user}:{password}" for user, password in users.items()), None)
         return None
 
+    def manifest_objects(self) -> list[dict] | None:
+        """The release's objects as the cluster holds them, with who owns each field; None when they cannot be read."""
+        ok, manifest = self._run([*self.helm, "get", "manifest", self.release])
+        if not ok or not manifest.strip():
+            return None
+        # An object deleted by hand is not an unreadable release: kubectl diff names it as one to create.
+        ok, out = self._run(
+            [*self.kubectl, "get", "-f", "-", "-o", "json", "--show-managed-fields", "--ignore-not-found"],
+            stdin=manifest,
+        )
+        try:
+            found = json.loads(out) if ok else None
+        except json.JSONDecodeError:
+            return None
+        return None if found is None else found.get("items", [found])
+
+    def manifest_diff(self) -> tuple[int, str]:
+        """`kubectl diff` of the release's own manifest against the cluster: (exit code, output).
+
+        0 nothing differs, 1 something does, anything else the comparison did not run. A server-side dry run: it
+        asks the API server what applying the manifest would change, and changes nothing.
+        """
+        ok, manifest = self._run([*self.helm, "get", "manifest", self.release])
+        if not ok or not manifest.strip():
+            return 2, f"helm get manifest: {manifest[:200] or 'empty'}"
+        try:
+            result = subprocess.run(
+                [*self.kubectl, "diff", "-f", "-"], input=manifest, capture_output=True, text=True, timeout=300
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return 2, str(e)
+        return result.returncode, result.stdout if result.returncode == 1 else result.stderr
+
     def exec(self, pod: str, script: str, stdin: str | None = None) -> tuple[bool, str]:
         return self._run(
             [*self.kubectl, "exec", *(["-i"] if stdin is not None else []), pod, "--", "sh", "-c", script], stdin=stdin
@@ -214,6 +251,109 @@ def check_release_ready(cluster: Cluster) -> Check:
     if short:
         return failed("services ready", "not ready: " + ", ".join(short))
     return passed("services ready", f"{len(items)} workloads ready")
+
+
+DIFFED = re.compile(r"^diff -u.* \S*/LIVE-[^/]+/(\S+)", re.M)
+
+
+# Field managers whose writes are not a change to what was deployed:
+#   helm                      what was deployed
+#   kube-controller-manager,  the cluster's own bookkeeping, such as the volume a claim was bound to. k3s runs its
+#   kube-scheduler, kubelet,  controllers in one process and writes as `k3s` (seen on a k3s trust: every
+#   k3s                       PersistentVolumeClaim's spec.volumeName)
+#   kubectl-rollout           `kubectl rollout restart`, which only stamps a restartedAt annotation
+OWN_MANAGERS = ("helm", "kube-controller-manager", "kube-scheduler", "kubelet", "k3s", "kubectl-rollout")
+
+
+def _fields(tree: dict, path: tuple[str, ...] = ()) -> set[tuple[str, ...]]:
+    """Every field a managedFields entry names, as paths: its fieldsV1 tree flattened."""
+    found = set()
+    for key, below in tree.items():
+        found |= _fields(below, (*path, key)) if below else {(*path, key)}
+    return found
+
+
+def _readable(path: tuple[str, ...]) -> str:
+    """A field path as a person would write it: spec.template.spec.containers[trust-api].env[NAME]."""
+    text = ""
+    for key in path:
+        if key.startswith("f:"):
+            text += f".{key[2:]}"
+        elif key.startswith("k:"):
+            try:
+                text += f"[{next(iter(json.loads(key[2:]).values()))}]"
+            except (json.JSONDecodeError, StopIteration, AttributeError):
+                text += "[…]"
+    return text.lstrip(".")
+
+
+def changed_by_hand(objects: list[dict]) -> list[str]:
+    """Objects holding a field that Helm did not write, from the API server's own record of who wrote what.
+
+    `kubectl diff` shows what applying the manifest would change, so it misses what was only added (a new
+    environment variable, say): applying the manifest would leave that in place. Kubernetes records who wrote each
+    field (managedFields), which catches additions too. A field someone set by hand that Helm also sets is not an
+    addition: if the two values differed, `kubectl diff` would say so.
+
+    Not counted: status (the cluster writes it); labels and annotations (hand-added ones are deliberately left
+    alone, and a changed chart label is `kubectl diff`'s to report); and a Secret's data, whose kit keys
+    `patch-kit-secrets` writes with `kubectl patch` by design, taking them over from Helm for good on Helm 3.
+    """
+    found = []
+    for item in objects:
+        managed = item.get("metadata", {}).get("managedFields")
+        if not managed:
+            raise RuntimeError(f"the cluster returned no field ownership for {item.get('kind')}: nothing was compared")
+        secret = item.get("kind") == "Secret"
+        ours = set().union(*(_fields(e.get("fieldsV1", {})) for e in managed if _own(e)))
+        for entry in managed:
+            added = sorted(
+                path
+                for path in _fields(entry.get("fieldsV1", {})) - ours
+                # "." marks a list item as present; the fields under it say what was set.
+                if path[0] not in ("f:status", "f:metadata")
+                and path[-1] != "."
+                and not (secret and path[0] == "f:data")
+            )
+            if added and not _own(entry):
+                more = f" and {len(added) - 1} more" if len(added) > 1 else ""
+                found.append(
+                    f"{item.get('kind')} {item['metadata'].get('name')}: {_readable(added[0])}{more} set by "
+                    f"{entry.get('manager')} on {entry.get('time', 'an unrecorded date')}, not by Helm"
+                )
+    return found
+
+
+def _own(entry: dict) -> bool:
+    return entry.get("manager", "").startswith(OWN_MANAGERS)
+
+
+def check_drift(cluster: Cluster) -> Check:
+    """Every object of the release still matches the manifest Helm deployed (FLIP#2078).
+
+    Names the objects that differ and never prints the difference: it can hold a Secret's content. Unlike the other
+    checks this one does not run in a pod: it reads the release through the operator's own kubectl and helm, and
+    `kubectl diff` needs the right to dry-run a patch of each object.
+    """
+    objects = cluster.manifest_objects()
+    if objects is None:
+        raise RuntimeError("could not read the release's objects from the cluster")
+    code, out = cluster.manifest_diff()
+    if code not in (0, 1):
+        raise RuntimeError(f"kubectl diff did not run: {out.strip()[:200]}")
+    differing = []
+    for path in DIFFED.findall(out) if code == 1 else []:
+        parts = path.split(".")  # <group>.<version>.<Kind>.<namespace>.<name>, the group absent for core kinds
+        kind = next((i for i, part in enumerate(parts) if part[:1].isupper()), 0)
+        differing.append(f"{parts[kind]} {'.'.join(parts[kind + 2 :])} differs from the release's manifest")
+    if code == 1 and not differing:
+        # Never the output itself: it is the difference, and can hold a Secret's content.
+        raise RuntimeError("kubectl diff reported a difference, but named no object this check could read")
+    return node_checks.drift(
+        differing + changed_by_hand(objects),
+        f"all {len(objects)} objects of the release match its Helm manifest, and nothing but Helm and the "
+        "cluster's own controllers has set a field of them",
+    )
 
 
 def run_smoke(namespace: str, release: str, context: str | None) -> tuple[int, str, str]:
@@ -285,6 +425,7 @@ def run_checks(
         no_omop=no_omop,
         no_orthanc=no_orthanc,
         no_hub="" if hub else "not asked for: --hub checks the heartbeat of a release joined to a hub",
+        find_drift=lambda: check_drift(cluster),
         conversion_timeout=conversion_timeout,
         fl_settle_seconds=fl_settle_seconds,
     )
