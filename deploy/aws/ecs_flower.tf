@@ -120,15 +120,17 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
 # the EFS re-sync and the FL services' rollout (their task definitions carry the
 # kit as FL_KIT_SOURCE, locals.tf), so it registers against a SuperLink already
 # serving the new kit's certificates (FLIP#1738); tainting re-runs it alone. A new
-# SuperLink task definition that Terraform registers re-runs it too: the replacement
-# task starts with no registered SuperNode. A SuperLink restarted any other way (a
-# revision made by deploy-centralhub, staging power-on, a crash) is not covered: FLIP#1947.
+# SuperLink or fl-api task definition that Terraform registers re-runs it too: the
+# replacement task starts with no registered SuperNode, or no node → trust name map.
+# One restarted any other way (a revision made by deploy-centralhub, staging power-on,
+# a crash) is not covered: FLIP#1947.
 resource "null_resource" "flower_register_supernode_keys" {
   count = var.enable_service_discovery && var.enable_efs && var.fl_backend == "flower" ? 1 : 0
 
   triggers = {
     task_def  = aws_ecs_task_definition.flower_register_supernode_keys[0].arn
     superlink = aws_ecs_task_definition.fl_server_net_1[0].arn
+    fl_api    = aws_ecs_task_definition.fl_api_net_1[0].arn
     creds     = local.flower_creds_base_s3
   }
 

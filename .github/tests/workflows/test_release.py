@@ -388,6 +388,14 @@ while [[ $# -gt 0 ]]; do
   case "$1" in --jq) jqf="$2"; shift ;; esac
   shift
 done
+# The Nth listing: at-N.json becomes the fixture, and from list-fails-from on the listing errors.
+n=$(( $(cat "${FIXTURE_DIR}/lists" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "${FIXTURE_DIR}/lists"
+[[ -f "${FIXTURE_DIR}/at-$n.json" ]] && mv "${FIXTURE_DIR}/at-$n.json" "${FIXTURE_DIR}/runs.json"
+if [[ "$n" -ge "$(cat "${FIXTURE_DIR}/list-fails-from" 2>/dev/null || echo 999)" ]]; then
+  echo "HTTP 502: Bad Gateway" >&2
+  exit 1
+fi
 jq -c "$jqf" < "${FIXTURE_DIR}/runs.json"
 """
 
@@ -410,6 +418,7 @@ jq -c "$jqf" < "${FIXTURE_DIR}/runs.json"
             "conclusion": "success",
             "createdAt": "2026-01-01T12:00:00Z",
             "url": "https://example.invalid/apply",
+            "displayTitle": "Terraform Apply: release v1.2.3",
         }
         run.update(over)
         return run
@@ -472,6 +481,83 @@ jq -c "$jqf" < "${FIXTURE_DIR}/runs.json"
         assert result.returncode == 0, result.stdout + result.stderr
         assert "::warning::" in result.stdout
         assert "still queued" in result.stdout
+
+    def test_a_run_waiting_on_the_concurrency_group_has_not_started(self) -> None:
+        """GitHub reports a run held by `tf-apply-main` as pending; it can still be displaced."""
+        self.write([self.run_entry(status="pending", conclusion=None)])
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "is running" not in result.stdout
+        assert "still queued" in result.stdout
+
+    def test_a_listing_that_never_works_does_not_fail_the_release(self) -> None:
+        """Nothing was learned either way, and the apply is most likely queued."""
+        self.write([self.run_entry(status="queued", conclusion=None)])
+        (self.fixtures / "list-fails-from").write_text("1")
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "::warning::" in result.stdout
+        assert "could not be listed" in result.stdout
+        assert "::error::" not in result.stdout
+
+    def test_a_listing_error_on_the_last_poll_does_not_fail_the_release(self) -> None:
+        self.write([self.run_entry(status="queued", conclusion=None)])
+        (self.fixtures / "list-fails-from").write_text("2")
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "could not be listed" in result.stdout
+        assert "::error::" not in result.stdout
+
+    def test_a_late_cancellation_gets_a_full_budget_for_its_re_dispatch(self) -> None:
+        """The re-dispatched run is not listed at once; the first run's deadline must not judge it."""
+        self.write([self.run_entry(status="queued", conclusion=None)])
+        # Polls are 1s apart: cancelled at ~4s of a 6s budget, listed again at ~8s. Two seconds of
+        # slack either side, so a slow runner does not move a poll across a deadline.
+        self.write([self.run_entry(conclusion="cancelled")], "at-5")
+        self.write([], "after")
+        self.write([self.run_entry(status="in_progress", conclusion=None, createdAt="2099-01-01T00:00:00Z")], "at-9")
+        result = self.confirm(APPLY_CONFIRM_SECONDS=6)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self.dispatches() == 1
+        assert "is running" in result.stdout
+
+    def test_a_re_dispatch_that_is_never_listed_warns_rather_than_failing(self) -> None:
+        self.write([self.run_entry(conclusion="cancelled")])
+        self.write([], "after")
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self.dispatches() == 1
+        assert "::warning::" in result.stdout.split("Dispatching it once more.")[1]
+        assert "::error::" not in result.stdout
+
+    def test_another_dispatch_on_main_is_not_the_release_apply(self) -> None:
+        """An operator's run without the tag, or another release's, ran something else (FLIP#2047)."""
+        for title in ("Terraform Apply", "Terraform Apply: release v1.2.30"):
+            with self.subTest(title=title):
+                self.write([self.run_entry(status="in_progress", conclusion=None, displayTitle=title)])
+                result = self.confirm()
+                assert result.returncode != 0, result.stdout + result.stderr
+                assert "::error::no terraform_apply run titled 'Terraform Apply: release v1.2.3'" in result.stdout
+                assert self.dispatches() == 0
+
+    def test_the_release_apply_is_found_behind_an_earlier_untagged_dispatch(self) -> None:
+        self.write(
+            [
+                self.run_entry(displayTitle="Terraform Apply", url="https://example.invalid/operator"),
+                self.run_entry(status="in_progress", conclusion=None, createdAt="2026-01-01T12:05:00Z"),
+            ]
+        )
+        result = self.confirm()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "is running — https://example.invalid/apply" in result.stdout
+
+    def test_the_apply_titles_a_release_run_the_way_the_script_looks_for_it(self) -> None:
+        """Only a dispatch with release_tag gets the title; every other run keeps GitHub's own."""
+        run_name = re.search(r"^run-name: (.+)$", code_text(WORKFLOWS / "terraform_apply.yml"), re.MULTILINE)
+        assert run_name, "terraform_apply.yml has no run-name"
+        expected = "\"${{ inputs.release_tag && format('Terraform Apply: release {0}', inputs.release_tag) || '' }}\""
+        assert run_name.group(1) == expected
+        assert 'RUN_TITLE="Terraform Apply: release ${TAG}"' in CONFIRM_SCRIPT.read_text()
 
     def test_release_runs_the_confirmation_after_the_dispatch(self) -> None:
         text = code_text(WORKFLOWS / "release.yml")

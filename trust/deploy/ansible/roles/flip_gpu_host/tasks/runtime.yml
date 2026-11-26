@@ -26,7 +26,7 @@
   when: nvidia_ctk is changed
 
 - name: check a container can see the GPU
-  command: docker run --rm --gpus all ubuntu:24.04 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+  command: docker run --rm --gpus all {{ gpu_check_image }} nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
   register: gpu_container_check
   changed_when: false
   when: trust_has_gpu | default(false)

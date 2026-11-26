@@ -53,12 +53,7 @@ shell:
 # overwrites an AlreadyStored one). Normally via `make -C trust seed-orthanc
 # KIT=<CODE>`, which supplies the slot, port and credentials from the kit:
 #   make seed-orthanc TRUST_INDEX=2 PACS_UI_PORT=8044 PROJECTS="spleen_project"
-# Writes a marker BESIDE the storage dir — <parent>/.<dirname>.seeded, since the two
-# default storage dirs share a parent and the dir itself is owned by Orthanc's uid —
-# recording projects, partition and data version, which `make -C trust
-# ensure-seeded` compares to decide whether to re-seed (a .data_version bump
-# re-runs this with CLEAR=1 for the listed projects).
-# TRUST_INDEX names the TRUST (its FL kit slot, hence its port and storage dir);
+# TRUST_INDEX names the TRUST (its FL kit slot, hence its port);
 # SOURCE_TRUST names the OMOP partition whose accessions are uploaded into it.
 # Coupled by default, separable for a trust whose slot and partition differ —
 # see the omop-db Makefile's seed-omop for why they are two axes.
@@ -67,31 +62,20 @@ SOURCE_TRUST ?= $(TRUST_INDEX)
 # Only projects whose DICOM set is published can be seeded from the pinned tag; spleen and
 # brain_mri regenerate theirs locally since FLIP#1221 and arrive via DICOM_SOURCE below.
 PROJECTS ?= cxr_project
-# ORTHANC_STORAGE_DIR_TRUST_<N> arrives absolute from trust/Makefile; the default is the
-# trust/-relative path the kit example uses, hence the ../ for this directory. Keyed by
-# TRUST_INDEX, never the unsuffixed ORTHANC_STORAGE_DIR, which the kit-example include
-# above pins to slot 1 whatever TRUST_INDEX says.
-SEED_STORAGE_DIR = $(or $(ORTHANC_STORAGE_DIR_TRUST_$(TRUST_INDEX)),orthanc/orthanc-storage-trust$(TRUST_INDEX))
-SEED_STORAGE_ABS = $(if $(filter /%,$(SEED_STORAGE_DIR)),$(SEED_STORAGE_DIR),../$(SEED_STORAGE_DIR))
-SEED_MARKER = $(dir $(SEED_STORAGE_ABS)).$(notdir $(SEED_STORAGE_ABS)).seeded
 # A project whose DICOMs are NOT on the dataset (spleen, brain_mri — FLIP#1221) is seeded from a
 # local tree: DICOM_SOURCE=<dir of <accession>/*.dcm> TABLES_DIR=<canonical tables,
-# <dir>/<project>/*.csv>, the same two inputs publish_dicom.py verifies. Both or neither. The marker
-# then records source=<dir> in place of the data version, since no published revision produced
-# those instances.
+# <dir>/<project>/*.csv>, the same two inputs publish_dicom.py verifies. Both or neither.
 DICOM_SOURCE ?=
 TABLES_DIR ?=
-SEED_PROVENANCE = $(if $(DICOM_SOURCE),source=$(DICOM_SOURCE),version=$${HF_TRUST_DATA_REVISION:-$$(tr -d ' \n\r\t' < ../.data_version)})
 seed-orthanc:
 	PACS_UI_PORT=$(PACS_UI_PORT) ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
 	  uv run seed_orthanc.py --trust-index $(SOURCE_TRUST) --projects $(PROJECTS) \
 	  $(if $(DICOM_SOURCE),--source $(DICOM_SOURCE)) $(if $(TABLES_DIR),--tables-dir $(TABLES_DIR)) \
 	  $(if $(filter 1,$(CLEAR)),--clear-projects) $(if $(filter 1,$(DRY_RUN)),--dry-run)
-	@$(if $(filter 1,$(DRY_RUN)),true,printf 'projects=%s\nsource_trust=%s\n%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(SEED_PROVENANCE)" > "$(SEED_MARKER)" && echo "✅ marker: $(SEED_MARKER)")
 
 # Unseed: delete this trust's studies for the listed projects, as the tables at
 # HF_TRUST_DATA_REVISION (or TABLES_DIR=) name them, and upload nothing — the PACS half
-# of moving off a re-cut project. Marker left as is.
+# of moving off a re-cut project.
 unseed-orthanc:
 	PACS_UI_PORT=$(PACS_UI_PORT) ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
 	  uv run seed_orthanc.py --trust-index $(SOURCE_TRUST) --projects $(PROJECTS) --remove-only \

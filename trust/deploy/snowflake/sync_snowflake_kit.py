@@ -57,7 +57,7 @@ if str(HERE) not in sys.path:
 
 from kitfile import is_placeholder, kit_path, read_env_vars, resolve_env  # noqa: E402
 from naming import SECRET_KIT_VAR, SECRETS, Names, NamingError, with_derived_secrets  # noqa: E402
-from spec_templates import SECRET_MAP  # noqa: E402
+from spec_templates import SECRET_MAP, governance_document  # noqa: E402
 
 #: The secrets the FL client's own role may read: what its spec maps, nothing more.
 FL_CLIENT_SECRETS = frozenset(SECRET_MAP["fl-client"])
@@ -240,9 +240,7 @@ def push_governance(snow: str, connection: str, names: Names, kit: dict[str, str
     if not ref:
         print("  ⓘ  Kit names no ACCESS_POLICY_FILE - platform defaults apply, nothing pushed.")
         return None
-    document = Path(ref)
-    if not document.is_absolute():
-        document = (REPO_ROOT / "trust" / document).resolve()
+    document = governance_document(ref)
     if not document.is_file():
         raise SyncError(f"ACCESS_POLICY_FILE={ref!r} (resolved to {document}) is not a readable file")
     stage_push(snow, connection, document, f"@{names.stage('GOVERNANCE')}/governance.toml", dry_run)

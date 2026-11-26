@@ -44,7 +44,8 @@ if str(HERE) not in sys.path:
 
 import yaml_min  # noqa: E402
 from kitfile import kit_path, read_env_vars, resolve_env  # noqa: E402
-from naming import Names, NamingError  # noqa: E402
+from mirror_images import source_tag  # noqa: E402
+from naming import FL_CLIENT_IMAGES, Names, NamingError, fl_client_image  # noqa: E402
 from spec_templates import build_all  # noqa: E402
 
 REPO_ROOT = HERE.parents[2]
@@ -62,8 +63,13 @@ HEADER = """\
 """
 
 
-def load_digests(directory: Path) -> dict[str, str]:
-    """Image digests recorded by ``make mirror-images``; empty when none were."""
+def load_digests(directory: Path, code: str, env: str, kit: dict[str, str]) -> dict[str, str]:
+    """Image digests ``make mirror-images`` recorded for this trust at the kit's tags.
+
+    There is one lock per checkout, so it is used only when it was written for this trust
+    and environment. An image mirrored at another tag than the kit now asks for is refused:
+    that tag is not in the account repository, so its service could not pull it.
+    """
     lock = directory / IMAGE_LOCK
     if not lock.exists():
         return {}
@@ -71,13 +77,32 @@ def load_digests(directory: Path) -> dict[str, str]:
         data = json.loads(lock.read_text())
     except json.JSONDecodeError as e:
         sys.exit(f"❌ {lock} is not valid JSON ({e}). Re-run `make mirror-images`.")
-    images = data.get("images", {})
-    return {repo: entry.get("digest", "") for repo, entry in images.items()}
+    if (data.get("code"), data.get("env")) != (code, env):
+        print(f"   ⚠  {IMAGE_LOCK} is for {data.get('code')} ({data.get('env')}), not {code} ({env}): not used.")
+        print("      Run `make mirror-images` for this trust.")
+        return {}
+    # A kit that switched FL backend keeps the old client's entry in the lock for good.
+    other_clients = set(FL_CLIENT_IMAGES.values()) - {fl_client_image(kit)}
+    digests: dict[str, str] = {}
+    stale: list[str] = []
+    for repo, entry in data.get("images", {}).items():
+        if repo in other_clients:
+            continue
+        asked = source_tag(kit, repo)
+        if entry.get("tag") == asked:
+            digests[repo] = entry.get("digest", "")
+        else:
+            stale.append(f"{repo}:{asked}")
+    if stale:
+        sys.exit(f"❌ Not mirrored at the kit's tag: {', '.join(stale)}. Run `make mirror-images` first.")
+    return digests
 
 
 def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dict[str, str]) -> dict[str, Any]:
     """Write every service specification and the manifest. Returns the manifest."""
     names = Names(code)
+    # Built before anything is cleared, so a refused kit leaves the previous specs in place.
+    rendered = build_all(kit, code, digests)
     out_dir.mkdir(parents=True, exist_ok=True)
     # A stale spec from a previous render (an FL net removed from the kit, say) would
     # otherwise still be deployed by `up`, which walks the manifest - and still sit in
@@ -86,7 +111,7 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
         stale.unlink()
 
     services: list[dict[str, Any]] = []
-    for item in build_all(kit, code, digests):
+    for item in rendered:
         path = out_dir / f"{item.name}.yaml"
         body = HEADER.format(service=item.name, code=names.code, env=env) + yaml_min.dump(item.spec)
         path.write_text(body)
@@ -154,6 +179,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # The kit is the one place that holds the switch: a value given for one run is gone on
+    # the next, whose `up` then detaches the trust. Make exports a make-line value too.
+    if "HUB_EGRESS" in os.environ:
+        sys.exit(
+            "❌ HUB_EGRESS is set on the make line or in the environment. It is read from the kit file\n"
+            "   only: put HUB_EGRESS=true (or false) in trust/.env.<CODE>.<env> and run again without it."
+        )
     env = resolve_env(args.env)
     try:
         names = Names(args.kit)
@@ -170,20 +202,18 @@ def main() -> None:
             f"     make sync-trust-kit KIT={args.kit} HUB={env}"
         )
     kit = read_env_vars(path)
-    # One switch, the platform root's enable_hub_egress made visible to the specs: a kit may
-    # carry HUB_EGRESS, and HUB_EGRESS=... on the make line beats it (so a deploy can turn
-    # egress on for one run without editing the kit).
-    if os.environ.get("HUB_EGRESS"):
-        kit["HUB_EGRESS"] = os.environ["HUB_EGRESS"]
     out_dir = args.out_dir or HERE / "rendered" / f"{names.code}.{env}"
-    digests = load_digests(HERE)
-    manifest = render(kit, args.kit, env, out_dir, digests)
+    try:
+        digests = load_digests(HERE, names.code, env, kit)
+        manifest = render(kit, args.kit, env, out_dir, digests)
+    except ValueError as e:
+        sys.exit(f"❌ {e}")
 
     print(f"🔧 Rendered {len(manifest['services'])} SPCS specs for {names.code} ({env})")
     print(f"   Kit file: {path}")
     print(f"   Output:   {out_dir}")
     if not digests:
-        print("   ⚠  No images.lock.json - specs reference images by TAG. Run `make mirror-images`")
+        print("   ⚠  No image digests for this trust - specs reference images by TAG. Run `make mirror-images`")
         print("      before deploying anything you intend to keep: a tag in the account repository")
         print("      can be moved, a digest cannot.")
     for service in manifest["services"]:

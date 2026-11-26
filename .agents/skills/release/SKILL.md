@@ -47,7 +47,9 @@ the root `Makefile`). Your work is the judgement around them: scope, the notes' 
    that PR once the cooldown expires, or ship without it and name it in the report. It bumps the versions, runs
    `make lock` and empties *Release checks*.
 3. **Notes and the draft PR.** Curate `.github/RELEASE_NOTES_TEMPLATE.md`, especially *Site upgrade* (required or
-   not, hub/site order or one Deployment-Mode window, refreshed kit or not), from the merged PRs. Commit (signed
+   not, hub/site order or one Deployment-Mode window, refreshed kit or not), from the merged PRs. When the release
+   moves `trust/.data_version`, *Site upgrade* also gives sample-data sites the re-seed command: nothing re-seeds a
+   trust that holds data (FLIP#2111), and `release-main-check` lists the same step after the merge. Commit (signed
    off), push, and open the draft `Release v<X.Y.Z>` → `develop` with the `release` label, which keeps release
    plumbing out of the generated notes. The gates run at its head; if the head moves,
    rerun the gates it affects.
