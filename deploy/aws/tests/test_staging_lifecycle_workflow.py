@@ -230,3 +230,16 @@ def test_the_staging_apply_role_trusts_the_power_workflow() -> None:
     assert "local.apply_workflow_refs" in (module / "iam_apply.tf").read_text(), (
         "the apply trust policy must use the set, not the single apply ref"
     )
+
+
+def test_the_end_to_end_check_waits_for_the_applied_build() -> None:
+    """The old task answers until the rollout lands, so a 200 alone passes a rollback (FLIP#2120)."""
+    jobs = _jobs(APPLY)
+    assert jobs["apply"]["outputs"]["hub_tag"] == "${{ steps.hub-tag.outputs.tag }}"
+    record = next(step for step in jobs["apply"]["steps"] if step.get("id") == "hub-tag")
+    assert "DOCKER_TAG" in record["run"], "the tag the check waits for is the one resolve-image-tags.sh pinned"
+    probe = next(step for step in jobs["staging-end-to-end"]["steps"] if step.get("id") == "probe")
+    assert probe["env"]["EXPECTED"] == "${{ needs.apply.outputs.hub_tag }}"
+    assert '"${version}" == "${EXPECTED}"' in probe["run"], "the probe must compare /health's version"
+    report = next(step for step in jobs["staging-end-to-end"]["steps"] if step.get("name") == "Report the result")
+    assert "stale)" in report["run"], "a hub answering as another build must fail the job too"
