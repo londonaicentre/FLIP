@@ -98,6 +98,7 @@ SNOWFLAKE_OMOP = (
 # shape -> reason -> keys. Keep the reason to a few words.
 COMPOSE_BOTH = {
     "Helm only": "OMOP_VOCAB_DIR K8S_PLATFORM_VALUES",
+    "Snowflake only: the hub's external access integration": "HUB_EGRESS",
     "no effect off SPCS yet, as trust/.env.example says": SNOWFLAKE_OMOP,
     "the hub's kit prefix; only an EC2 node's S3 kit fetch reads it": "FLOWER_KIT_DATE FLARE_KIT_DATE",
     "not wired (#2047, no stack file reads it on any shape)": "XNAT_ACTIVEMQ_PASSWORD",
@@ -131,6 +132,7 @@ NOT_APPLICABLE = {
             "TRUST_LOG_LEVEL NUM_AVAILABLE_GPUS MEMORY_PER_GPU_IN_GIB " + MONAI_LABEL
         ),
         "no effect off SPCS yet, as trust/.env.example says": SNOWFLAKE_OMOP,
+        "Snowflake only: the hub's external access integration": "HUB_EGRESS",
         "not wired (#2047 H10)": "COHORT_REMOVAL_GRACE_HOURS COHORT_RECONCILE_MINUTES IMAGE_CACHE_RETENTION_HOURS",
         "not wired (#2047, no stack file reads it on any shape)": "XNAT_ACTIVEMQ_PASSWORD",
     },
