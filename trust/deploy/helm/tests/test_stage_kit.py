@@ -21,6 +21,7 @@ cluster, and an unrecognisable kit fails before the recipe is reached. These tes
 drive exactly that.
 """
 
+import json
 import os
 import re
 import subprocess
@@ -265,3 +266,24 @@ def test_an_exported_data_root_is_not_the_kits(nvflare_kit, tmp_path, monkeypatc
     result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={_kit_file(tmp_path)}")
     assert result.returncode == 0, result.stderr
     assert '--dest "/opt/flip/fl-kit"' in result.stdout
+
+
+def _helm_with_release(tmp_path, kit_host_path):
+    """A helm that answers `get values` for a deployed release mounting the kit at ``kit_host_path``."""
+    helm = tmp_path / "helm"
+    values = json.dumps({"flClient": {"kitHostPath": kit_host_path}})
+    helm.write_text(f"#!/bin/sh\n[ \"$3\" = get ] && echo '{values}'\nexit 0\n")
+    helm.chmod(0o755)
+    return f"HELM_BIN={helm}"
+
+
+def test_a_restage_goes_where_the_live_release_mounts(nvflare_kit, tmp_path):
+    """FLIP#2113: a root added to a live trust's kit must not send the new kit where the FL client never looks."""
+    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod")
+    helm = _helm_with_release(tmp_path, "/opt/flip/fl-kit")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm)
+    assert result.returncode == 0, result.stderr
+    assert '--dest "/opt/flip/fl-kit"' in result.stdout
+    assert "Keeping flClient.kitHostPath=/opt/flip/fl-kit" in result.stderr
+    moved = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm, "KIT_DEST=/srv/kit")
+    assert '--dest "/srv/kit"' in moved.stdout, "KIT_DEST still moves it"
