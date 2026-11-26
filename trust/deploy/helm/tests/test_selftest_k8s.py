@@ -67,7 +67,7 @@ class FakeCluster:
             },
         ]
         self.health = '{"status":"ok","version":"sha-1"}'
-        self.person_count = "4166"
+        self.imaging_row = "1"
         self.orthanc_creds = "flip:s3cret"
         self.orthanc_statistics = '{"CountInstances": 250, "CountStudies": 25}'
         self.orthanc_anonymous_code = "401"
@@ -102,8 +102,8 @@ class FakeCluster:
         self.exec_log.append((pod, script, stdin))
         if "/health" in script:
             return (self.health is not None), self.health or "connection refused"
-        if "omop.person" in script:
-            return (self.person_count is not None), self.person_count or "relation does not exist"
+        if "omop.image_occurrence" in script:
+            return (self.imaging_row is not None), self.imaging_row or "relation does not exist"
         if "/statistics" in script:
             return (self.orthanc_statistics is not None), self.orthanc_statistics or "401"
         if "http_code" in script:
@@ -252,16 +252,17 @@ def test_an_api_not_answering_status_ok_fails(body):
 # ── seeding ─────────────────────────────────────────────────────────────────────────
 
 
-def test_omop_with_people_is_seeded():
+def test_omop_with_imaging_rows_is_seeded():
     assert selftest.check_omop_seeded(FakeCluster()).ok
 
 
-@pytest.mark.parametrize("count", ["0", None, "ERROR: x"])
-def test_omop_without_people_is_not_seeded(count):
-    assert not selftest.check_omop_seeded(FakeCluster(person_count=count)).ok
+@pytest.mark.parametrize("row", ["", None, "ERROR: x"], ids=["empty table", "no table", "error"])
+def test_omop_without_imaging_rows_is_not_seeded(row):
+    """Persons alone (Synthea's) do not count: the imaging projects were never loaded."""
+    assert not selftest.check_omop_seeded(FakeCluster(imaging_row=row)).ok
 
 
-def test_orthanc_holding_instances_is_seeded_and_the_credential_goes_on_stdin():
+def test_orthanc_holding_studies_is_seeded_and_the_credential_goes_on_stdin():
     cluster = FakeCluster()
 
     seeded, _auth = selftest.check_orthanc(cluster)
@@ -273,7 +274,7 @@ def test_orthanc_holding_instances_is_seeded_and_the_credential_goes_on_stdin():
 
 
 def test_an_empty_orthanc_is_not_seeded():
-    seeded, _ = selftest.check_orthanc(FakeCluster(orthanc_statistics='{"CountInstances": 0}'))
+    seeded, _ = selftest.check_orthanc(FakeCluster(orthanc_statistics='{"CountInstances": 0, "CountStudies": 0}'))
 
     assert not seeded.ok
 
@@ -820,7 +821,7 @@ def _checks(values, smoke=_no_smoke, **cluster):
 
 def test_a_release_without_sample_data_skips_what_needs_it_and_says_why():
     # Empty stores: each of these would fail if it ran.
-    checks = _checks(_values(enabled=False), person_count="0", orthanc_statistics='{"CountInstances": 0}')
+    checks = _checks(_values(enabled=False), imaging_row="", orthanc_statistics='{"CountStudies": 0}')
     for name in ("omop seeded", "orthanc seeded", "xnat c-store", "dcm2niix conversion"):
         assert checks[name].ok, checks[name]
         assert checks[name].detail.startswith("skipped: trustData.seed.enabled=false"), checks[name]
@@ -829,8 +830,8 @@ def test_a_release_without_sample_data_skips_what_needs_it_and_says_why():
 
 
 def test_the_chart_default_without_orthanc_seeding_skips_only_the_orthanc_checks():
-    checks = _checks(_values(orthanc=False), orthanc_statistics='{"CountInstances": 0}')
-    assert checks["omop seeded"].detail == "4166 rows in omop.person"
+    checks = _checks(_values(orthanc=False), orthanc_statistics='{"CountStudies": 0}')
+    assert checks["omop seeded"].detail == "omop.image_occurrence holds rows"
     for name in ("orthanc seeded", "xnat c-store", "dcm2niix conversion"):
         assert checks[name].detail.startswith("skipped: trustData.seed.orthanc=false"), checks[name]
 
@@ -846,7 +847,7 @@ def test_an_orthanc_holding_studies_is_stored_and_converted_whatever_the_seed_va
     checks = _checks(_values(**seed), smoke=lambda: (1, "❌ XNAT received nothing", ""))
     assert checks["xnat c-store"] == selftest.Check("xnat c-store", False, "❌ XNAT received nothing")
     assert checks["dcm2niix conversion"] is converted
-    assert checks["orthanc seeded"].detail == "250 instances"
+    assert checks["orthanc seeded"].detail == "25 studies"
 
 
 # ── the report ──────────────────────────────────────────────────────────────────────

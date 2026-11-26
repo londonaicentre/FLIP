@@ -88,16 +88,18 @@ def _stub(path: Path, body: str) -> Path:
     return path
 
 
-def _make(tmp_path: Path, target: str, **env_overrides: str) -> tuple[subprocess.CompletedProcess, str]:
+def _make(
+    tmp_path: Path, target: str, render_text: str = JOB_RENDER, make_args: tuple[str, ...] = (), **env_overrides: str
+) -> tuple[subprocess.CompletedProcess, str]:
     render = tmp_path / "render.yaml"
-    render.write_text(JOB_RENDER)
+    render.write_text(render_text)
     log = tmp_path / "calls.log"
     log.write_text("")
     env = dict(os.environ, HELM_RENDER=str(render), CALL_LOG=str(log), **env_overrides)
     helm = _stub(tmp_path / "helm", HELM_STUB)
     kubectl = _stub(tmp_path / "kubectl", KUBECTL_STUB)
     result = subprocess.run(
-        ["make", "-o", "preflight", "-C", str(CHART_DIR), target, f"HELM_BIN={helm}", f"KUBECTL={kubectl}"],
+        ["make", "-o", "preflight", "-C", str(CHART_DIR), target, f"HELM_BIN={helm}", f"KUBECTL={kubectl}", *make_args],
         capture_output=True,
         text=True,
         timeout=120,
@@ -178,3 +180,51 @@ def test_an_unrenderable_chart_fails_xnat_init_instead_of_reporting_xnat_disable
     assert "could not render the chart" in result.stdout
     assert "XNAT is disabled" not in result.stdout
     assert "kubectl" not in log.read_text()
+
+
+SEED_RENDER = JOB_RENDER.replace("xnat-init", "trust-seed")
+
+
+def _reseed(tmp_path: Path, **env: str) -> tuple[subprocess.CompletedProcess, str]:
+    """`make reseed KIT=` with the trust's override in place (OVERRIDES_FILE names a scratch one)."""
+    override = tmp_path / "k8s-trust-TESTKIT.yaml"
+    override.write_text("trustNumber: 2\n")
+    return _make(tmp_path, "reseed", SEED_RENDER, ("KIT=TESTKIT", f"OVERRIDES_FILE={override}"), **env)
+
+
+def test_reseed_runs_the_seed_job_once_with_reseed_on_and_the_trusts_override(tmp_path):
+    """The hook seeds only an empty store (FLIP#2111), so a pin bump reaches a seeded trust only this way."""
+    result, calls = _reseed(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    template = next(line for line in calls.splitlines() if line.startswith("helm template"))
+    assert f"-f {tmp_path / 'k8s-trust-TESTKIT.yaml'}" in template, "the partition comes from the trust's override"
+    assert "--set trustData.seed.reseed=true" in template, template
+    assert "delete job -n flip-trust --selector app.kubernetes.io/component=trust-seed" in calls, calls
+    assert "wait job --selector app.kubernetes.io/component=trust-seed" in calls, calls
+    assert "Trust re-seed complete" in result.stdout
+
+
+def test_a_failed_reseed_fails_and_names_itself(tmp_path):
+    result, _ = _reseed(tmp_path, KUBECTL_WAIT_RC="1")
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "Trust re-seed failed" in result.stdout
+
+
+def test_reseed_refuses_without_a_kit_or_its_override(tmp_path):
+    """Without the override the Job renders trustNumber 1 and would load slot 1's data into any trust."""
+    no_kit, calls = _make(tmp_path, "reseed", SEED_RENDER)
+    assert no_kit.returncode != 0, no_kit.stdout
+    assert "KIT=<CODE> is required" in no_kit.stdout
+    missing, _ = _make(tmp_path, "reseed", SEED_RENDER, ("KIT=TESTKIT", f"OVERRIDES_FILE={tmp_path}/absent.yaml"))
+    assert missing.returncode != 0, missing.stdout
+    assert "run make sync-kit KIT=TESTKIT first" in missing.stdout
+    assert "kubectl" not in calls
+
+
+def test_reseed_with_seeding_off_does_nothing(tmp_path):
+    override = tmp_path / "k8s-trust-TESTKIT.yaml"
+    override.write_text("trustNumber: 2\n")
+    result, calls = _make(tmp_path, "reseed", JOB_RENDER, ("KIT=TESTKIT", f"OVERRIDES_FILE={override}"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "nothing to re-seed" in result.stdout
+    assert "kubectl" not in calls

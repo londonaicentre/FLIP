@@ -671,6 +671,13 @@ dial is set separately (FLIP#1365):
   (FLIP#1852). CI reads it from the optional `FL_EDGE_PORT` variable on the GitHub environment, so set that to
   `8003` on the staging environment.
 
+Production's edge listens on `:443` as well as `:8002` (FLIP#2051), for trusts whose firewall passes TLS only on 443.
+Set `FL_EDGE_PORT=443` in `.env.prod` and on the production GitHub environment, and every kit dials 443: for
+FLARE, the trust's fl-client-init writes the port into the kit's `fed_client.json`. A trust that must stay on
+8002 (a site-to-site VPN, whose edge listens on 8002 alone) sets `FL_EDGE_PORT_OVERRIDE=8002` in its own kit file,
+which hub tooling never overwrites. The edge admits only listed addresses on each port, so add a trust's address to
+the 443 listener before its kit dials it.
+
 **Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a never-used account `make plan`
 fails at the very end with `Error: reading KMS Alias (alias/aws/secretsmanager): empty result`
 (`data.aws_kms_alias.secretsmanager`, `rds_proxy.tf`) even though the plan computed cleanly: AWS creates that

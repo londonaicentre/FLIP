@@ -49,8 +49,8 @@ make sync-trust-kit KIT=<CODE> HUB=<env>
 # Cluster side (trust operator)
 python3 trust/deploy/helm/scripts/generate_values.py \
   --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm
-make -C trust/deploy/helm stage-kit KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
-make -C trust/deploy/helm stage-vocab VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
+make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 make -C trust/deploy/helm status && make -C trust/deploy/helm smoke-cstore
 ```
@@ -97,8 +97,9 @@ images that exist.
   (`trust-release-flip-trust-secrets`) over kubectl's TLS channel — never to disk — and writes the
   secret-free override `k8s-trust-<CODE>.yaml` (hub URL, FL backend, AWS region, `flClient.kitHostPath`
   from the kit's `FL_KIT_DIR`). It stamps a newly created Secret with Helm ownership metadata so the
-  first install can adopt it, and regenerates the FL-server egress port (and, for Flower,
-  `flClient.flower.superlink`) on every run so upgrades never lose them. `sync-kit-override` writes only
+  first install can adopt it, and regenerates the FL-server egress port (and `flClient.nvflare.serverPort` or,
+  for Flower, `flClient.flower.superlink`) on every run so upgrades never lose them. The port is the kit's
+  `FL_EDGE_PORT_OVERRIDE`, else `FL_EDGE_PORT`, else `FL_SERVER_PORT`. `sync-kit-override` writes only
   the override; `patch-kit-secrets` only patches the Secret and restarts the three API deployments.
 - **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy-release` and `xnat-init` with that
   override, then `patch-kit-secrets` — even when a step failed, so trust-api never polls with a stale key
@@ -238,9 +239,10 @@ from `dicom.log` and the container log alike. See
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `false` | Whether the chart creates the namespace (with the `podSecurity.*` labels). `make deploy` creates it with kubectl instead, without those labels |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20261019` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
+| `trustData.version` | `20261125` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
-| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
+| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc — each only while it is empty (no imaging row, no study; FLIP#2111), so an upgrade of a seeded trust loads nothing. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
+| `trustData.seed.reseed` | `false` | Seed a store that already holds data, Orthanc clearing the listed projects first. Leave it off: `make reseed KIT=<CODE>` sets it for one run of the seed Job, how a seeded trust moves to a new `trustData.version` |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
 | `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
@@ -546,10 +548,11 @@ loaded** (`helm install` prints a warning).
    export the vocabularies from [OHDSI Athena](https://athena.ohdsi.org/) (plus
    [NHS TRUD](https://isd.digital.nhs.uk/) for the UK ones) and unzip the export into a
    folder — `trust/omop-db/README.md`, "The core vocabulary bundle".
-2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
+2. **Stage it onto the node** at `omop-vocab/` under the kit's `FLIP_DATA_ROOT`, else
+   `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
 
    ```sh
-   make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
+   make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
    ```
 
    On kind it copies with `docker cp`, on any other node through a short-lived pod (as `stage-kit`).
@@ -557,9 +560,9 @@ loaded** (`helm install` prints a warning).
    guess. For the kit that is the FL client's node (imaging-api's unless `flClient.affinity` says
    otherwise). `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
    bundle behind.
-3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
+3. **Point the chart at it**: `OMOP_VOCAB_DIR=<the path stage-vocab printed>` in the kit file
    (`sync-kit` writes `omopDb.vocabLoad.hostPath` from it), or
-   `--set omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab`, then deploy as usual.
+   `--set omopDb.vocabLoad.hostPath=<that path>`, then deploy as usual.
 
 `hostPath` resolves on whichever node runs the Job: with more than one node, pin the Job to the
 node holding the folder with `omopDb.vocabLoad.nodeSelector` (e.g. `kubernetes.io/hostname: <node>`).
@@ -1405,7 +1408,8 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 
 **Mock-data seed** (`trust-seed`, FLIP#1187):
 
-- A Helm `post-install,post-upgrade` hook, deleted on success and kept on failure:
+- A Helm `post-install,post-upgrade` hook that seeds only an empty store, deleted on success and kept on
+  failure (`make reseed` runs the same Job once with `trustData.seed.reseed=true`, after a version bump):
   `kubectl logs -n <ns> job/<release>-flip-trust-trust-seed` after a failed release. It fetches the canonical tables (and, with `trustData.seed.orthanc`, the DICOM sets) from
   Hugging Face at `trustData.version`, installs the loaders from FLIP at `trustData.seed.sourceRef`,
   and loads this trust's `source_trust` slice. No AWS credentials are involved.

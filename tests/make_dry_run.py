@@ -115,6 +115,7 @@ def run_target(
         root = Path(tmp)
         for rel in (
             "Makefile",
+            "deploy/data_root.mk",
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",

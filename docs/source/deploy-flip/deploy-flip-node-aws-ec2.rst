@@ -120,7 +120,7 @@ On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true`` to create 
 (~$24/month per AZ). They cover Session Manager only: CloudWatch, S3 and every other destination above still
 need the site's own route.
 
-Neither of the two rows in the table has been measured behind a firewall yet.
+Both rows were measured behind a firewall in November 2026, on a node in the hub's own account (below).
 
 **What the instance role may do**: open Session Manager sessions (no ``ssm:GetParameter``, so it cannot
 read parameters in its account), ship logs and metrics to CloudWatch, and, only when ``KIT_BUCKET`` is
@@ -258,8 +258,8 @@ Operate and remove
 - ``make upgrade KIT=… HUB=… TAG=vX.Y.Z`` moves the node to a release with its data in place (see
   :doc:`/sys-admin/admin-upgrading-sites`). ``make deploy`` is the first-install verb: never use it on a
   live node.
-- ``make stage-kit`` re-stages the FL kit after a re-registration; ``make seed`` re-seeds after a data
-  version bump (the stack must be stopped).
+- ``make stage-kit`` re-stages the FL kit after a re-registration; ``make seed RESEED=1`` re-seeds after a
+  data version bump (the stack must be stopped). Without ``RESEED=1`` the seed fills only an empty store.
 - To remove the node, first deregister the trust on the hub, then run ``make destroy KIT=… HUB=…``. It
   removes the node with its root volume, and so the trust's data, and in own-VPC mode its network. It names
   the target account and asks for a typed yes first.

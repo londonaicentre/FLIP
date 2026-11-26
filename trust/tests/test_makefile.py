@@ -11,8 +11,8 @@
 #
 """trust/Makefile's upgrade verb never reaches a first-install step (FLIP#1204).
 
-`up-trust` re-seeds OMOP / Orthanc whenever the seed markers differ from the kit and runs
-`xnat-reset`; `upgrade-trust` exists so a live site can move to a release without either. These
+`up-trust` seeds an empty OMOP / Orthanc and runs `xnat-reset`; `upgrade-trust` exists so a live
+site can move to a release without either. These
 dry-run the targets against a scratch kit, so a refactor that reuses up-trust's prerequisites
 fails here rather than on a live site.
 """
@@ -107,7 +107,6 @@ class UpgradeTrust(unittest.TestCase):
         up = next(line for line in out.splitlines() if "docker compose" in line and " up -d" in line)
         assert f'OMOP_DATA_DIR="{omop}"' in up, up
         assert f'ORTHANC_STORAGE_DIR="{pacs}"' in up, up
-        assert "/opt/flip/omop/.seeded" in out, out  # the seed marker sits beside the store compose mounts
 
     def test_a_line_the_kit_sets_reaches_compose_from_the_kit_alone(self):
         """Make and compose parse a kit line differently (make keeps quotes and does not expand ~), and the
@@ -121,26 +120,6 @@ class UpgradeTrust(unittest.TestCase):
                 assert "--env-file" in up, up
                 for var in ("OMOP_DATA_DIR=", "ORTHANC_STORAGE_DIR="):
                     assert var not in up, (var, up)
-
-    def test_the_seed_marker_folder_is_checked_before_anything_starts(self):
-        """The seeders write their markers beside the two stores as the invoking user; a folder they cannot
-        write would fail the bring-up after the data had loaded, and re-seed on every later one."""
-        out = dry_run("up-trust", kit=DATA_DIRS_UNSET)
-        check = out.index("the seed marker is written there")
-        assert "'/opt/flip/omop/.seeded' '/opt/flip/orthanc/.orthanc-storage.seeded'" in out, out
-        assert check < out.index(" up -d"), out
-        assert "the seed marker is written there" in dry_run("ensure-seeded", kit=DATA_DIRS_UNSET)
-        off = dry_run("up-trust", kit=KIT + "TRUST_DATA_SEED=false\n")
-        assert "the seed marker is written there" not in off, off
-
-    def test_unseed_names_the_same_dirs_as_seed(self):
-        for target in ("seed-omop", "unseed-omop"):
-            out = dry_run(target, "PROJECTS=cxr_project", "FORCE_SEED=1", kit=DATA_DIRS_UNSET)
-            assert "OMOP_DATA_DIR_TRUST_9=/opt/flip/omop/db_data" in out, (target, out)
-        for target in ("seed-orthanc", "unseed-orthanc"):
-            out = dry_run(target, "PROJECTS=cxr_project", "FORCE_SEED=1", kit=DATA_DIRS_UNSET)
-            pacs = "ORTHANC_STORAGE_DIR_TRUST_9=/opt/flip/orthanc/orthanc-storage"  # pragma: allowlist secret
-            assert pacs in out, (target, out)
 
     def test_build_without_a_kit_gets_no_kit_data_dirs(self):
         result = run_target("build", "KIT=", dry=True, hub="")
@@ -157,6 +136,32 @@ class UpgradeTrust(unittest.TestCase):
         assert '/trust/orthanc/orthanc-storage-trust9"' in out, out
         assert "/opt/flip/omop" not in out, out
         assert "/opt/flip/orthanc" not in out, out
+
+    def test_flip_data_root_holds_every_store_the_kit_does_not_name(self):
+        """One kit line moves every store (FLIP#2113): what the recipes prepare and what compose mounts agree."""
+        stores = ("ORTHANC_STORAGE_DIR", "OMOP_DATA_DIR", "XNAT_DATA_DIR", "BASE_IMAGES_DOWNLOAD_DIR")
+        kit = "".join(line + "\n" for line in KIT.splitlines() if line.split("=", 1)[0] not in stores)
+        out = dry_run("_upgrade-trust-apply", kit=kit + "FLIP_DATA_ROOT=/srv/SCR-prod/\n")
+        for env in ("OMOP_DATA_DIR", "ORTHANC_STORAGE_DIR", "BASE_IMAGES_DOWNLOAD_DIR", "COHORT_SNAPSHOT_STORAGE_DIR"):
+            folder = {"OMOP_DATA_DIR": "omop", "ORTHANC_STORAGE_DIR": "orthanc", "BASE_IMAGES_DOWNLOAD_DIR": "images"}
+            assert f'{env}="/srv/SCR-prod/{folder.get(env, "cohort-snapshots")}"' in out, out
+        assert 'dir="/srv/SCR-prod/cohort-snapshots"' in out, out
+        assert "/srv/SCR-prod/xnat" in out, out  # upgrade-xnat names the data dir it keeps
+        assert "/opt/flip" not in out, out
+
+    def test_a_store_key_beats_flip_data_root_and_no_root_changes_nothing(self):
+        out = dry_run("_upgrade-trust-apply", kit=KIT + "FLIP_DATA_ROOT=/srv/SCR-prod\n")
+        assert 'OMOP_DATA_DIR="/nonexistent/omop"' in out, out
+        assert "/nonexistent/xnat" in out, out
+        assert "/srv/SCR-prod/xnat" not in out, out
+        assert 'dir="/srv/SCR-prod/cohort-snapshots"' in out, out  # the kit names no store for it
+        out = dry_run("_upgrade-trust-apply")
+        assert 'OMOP_DATA_DIR="' not in out, f"compose is handed a path the kit did not ask for:\n{out}"
+
+    def test_a_relative_flip_data_root_is_refused(self):
+        result = run_target("_upgrade-trust-apply", kit=KIT + "FLIP_DATA_ROOT=data/SCR-prod\n", dry=True)
+        assert result.returncode != 0, result.stdout
+        assert "FLIP_DATA_ROOT must be an absolute path" in result.stderr, result.stderr
 
     def test_the_prepared_store_image_is_pinned(self):
         """A tag is a moving target, and a docker.io pull fails on a host that reaches only GHCR (FLIP#1784)."""
@@ -217,10 +222,10 @@ class UpgradeTrust(unittest.TestCase):
 
 
 class SampleDataOff(unittest.TestCase):
-    """TRUST_DATA_SEED=false: a real trust's first install fetches, loads and marks nothing (FLIP#1687)."""
+    """TRUST_DATA_SEED=false: a real trust's first install asks, fetches and loads nothing (FLIP#1687)."""
 
     KIT_OFF = KIT + "TRUST_DATA_SEED=false\n"
-    SEED_STEPS = ("seed-omop", "seed-orthanc", ".seeded", "pg_isready")
+    SEED_STEPS = ("seed-omop", "seed-orthanc", "image_occurrence", "/statistics", "pg_isready")
 
     def test_a_first_install_loads_nothing_even_after_a_data_version_bump(self):
         for extra in ((), ("HF_TRUST_DATA_REVISION=main",)):
@@ -251,7 +256,7 @@ class SampleDataOff(unittest.TestCase):
             assert "Sample data is off for SCR" in out, f"{line}:\n{out}"
 
     def test_the_explicit_seed_verbs_refuse_a_trust_with_the_sample_data_off_unless_forced(self):
-        for target in ("seed", "seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+        for target in ("seed", "seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc", "remove-stray-studies"):
             result = run_target(target, kit=self.KIT_OFF)
             assert result.returncode != 0, f"{target} ran with the sample data off:\n{result.stdout}"
             assert "has TRUST_DATA_SEED=false" in result.stdout, result.stdout + result.stderr
@@ -262,7 +267,7 @@ class SampleDataOff(unittest.TestCase):
 
     def test_the_seed_verbs_refuse_what_they_cannot_read_as_true_or_false(self):
         """A mistyped value, or a kit file that is not there, must not read as "sample data on"."""
-        for target in ("seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+        for target in ("seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc", "remove-stray-studies"):
             mistyped = run_target(target, kit=KIT + "TRUST_DATA_SEED=False\n")
             assert mistyped.returncode != 0, f"{target} ran on TRUST_DATA_SEED=False:\n{mistyped.stdout}"
             assert "TRUST_DATA_SEED must be true or false" in mistyped.stdout, mistyped.stdout + mistyped.stderr
@@ -280,8 +285,8 @@ class SampleDataOff(unittest.TestCase):
         assert "seed-omop TRUST_INDEX" not in result.stdout, result.stdout
 
     def test_a_dry_run_passes_only_where_it_writes_nothing(self):
-        """seed-orthanc / unseed-orthanc honour DRY_RUN=1; seed-omop / unseed-omop would ignore it and write."""
-        for target in ("seed-orthanc", "unseed-orthanc"):
+        """seed-orthanc, unseed-orthanc, remove-stray-studies honour DRY_RUN=1; seed-omop, unseed-omop write."""
+        for target in ("seed-orthanc", "unseed-orthanc", "remove-stray-studies"):
             result = run_target(target, "DRY_RUN=1", kit=self.KIT_OFF)
             assert "has TRUST_DATA_SEED=false" not in result.stdout, f"{target}:\n{result.stdout}"
             assert f"{target} TRUST_INDEX" in result.stdout, f"{target} never ran:\n{result.stdout}{result.stderr}"
@@ -298,7 +303,128 @@ class SampleDataOff(unittest.TestCase):
         assert "GUARD-PASSED" in result.stdout, result.stdout
 
 
+def _command(out: str, start: str) -> str:
+    """The make invocation in ``out`` beginning ``start``, its backslash-continued lines joined."""
+    match = re.search(re.escape(start) + r"(?:[^\n]*\\\n)*[^\n]*", out)
+    assert match, f"no {start!r} in:\n{out}"
+    return match.group(0)
+
+
+class EnsureSeeded(unittest.TestCase):
+    """ensure-seeded loads only an empty store, asking the store itself rather than a marker file (FLIP#2111)."""
+
+    KIT_DB = KIT + "OMOP_POSTGRES_USER=site_user\nOMOP_POSTGRES_DB=site_db\n"
+    KIT_DB += "ORTHANC_USERNAME=o\nORTHANC_PASSWORD=p\n"  # pragma: allowlist secret
+
+    def _ensure(self, omop_row: str, studies: str, *extra: str) -> tuple[str, str]:
+        """`make -n ensure-seeded` against stub stores: what the probes asked, and the recipe that followed.
+
+        ``omop_row`` is what psql prints for the image_occurrence probe ("" for an empty table) and
+        ``studies`` Orthanc's CountStudies ("" for an Orthanc that does not answer).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            stub, asked = Path(tmp), Path(tmp) / "asked.log"
+            docker = f'echo "docker $*" >> "{asked}"; [ "$1" = ps ] && echo cid; [ "$1" = exec ] && echo "{omop_row}"'
+            curl = f'echo "curl $*" >> "{asked}"; [ -n "{studies}" ] && echo \'{{ "CountStudies" : {studies} }}\''
+            for name, body in (("docker", docker), ("curl", curl)):
+                (stub / name).write_text(f"#!/bin/sh\n{body}\nexit 0\n")
+                (stub / name).chmod(0o755)
+            env = {"PATH": f"{stub}:{os.environ['PATH']}"}
+            result = run_target("ensure-seeded", *extra, kit=self.KIT_DB, dry=True, env=env)
+            assert result.returncode == 0, result.stdout + result.stderr
+            return (asked.read_text() if asked.exists() else ""), result.stdout
+
+    # Under -n the recipe is printed as well as run, so a dispatch is told apart by the sub-make's own line.
+    OMOP_SEED = "make -C ./omop-db seed-omop TRUST_INDEX=9"
+    PACS_SEED = "make -C ./orthanc seed-orthanc TRUST_INDEX=9"
+
+    def test_empty_stores_are_seeded_after_probes_with_the_kit_login_and_port(self):
+        """Image rows, not persons: load-synthea-ehr adds persons to a database no project was seeded into."""
+        asked, out = self._ensure("", "0")
+        # This trust's own omop-db (slot 9, project trust9): a second trust on the host must not read
+        # the first one's database as its own and skip its seed.
+        assert "ps -q -f label=com.docker.compose.project=trust9 -f label=com.docker.compose.service=omop-db" in asked
+        assert "exec cid psql -U site_user -d site_db -tAc SELECT 1 FROM omop.image_occurrence LIMIT 1" in asked
+        assert "-u o:p http://127.0.0.1:8099/statistics" in asked, asked
+        assert self.OMOP_SEED in out, out
+        assert self.PACS_SEED in out, out
+        assert "CLEAR=" not in _command(out, self.PACS_SEED), "an empty PACS has nothing to clear"
+
+    def test_stores_that_hold_data_are_left_alone_even_after_a_data_version_bump(self):
+        """A seeded trust re-seeds only when asked: the release checklist names the step when the pin moves."""
+        for extra in ((), ("HF_TRUST_DATA_REVISION=main",), ("PROJECTS=cxr_project arkplus_project",)):
+            _, out = self._ensure("1", "12", *extra)
+            assert self.OMOP_SEED not in out, f"{extra}:\n{out}"
+            assert self.PACS_SEED not in out, f"{extra}:\n{out}"
+            assert "\n✅ OMOP (SCR) already holds data" in out, out
+            assert "\n✅ PACS (SCR) already holds studies" in out, out
+
+    def test_each_store_is_judged_on_its_own(self):
+        _, out = self._ensure("1", "0")
+        assert self.OMOP_SEED not in out, out
+        assert self.PACS_SEED in out, out
+
+    def test_a_store_that_does_not_answer_is_seeded_and_so_fails_loudly(self):
+        """An unreachable store is never read as a seeded one: the seed's own error says what is wrong."""
+        _, out = self._ensure("", "")
+        assert self.OMOP_SEED in out, out
+        assert self.PACS_SEED in out, out
+
+
+class ReseedClearsThePacs(unittest.TestCase):
+    """`seed … CLEAR=1` is how a Compose trust moves to a new data version (FLIP#2111): Orthanc never
+    overwrites an instance it holds, so without --clear-projects the PACS stays on the old cut."""
+
+    def test_clear_reaches_seed_orthanc(self):
+        out = dry_run("seed", "CLEAR=1", kit=EnsureSeeded.KIT_DB)
+        assert "CLEAR=1" in _command(out, EnsureSeeded.PACS_SEED), out
+
+    def test_the_orthanc_seeder_is_told_to_clear(self):
+        orthanc = Path(__file__).resolve().parents[1] / "orthanc"
+        result = subprocess.run(
+            ["make", "-n", "-C", str(orthanc), "seed-orthanc", "CLEAR=1", "PROJECTS=cxr_project"],
+            capture_output=True, text=True, timeout=60,
+            env={k: v for k, v in os.environ.items() if k not in {"MAKEFLAGS", "MAKELEVEL", "MFLAGS"}},
+        )  # fmt: skip
+        assert result.returncode == 0, result.stderr
+        assert "seed_orthanc.py --trust-index 1 --projects cxr_project" in result.stdout, result.stdout
+        assert "--clear-projects" in result.stdout, result.stdout
+
+
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
+
+
+class SyntheaEhr(unittest.TestCase):
+    """load-synthea-ehr reads the trust's kit like the seed verbs (FLIP#2107): its OMOP login, port and half."""
+
+    KIT_DB = KIT + "OMOP_POSTGRES_USER=site_user\nOMOP_POSTGRES_PASSWORD=rotated pw\nOMOP_POSTGRES_DB=site_db\n"
+
+    def test_a_kit_hands_the_loader_its_login_port_and_slot(self):
+        """Without them the loader logs in with the dev template's password and loads half 1 on every trust."""
+        out = dry_run("load-synthea-ehr", kit=self.KIT_DB)
+        assert "load-synthea-ehr TRUST_INDEX=9 OMOP_DB_PORT=5499" in out, out
+        login = "OMOP_POSTGRES_USER=site_user OMOP_POSTGRES_PASSWORD='rotated pw'"  # pragma: allowlist secret
+        assert login in out, out
+        assert "OMOP_POSTGRES_DB=site_db" in out, out
+
+    def test_the_half_follows_source_trust_and_an_explicit_index_wins(self):
+        assert "TRUST_INDEX=1 " in dry_run("load-synthea-ehr", "SOURCE_TRUST=1", kit=self.KIT_DB)
+        assert "TRUST_INDEX=2 " in dry_run("load-synthea-ehr", "SOURCE_TRUST=1", "TRUST_INDEX=2", kit=self.KIT_DB)
+
+    def test_without_a_kit_the_dev_usage_is_unchanged(self):
+        """The documented dev call passes the index and port by hand and needs no kit file."""
+        out = dry_run("load-synthea-ehr", "KIT=", "TRUST_INDEX=2", "OMOP_DB_PORT=5436")
+        assert "load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436" in out, out
+        assert "OMOP_POSTGRES_" not in out, out
+        assert "TRUST_DATA_SEED" not in out, out
+
+    def test_a_trust_with_the_sample_data_off_is_refused_unless_forced(self):
+        """A working login could otherwise put synthetic persons into a trust's own data."""
+        result = run_target("load-synthea-ehr", kit=self.KIT_DB + "TRUST_DATA_SEED=false\n")
+        assert result.returncode != 0, result.stdout
+        assert "has TRUST_DATA_SEED=false" in result.stdout, result.stdout + result.stderr
+        out = dry_run("load-synthea-ehr", "FORCE_SEED=1", kit=self.KIT_DB + "TRUST_DATA_SEED=false\n")
+        assert "load-synthea-ehr TRUST_INDEX=9" in out, out
 
 
 class MonaiLabelArchive(unittest.TestCase):
@@ -452,6 +578,7 @@ class DevelopmentFlRegistry(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for rel in (
+                "deploy/data_root.mk",
                 "deploy/env_mode.mk",
                 "deploy/fl_backend.mk",
                 "deploy/instance.mk",

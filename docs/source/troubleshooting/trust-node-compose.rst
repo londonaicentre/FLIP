@@ -41,8 +41,8 @@ lists them.
 .. warning::
 
    Several fixes below mention the first-install commands (``make up-onprem-trust``,
-   ``make -C trust/deploy/terraform/aws/ec2 deploy``, ``make -C trust/xnat up-xnat``). They **wipe the XNAT archive**,
-   and the first two re-seed the trust's data. Never use them to move a live site to a new release; see
+   ``make -C trust/deploy/terraform/aws/ec2 deploy``, ``make -C trust/xnat up-xnat``). They **wipe the XNAT
+   archive**. Never use them to move a live site to a new release; see
    :ref:`admin-upgrading-sites`.
 
 ***********************
@@ -61,7 +61,7 @@ compose the directory it prepared, the kit's value or the default.
 **Fix.** Bring the stack up with ``make``, or add the line to the kit file's host-local section.
 
 A deployed trust (``HUB=stag`` or ``prod``) never shows this error. With ``OMOP_DATA_DIR`` or
-``ORTHANC_STORAGE_DIR`` unset it mounts ``/opt/flip/omop/db_data`` and ``/opt/flip/orthanc/orthanc-storage``, the
+``ORTHANC_STORAGE_DIR`` unset and no ``FLIP_DATA_ROOT`` it mounts ``/opt/flip/omop/db_data`` and ``/opt/flip/orthanc/orthanc-storage``, the
 same two directories for every trust on the host, so the readiness checklist fails the kit until both are set to
 paths of the trust's own. A site already running with a line unset keeps its data by setting it to that path:
 
@@ -130,10 +130,9 @@ imaging-api and the FL client:
 
 Nothing has been changed at that point.
 
-**Cause.** The checklist asks whether you can write the folder that holds each data directory, because a first
-install writes its seed marker there. On a site that root installed, those folders belong to root. An upgrade
-never seeds and writes nothing there, but before v0.16 it ran the same checklist. From v0.16,
-``upgrade-onprem-trust`` skips that part of the row.
+**Cause.** A checkout older than v0.16 asks whether you can write the folder that holds each data directory,
+where a first install writes a seed marker. On a site that root installed, that folder is root's. From v0.16
+the upgrade no longer asks, and releases after FLIP#2111 write no marker at all.
 
 **Fix.** On a checkout older than v0.16, read the checklist once on its own and confirm this is the only failing
 row:

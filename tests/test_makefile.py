@@ -14,7 +14,7 @@ bring-up creates every network it needs (FLIP#1344), and the targets that drive 
 project refuse one that another checkout created (FLIP#1227).
 
 `make upgrade-onprem-trust` must run the readiness checklist and then reach the trust-level
-upgrade, never the first-install steps (`ensure-seeded` re-seeds OMOP / Orthanc, `xnat-reset`
+upgrade, never the first-install steps (`ensure-seeded` seeds an empty OMOP / Orthanc, `xnat-reset`
 wipes the XNAT archive and database).
 
 Usage:
@@ -143,8 +143,6 @@ class HostDirsArePreparedNotEscalated(unittest.TestCase):
         # its owner to the net dirs, which imaging-api then cannot write); xnat-db-data is Postgres's own
         # after its first boot, so it is created and never re-owned (FLIP#1731 review).
         assert '= "1000" ] || chown 1000:1000 "$base"' in out, out
-        assert 'parent="$(dirname "$d")"' in out, out  # never root-creates the markers' parent
-        assert "the bring-up writes" in out, out
         xnat_chown = next(line for line in out.splitlines() if "chown 1001:1001 /nonexistent/xnat " in line)
         assert "xnat-db-data" not in xnat_chown, xnat_chown
 
@@ -292,6 +290,7 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
             "deploy/aws/Makefile",
+            "deploy/data_root.mk",
             "deploy/portable.mk",
             "flip-api/Makefile",  # register-trusts recurses into it to mint the XNAT credentials
             "trust/Makefile",
@@ -698,8 +697,6 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     gate = next(line for line in output.splitlines() if "onboard_onprem_trust.py" in line)
                     args = shlex.split(gate)
                     assert "--gate" in args, gate
-                    # Only the upgrade's gate skips the seed-marker folder: it never seeds (FLIP#1985).
-                    assert ("--upgrade" in args) == (target == "upgrade-onprem-trust"), gate
                     assert Path(args[args.index("--kit-file") + 1]) == kit_file, gate
                     if target == "upgrade-onprem-trust":
                         plan = next(line for line in output.splitlines() if "site_upgrade.py plan" in line)

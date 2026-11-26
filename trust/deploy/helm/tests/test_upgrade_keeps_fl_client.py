@@ -133,6 +133,22 @@ def test_an_upgrade_without_kit_dest_keeps_the_releases_kit_path(tmp_path):
 
 
 @needs_make
+def test_a_data_root_added_to_a_live_releases_kit_moves_nothing(tmp_path):
+    """FLIP#2113: the root's fl-kit/ is only a default, so the release keeps the path it mounts."""
+    kit_file = tmp_path / ".env.ABC.prod"
+    kit_file.write_text("FLIP_DATA_ROOT=/data/R\n")
+    result, upgrade = _deploy(
+        tmp_path,
+        "KIT=ABC",
+        f"KIT_FILE={kit_file}",
+        fl_ready_before=False,
+        HELM_VALUES='{"flClient": {"kitHostPath": "/opt/flip/fl-kit"}}',
+    )
+    assert result.returncode == 0, result.stderr
+    assert _kit_path(upgrade) == "/opt/flip/fl-kit"
+
+
+@needs_make
 @pytest.mark.parametrize("arg", ["KIT_DEST=/srv/kit", "FL_CLIENT_KIT_HOST_PATH=/srv/kit"])
 def test_passing_a_kit_path_moves_it(tmp_path, arg):
     result, upgrade = _deploy(
