@@ -93,8 +93,9 @@ class _Stack:
         for name in self.containers:
             _run("docker", "rm", "-f", name, check=False)
         _run("docker", "network", "rm", self.tag, check=False)
-        # initdb leaves the cluster 0700 and owned by the image's postgres user, which the host
-        # user cannot remove — pytest's tmp_path cleanup would warn about it on every later run.
+        # initdb leaves the data directory 0700 and owned by the image's postgres user, which the
+        # host user can then neither read nor remove — pytest's tmp_path cleanup would warn about
+        # it on every later run. Emptied and handed back from inside a container.
         _run(
             "docker",
             "run",
@@ -105,7 +106,7 @@ class _Stack:
             f"{self.data}:/data",
             NEW_IMAGE,
             "-c",
-            "rm -rf /data/..?* /data/.[!.]* /data/*",
+            "rm -rf /data/..?* /data/.[!.]* /data/*; chmod 0777 /data",
             check=False,
         )
 
