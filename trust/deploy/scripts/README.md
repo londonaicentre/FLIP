@@ -37,6 +37,11 @@ a re-run.
   the onboarding checklist here and the Kubernetes self-test (`trust/deploy/helm/scripts/selftest_k8s.py`).
   A run exits 0 when ready, 1 when a check failed or is pending, 2 when nothing failed but a
   check could not run.
+- **`trust_endpoints.py`** — reader of [`../endpoints.toml`](../endpoints.toml), the one list of
+  what a trust node connects out to: host, port, when it is needed and on which platform. The
+  onboarding checklist probes the registry hosts from it, and `tests/test_trust_endpoints.py`
+  fails when the network tables in `docs/source/deploy-flip/` name a host the file does not, or
+  the other way round. Add a destination to the file and the docs together.
 - **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
   `sync_trust_kit.py`, and the AWS registration path. Merges a kit dict into a kit file while
   preserving operator edits: credentials (`TRUST_API_KEY` / `TRUST_INTERNAL_SERVICE_KEY`) are
@@ -104,7 +109,9 @@ a re-run.
 - **`node_checks.py`** — the checks of a running trust node, written once for every platform
   (FLIP#1449): services ready, FL kit delivered, the three APIs healthy, OMOP and Orthanc hold
   data, Orthanc requires auth, a C-STORE reaches XNAT, dcm2niix converts it, the FL client stays
-  up, and the hub heartbeat. Each asks its question from inside a container the node already runs,
+  up, the hub heartbeat, and the two egress rows (FLIP#2077): the hub API and FL server answer
+  from the containers that use them, and a sample of destinations no trust needs does not (one
+  that answers is a warning for the site's IT team, never a failure). Each asks its question from inside a container the node already runs,
   through a small interface (`Node`). `ROWS` is the list both platforms report, held by a test on
   each side.
 - **`check_node.py`** (`make -C trust check-node KIT=<CODE>`, or `make check-onprem-trust

@@ -512,6 +512,14 @@ shares, the same one as the VM node self-test, against the deployed release:
    * - hub heartbeat
      - Only with ``HUB_CHECK=1``, otherwise skipped: trust-api's last heartbeat reached the hub and the hub holds the
        same key. A heartbeat the hub refused, for a wrong API key for example, fails this row.
+   * - declared endpoints reachable
+     - Only with ``HUB_CHECK=1``: the hub API answers trust-api's pod, and the FL server answers the FL client's.
+   * - undeclared destinations blocked
+     - Two hosts no trust needs (``example.com``, ``www.wikipedia.org``) do not answer on 443 from the trust-api and
+       FL client pods. One that answers is a **warning** that names it and does not fail the self-test: what your
+       network allows is your decision. It is a sample of two hosts, not a proof. The chart's default egress policy
+       allows 443 to any address, so expect the warning unless you have narrowed it
+       (:gh:`NETWORK-POLICY.md <trust/deploy/helm/NETWORK-POLICY.md>`) or a firewall does.
 
 A check that needs sample data the release does not load passes as *skipped*, with the reason:
 

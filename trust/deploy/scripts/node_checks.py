@@ -55,7 +55,55 @@ ROWS = (
     "dcm2niix conversion",
     "fl client running",
     "hub heartbeat",
+    "declared endpoints reachable",
+    "undeclared destinations blocked",
 )
+# Two well-known hosts no trust node has a reason to reach, tried on 443 to see what the node's network lets out.
+# A sample: a node that blocks both may still allow others. test_trust_endpoints.py keeps them off the declared list.
+UNDECLARED = ("example.com", "www.wikipedia.org")
+EGRESS_REFS = ("SATRE 5.5.01", "SATRE 2.2.11")
+# Run inside a container: says for each target what answered. A URL goes the way the container's own traffic
+# does (its proxy settings included); a host:port is dialled directly with a TLS hello, which is what a firewall
+# that filters by server name judges. Reads the targets as JSON on its last line and prints {target: answer}:
+# "reached" (a 2xx, or a completed handshake), "answered …" (something replied, but not that: an HTTP error, a
+# certificate the container does not trust, a refused hello), or the reason nothing did. `answered()` reads it.
+PROBE = r"""
+import json, socket, ssl, sys, urllib.error, urllib.request
+
+UNTRUSTED = "answered with a certificate this container does not trust"
+
+def url(url):
+    try:
+        urllib.request.urlopen(url, timeout=8)
+    except urllib.error.HTTPError as error:
+        return f"answered HTTP {error.code}"
+    except Exception as error:
+        reason = getattr(error, "reason", error)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return UNTRUSTED
+        return f"{type(reason).__name__}: {reason}"
+    return "reached"
+
+def tls(target):
+    host, _, port = target.rpartition(":")
+    try:
+        with socket.create_connection((host, int(port)), timeout=8) as raw:
+            with ssl.create_default_context().wrap_socket(raw, server_hostname=host):
+                pass
+    except ssl.SSLCertVerificationError:
+        return UNTRUSTED
+    except (ssl.SSLEOFError, ssl.SSLZeroReturnError) as error:
+        return f"closed during the TLS hello: {error}"
+    except ssl.SSLError as error:
+        # Any other TLS error is a reply from a peer: an FL server that wants a client certificate sends one.
+        return f"answered, refusing the TLS hello ({error.reason})"
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
+    return "reached"
+
+targets = json.loads(sys.stdin.readlines()[-1])
+print(json.dumps({t: url(t) if t.startswith("http") else tls(t) for t in targets}))
+"""
 
 
 class Node(Protocol):
@@ -161,6 +209,112 @@ def check_hub_heartbeat(
         name,
         f"trust-api has no accepted heartbeat on record after {waited}s: its last one failed or was refused "
         "(a wrong TRUST_API_KEY looks like this). Its log says which",
+    )
+
+
+def probe(node: Node, pod: str, targets: list[str]) -> dict[str, str]:
+    """What answered from inside a container: {target: "reached" or why not}. Raises when the probe cannot run."""
+    script = f"python3 -c {shlex.quote(PROBE)}"
+    ok, out = node.exec(pod, script, stdin=json.dumps(targets))
+    try:
+        answers = json.loads(out.strip().splitlines()[-1]) if ok else None
+    except (json.JSONDecodeError, IndexError):
+        answers = None
+    if not isinstance(answers, dict):
+        raise RuntimeError(f"the probe did not run in {pod}: {out[:160]}")
+    return answers
+
+
+def fl_server(node: Node, pod: str, backend: str) -> str | None:
+    """host:port the FL client dials, read from the client itself: its kit (NVFLARE) or its arguments (Flower)."""
+    if backend == "nvflare":
+        startup = nvflare_startup_dir(node, pod)
+        ok, out = node.exec(pod, f"cat {shlex.quote(f'{startup}/fed_client.json')}") if startup else (False, "")
+        try:
+            return str(json.loads(out)["servers"][0]["service"]["target"]) if ok else None
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+            return None
+    ok, out = node.exec(pod, "tr '\\0' '\\n' < /proc/1/cmdline")
+    args = out.split() if ok else []
+    return args[args.index("--superlink") + 1] if "--superlink" in args[:-1] else None
+
+
+def answered(answer: str) -> bool:
+    """Whether a probe's answer means the far side replied at all, whatever it said."""
+    return answer.startswith(("reached", "answered"))
+
+
+def check_declared_reachable(node: Node, backend: str, fl_enabled: bool) -> Check:
+    """The hub API answers trust-api and the FL server answers the FL client, each asked from its own container.
+
+    The hub must answer its /health with a 2xx over a connection the container trusts: an error page, or a
+    certificate a firewall put in the way, is not the hub. The FL server only has to reply: its certificate comes
+    from the FL network's own CA, which the client holds and this probe does not, so the client is its judge.
+    The image registry is not asked from here: the host pulls images, and the onboarding checklist probes it.
+    """
+    name = "declared endpoints reachable"
+    api = node.pod("trust-api")
+    if not api:
+        return failed(name, "no running trust-api container")
+    ok, hub = node.exec(api, "printenv CENTRAL_HUB_API_URL")
+    health = f"{hub.strip()}/health"
+    if not ok or not health.startswith("http"):
+        return failed(name, "trust-api has no CENTRAL_HUB_API_URL, or it is not a URL")
+    found = [f"hub API {health}"]
+    problems = []
+    answer = probe(node, api, [health])[health]
+    if answer != "reached":
+        problems.append(f"hub API {health}: {answer}")
+    if fl_enabled:
+        client = node.pod("fl-client")
+        if not client:
+            return failed(name, "no running fl-client container to ask the FL server from")
+        target = fl_server(node, client, backend)
+        if not target:
+            return failed(name, f"could not read the FL server's address from {client}")
+        answer = probe(node, client, [target])[target]
+        found.append(f"FL server {target}")
+        if not answered(answer):
+            problems.append(f"FL server {target}: {answer}")
+    if problems:
+        return Check(name, trust_checks.Status.FAIL, "; ".join(problems), refs=EGRESS_REFS)
+    return Check(name, trust_checks.Status.PASS, ", ".join(found) + " answered", refs=EGRESS_REFS)
+
+
+def check_undeclared_blocked(node: Node, fl_enabled: bool) -> Check:
+    """The node's network lets nothing out to a sample of destinations no trust needs.
+
+    A destination that answers is a warning, never a failure: what a site's network allows is the site's decision,
+    and this row tells its IT and governance teams what it found. Asked from trust-api and from the FL client,
+    which runs the researcher's code; a container that should be there and is not fails the row, since nothing
+    was learned about it. A pass gives the reason each attempt failed, so "blocked" can be told from "no DNS".
+    """
+    name = "undeclared destinations blocked"
+    pods = [node.pod("trust-api"), node.pod("fl-client") if fl_enabled else "skip"]
+    if not all(pods):
+        return failed(name, "trust-api or the fl-client is not running, so its network could not be sampled")
+    targets = [f"https://{host}/" for host in UNDECLARED]
+    reached, reasons = [], []
+    for pod in pods:
+        if pod == "skip":
+            continue
+        for host, answer in zip(UNDECLARED, probe(node, pod, targets).values()):
+            (reached if answered(answer) else reasons).append(
+                f"{host} from {pod}" + ("" if answered(answer) else f": {answer}")
+            )
+    if reached:
+        return Check(
+            name,
+            trust_checks.Status.WARN,
+            "answered on 443: " + ", ".join(reached) + ". The node's network allows destinations outside FLIP's list",
+            hints=("FLIP's list: docs → Deploy a trust node → Network requirements",),
+            refs=EGRESS_REFS,
+        )
+    return Check(
+        name,
+        trust_checks.Status.PASS,
+        "none answered (a sample, not a proof): " + "; ".join(reasons),
+        refs=EGRESS_REFS,
     )
 
 
@@ -518,7 +672,8 @@ def run_checks(
 
     def record(check: Check) -> None:
         checks.append(check)
-        print(f"  ✅ {check.name}" if check.ok else f"  {check.status.glyph} {check.name}: {check.detail}")
+        is_pass = check.status is trust_checks.Status.PASS
+        print(f"  ✅ {check.name}" if is_pass else f"  {check.status.glyph} {check.name}: {check.detail}")
 
     def attempt(name: str, check: Callable[[], Check]) -> None:
         record(trust_checks.run(name, check))
@@ -569,6 +724,9 @@ def run_checks(
         attempt("fl client running", lambda: check_fl_client(node, fl_settle_seconds))
     if no_hub:
         skip("hub heartbeat", no_hub)
+        skip("declared endpoints reachable", no_hub)
     else:
         attempt("hub heartbeat", lambda: check_hub_heartbeat(node, hub_wait_seconds))
+        attempt("declared endpoints reachable", lambda: check_declared_reachable(node, backend, fl_enabled))
+    attempt("undeclared destinations blocked", lambda: check_undeclared_blocked(node, fl_enabled))
     return checks
