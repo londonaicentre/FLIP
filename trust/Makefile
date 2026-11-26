@@ -562,8 +562,10 @@ build:
 
 # The root on-prem verbs delegate here so readiness checks exactly the kit that
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
+# It also writes the checklist as a report (JSON + markdown) under CHECKS_OUT, as the self-tests do.
+CHECKS_OUT ?= $(abspath $(CURDIR)/../build/checks)
 onboard-onprem-trust:
-	@HUB="$(HUB)" uv run --no-config deploy/scripts/onboard_onprem_trust.py $(KIT) --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
+	@HUB="$(HUB)" uv run --no-config deploy/scripts/onboard_onprem_trust.py $(KIT) --out '$(subst ','"'"',$(CHECKS_OUT))' --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
 
 # Install a kit downloaded from the FLIP UI (FLIP#1852): decrypt it, create or update
 # trust/.env.<CODE>.<hub> and stage the FL files in its FL_KIT_DIR. The trust CODE comes from the

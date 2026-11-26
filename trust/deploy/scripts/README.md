@@ -32,6 +32,11 @@ a re-run.
   `TRUST_REGION`). Refuses to overwrite an existing kit. The root `new-trust` target also refuses when that trust still has a kit under its old, pre-FLIP#1479 file name. The result is ready for
   registration to fill in credentials (`make -C deploy/aws register-trusts KIT=<CODE>
   HUB=<hub>` on a deployed hub, `make register-trust KIT=<CODE>` in development).
+- **`trust_checks.py`** — the one result type (`Check`: pass, fail, warn, skipped, pending, or
+  could not run) and the one JSON + markdown report writer behind every check of a trust node:
+  the onboarding checklist here and the Kubernetes self-test (`trust/deploy/helm/scripts/selftest_k8s.py`).
+  A run exits 0 when ready, 1 when a check failed or is pending, 2 when nothing failed but a
+  check could not run.
 - **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
   `sync_trust_kit.py`, and the AWS registration path. Merges a kit dict into a kit file while
   preserving operator edits: credentials (`TRUST_API_KEY` / `TRUST_INTERNAL_SERVICE_KEY`) are
@@ -54,7 +59,8 @@ a re-run.
   files under the kit file's `FL_KIT_DIR`, owned by the FL client's uid. An update kit leaves the
   trust's keys alone; on an installed trust `DOCKER_TAG` / `DOCKER_FL_TAG` are left to the upgrade.
 - **`onboard_onprem_trust.py`** (`make onboard-onprem-trust KIT=<CODE>`) — a readiness checklist
-  for an on-prem trust host, run as a precheck by `up-onprem-trust`. Diagnoses what's missing
+  for an on-prem trust host, run as a precheck by `up-onprem-trust`. It also writes the checklist
+  as a report under `CHECKS_OUT` (default `build/checks/` at the repo root). Diagnoses what's missing
   before `make up-onprem-trust` will succeed: public IP, docker swarm state, kit file presence,
   Hub-shared block, kit credentials, `FL_KIT_DIR` contents, OMOP/Orthanc data dirs, GPU
   capacity (`NUM_AVAILABLE_GPUS` vs. what the host actually exposes), and — probed outbound from

@@ -38,12 +38,17 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS_DIR.parents[1] / "scripts"))
+
+import trust_checks  # noqa: E402 — the result type and report every trust check shares
+from trust_checks import Check, failed, passed, skipped, verdict  # noqa: E402
+
 ORTHANC_URL = "http://orthanc:8042"
 # XNAT as the xnat-web pod reaches itself.
 XNAT_URL = "http://127.0.0.1:8080"
@@ -55,15 +60,6 @@ SELFTEST_NAME = "FLIP self-test"
 SERIES_SAMPLE = 50
 API_COMPONENTS = ("trust-api", "imaging-api", "data-access-api")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-
-
-@dataclass(frozen=True)
-class Check:
-    """One line of the report."""
-
-    name: str
-    ok: bool
-    detail: str
 
 
 class Cluster(Protocol):
@@ -224,11 +220,11 @@ def check_release_ready(cluster: Cluster) -> Check:
     """Every Deployment, StatefulSet and DaemonSet of the release has rolled out and is ready."""
     items = cluster.workloads()
     if not items:
-        return Check("release ready", False, "the release has no workloads in this namespace")
+        return failed("release ready", "the release has no workloads in this namespace")
     short = [f"{item['metadata']['name']} {gap}" for item in items if (gap := rollout_gap(item))]
     if short:
-        return Check("release ready", False, "not ready: " + ", ".join(short))
-    return Check("release ready", True, f"{len(items)} workloads ready")
+        return failed("release ready", "not ready: " + ", ".join(short))
+    return passed("release ready", f"{len(items)} workloads ready")
 
 
 def nvflare_startup_dir(cluster: Cluster, pod: str) -> str | None:
@@ -245,17 +241,17 @@ def check_fl_kit(cluster: Cluster, backend: str) -> Check:
     """The FL client sees its participant kit where the image reads it (templates/fl-client.yaml)."""
     pod = cluster.pod("fl-client")
     if not pod:
-        return Check("fl kit delivered", False, "no running fl-client pod")
+        return failed("fl kit delivered", "no running fl-client pod")
     if backend == "nvflare":
         startup = nvflare_startup_dir(cluster, pod)
         if not startup:
-            return Check("fl kit delivered", False, f"{pod} mounts no startup/ folder from the kit")
+            return failed("fl kit delivered", f"{pod} mounts no startup/ folder from the kit")
         where = f"{startup}/fed_client.json"
         ok, _ = cluster.exec(pod, f"test -s {shlex.quote(where)}")
     else:
         where = "/certs/ca.crt and /keys"
         ok, _ = cluster.exec(pod, 'test -s /certs/ca.crt && [ -n "$(ls -A /keys)" ]')
-    return Check("fl kit delivered", ok, f"{where} in {pod}" if ok else f"{pod} has no kit at {where}")
+    return verdict("fl kit delivered", ok, f"{where} in {pod}" if ok else f"{pod} has no kit at {where}")
 
 
 def check_health(cluster: Cluster, component: str) -> Check:
@@ -263,7 +259,7 @@ def check_health(cluster: Cluster, component: str) -> Check:
     name = f"{component} health"
     pod = cluster.pod(component)
     if not pod:
-        return Check(name, False, f"no running {component} pod")
+        return failed(name, f"no running {component} pod")
     port = cluster.container_port(pod) or 8000
     script = (
         'python3 -c "import urllib.request; '
@@ -274,7 +270,7 @@ def check_health(cluster: Cluster, component: str) -> Check:
         healthy = ok and json.loads(body).get("status") == "ok"
     except (json.JSONDecodeError, AttributeError):
         healthy = False
-    return Check(
+    return verdict(
         name, healthy, f"ok from :{port}/health" if healthy else f"no healthy answer from :{port}/health ({body[:120]})"
     )
 
@@ -287,13 +283,13 @@ def check_omop_seeded(cluster: Cluster) -> Check:
     """
     pod = cluster.pod("omop-db")
     if not pod:
-        return Check("omop seeded", False, "no running omop-db pod")
+        return failed("omop seeded", "no running omop-db pod")
     ok, out = cluster.exec(
         pod, 'psql -X -tAc "SELECT 1 FROM omop.image_occurrence LIMIT 1" -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
     )
     if ok and out.strip() == "1":
-        return Check("omop seeded", True, "omop.image_occurrence holds rows")
-    return Check("omop seeded", False, f"no imaging row in omop.image_occurrence ({out.strip()[:120]})")
+        return passed("omop seeded", "omop.image_occurrence holds rows")
+    return failed("omop seeded", f"no imaging row in omop.image_occurrence ({out.strip()[:120]})")
 
 
 def check_orthanc(cluster: Cluster) -> tuple[Check, Check]:
@@ -305,11 +301,11 @@ def check_orthanc(cluster: Cluster) -> tuple[Check, Check]:
     pod = cluster.pod("xnat-web")
     if not pod:
         missing = "no running xnat-web pod to ask Orthanc from"
-        return Check("orthanc seeded", False, missing), Check("orthanc requires auth", False, missing)
+        return failed("orthanc seeded", missing), failed("orthanc requires auth", missing)
 
     creds = cluster.orthanc_credentials()
     if not creds:
-        seeded = Check("orthanc seeded", False, "could not read an Orthanc user from its Secret")
+        seeded = failed("orthanc seeded", "could not read an Orthanc user from its Secret")
     else:
         # The credential travels on stdin, never in argv, where the pod's process list would show it.
         ok, out = cluster.exec(
@@ -320,17 +316,17 @@ def check_orthanc(cluster: Cluster) -> tuple[Check, Check]:
         except (json.JSONDecodeError, AttributeError, ValueError):
             studies = 0
         seeded = (
-            Check("orthanc seeded", True, f"{studies} studies")
+            passed("orthanc seeded", f"{studies} studies")
             if studies > 0
-            else Check("orthanc seeded", False, f"Orthanc holds no study ({out[:120]})")
+            else failed("orthanc seeded", f"Orthanc holds no study ({out[:120]})")
         )
 
     _, code = cluster.exec(pod, f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 10 {ORTHANC_URL}/")
     code = code.strip()
     auth = (
-        Check("orthanc requires auth", True, "401 without credentials")
+        passed("orthanc requires auth", "401 without credentials")
         if code == "401"
-        else Check("orthanc requires auth", False, f"expected 401 from {ORTHANC_URL}/, got {code or 'no answer'}")
+        else failed("orthanc requires auth", f"expected 401 from {ORTHANC_URL}/, got {code or 'no answer'}")
     )
     return seeded, auth
 
@@ -359,7 +355,7 @@ def check_cstore(run_smoke: Callable[[], tuple[int, str, str]]) -> Check:
         lines = [ANSI.sub("", line).strip() for line in text.splitlines() if line.strip()]
         return lines[-1] if lines else ""
 
-    return Check("xnat c-store", code == 0, last_line(stdout) or last_line(stderr) or f"smoke-cstore exited {code}")
+    return verdict("xnat c-store", code == 0, last_line(stdout) or last_line(stderr) or f"smoke-cstore exited {code}")
 
 
 # A curl config line carrying a credential as a Basic auth header. Every call below runs in the
@@ -477,45 +473,44 @@ def check_conversion(
     """
     name = "dcm2niix conversion"
     if not orthanc_creds:
-        return Check(name, False, "could not read an Orthanc user from its Secret")
+        return failed(name, "could not read an Orthanc user from its Secret")
     status, body = xnat.request("GET", "/xapi/commands?name=dcm2niix")
     try:
         command = json.loads(body)[0]
         command_id, wrapper = command["id"], command["xnat"][0]["name"]
     except (json.JSONDecodeError, LookupError, TypeError):
-        return Check(name, False, f"no dcm2niix command is registered (HTTP {status}: {body[:120]})")
+        return failed(name, f"no dcm2niix command is registered (HTTP {status}: {body[:120]})")
     series = xnat.smallest_series(orthanc_creds)
     if series is None:
-        return Check(name, False, "Orthanc lists no series to convert")
+        return failed(name, "Orthanc lists no series to convert")
 
     # A project left behind by an interrupted run would hold its old scan, so clear it first. Only
     # one this check created, though: the service user is an XNAT administrator, and a project
     # that merely shares the id is someone else's to remove.
     status, body = xnat.request("GET", "/data/projects?format=json")
     if status != 200:
-        return Check(name, False, f"could not list XNAT's projects (HTTP {status}: {body[:120]})")
+        return failed(name, f"could not list XNAT's projects (HTTP {status}: {body[:120]})")
     existing = next((p for p in _results(body) if p.get("ID") == SELFTEST_PROJECT), None)
     if existing is not None:
         if existing.get("name") != SELFTEST_NAME:
-            return Check(
+            return failed(
                 name,
-                False,
                 f"XNAT already holds a {SELFTEST_PROJECT} project this self-test did not create "
                 f"(named {existing.get('name')!r}); remove or rename it, then rerun",
             )
         status, body = xnat.request("DELETE", f"/data/projects/{SELFTEST_PROJECT}?removeFiles=true")
         if status != 200:
-            return Check(name, False, f"could not clear the {SELFTEST_PROJECT} an earlier run left (HTTP {status})")
+            return failed(name, f"could not clear the {SELFTEST_PROJECT} an earlier run left (HTTP {status})")
     status, body = xnat.request("POST", "/data/projects", _project_xml(SELFTEST_PROJECT), "application/xml")
     if status != 200:
-        return Check(name, False, f"could not create the {SELFTEST_PROJECT} project (HTTP {status}: {body[:120]})")
+        return failed(name, f"could not create the {SELFTEST_PROJECT} project (HTTP {status}: {body[:120]})")
     try:
         result = _convert(xnat, orthanc_creds, series, command_id, wrapper, timeout, poll, sleep, clock)
     finally:
         cleanup, body = xnat.request("DELETE", f"/data/projects/{SELFTEST_PROJECT}?removeFiles=true")
     if cleanup != 200:
         detail = f"{result.detail}; could not delete the {SELFTEST_PROJECT} project (HTTP {cleanup}), delete it in XNAT"
-        return Check(name, result.ok, detail)
+        return replace(result, detail=detail)
     return result
 
 
@@ -537,29 +532,28 @@ def _convert(
     # comes back here as the import's own failure.
     status, body = xnat.import_series(orthanc_creds, series_id, project)
     if status != 200:
-        return Check(name, False, f"XNAT did not import Orthanc series {series_id} (HTTP {status}: {body[:200]})")
+        return failed(name, f"XNAT did not import Orthanc series {series_id} (HTTP {status}: {body[:200]})")
     experiments = _results(xnat.request("GET", f"/data/projects/{project}/experiments?format=json")[1])
     if not experiments:
-        return Check(
+        return failed(
             name,
-            False,
             f"XNAT answered the import of Orthanc series {series_id} ({body.strip()[:120]!r}) "
             f"but archived no session into {project}",
         )
     experiment = _row_id(experiments[0])
     if not experiment:
-        return Check(name, False, f"XNAT listed a session in {project} with no ID: {experiments[0]!r:.120}")
+        return failed(name, f"XNAT listed a session in {project} with no ID: {experiments[0]!r:.120}")
     scans = _results(xnat.request("GET", f"/data/experiments/{experiment}/scans?format=json")[1])
     if not scans:
-        return Check(name, False, f"session {experiment} has no scan")
+        return failed(name, f"session {experiment} has no scan")
     scan = _row_id(scans[0])
     if not scan:
-        return Check(name, False, f"XNAT listed a scan of session {experiment} with no ID: {scans[0]!r:.120}")
+        return failed(name, f"XNAT listed a scan of session {experiment} with no ID: {scans[0]!r:.120}")
 
     enable = f"/xapi/projects/{project}/commands/{command_id}/wrappers/{wrapper}/enabled"
     status, body = xnat.request("PUT", enable)
     if status != 200:
-        return Check(name, False, f"could not enable dcm2niix on {project} (HTTP {status}: {body[:120]})")
+        return failed(name, f"could not enable dcm2niix on {project} (HTTP {status}: {body[:120]})")
     launch = f"/xapi/projects/{project}/commands/{command_id}/wrappers/{wrapper}/root/scan/launch"
     target = json.dumps({"scan": f"/archive/experiments/{experiment}/scans/{scan}"})
     status, body = xnat.request("POST", launch, target, "application/json")
@@ -568,7 +562,7 @@ def _convert(
     except (json.JSONDecodeError, AttributeError):
         workflow = None
     if not workflow:
-        return Check(name, False, f"the Container Service refused the launch (HTTP {status}: {body[:160]})")
+        return failed(name, f"the Container Service refused the launch (HTTP {status}: {body[:160]})")
 
     started = clock()
     last = "no container yet"
@@ -586,24 +580,23 @@ def _convert(
         if last.startswith(("Complete", "Failed", "Killed")):
             break
         if clock() - started >= timeout:
-            return Check(
+            return failed(
                 name,
-                False,
                 f"dcm2niix had not finished after {timeout}s (last status: {last}). If other conversions "
                 "are queued, `kubectl describe resourcequota` shows the cap is full; rerun when they finish",
             )
         sleep(poll)
     elapsed = int(clock() - started)
     if not last.startswith("Complete"):
-        return Check(name, False, f"dcm2niix ended {last} after {elapsed}s on scan {scan} of session {experiment}")
+        return failed(name, f"dcm2niix ended {last} after {elapsed}s on scan {scan} of session {experiment}")
 
     files = _results(
         xnat.request("GET", f"/data/experiments/{experiment}/scans/{scan}/resources/NIFTI/files?format=json")[1]
     )
     nifti = [f.get("Name", "") for f in files if str(f.get("Name", "")).endswith((".nii", ".nii.gz"))]
     if not nifti:
-        return Check(name, False, f"dcm2niix completed but scan {scan} has no NIfTI file")
-    return Check(name, True, f"a {instances}-instance series converted to {nifti[0]} in {elapsed}s")
+        return failed(name, f"dcm2niix completed but scan {scan} has no NIfTI file")
+    return passed(name, f"a {instances}-instance series converted to {nifti[0]} in {elapsed}s")
 
 
 def check_fl_client(cluster: Cluster, settle_seconds: int, sleep: Callable[[float], None] = time.sleep) -> Check:
@@ -611,47 +604,32 @@ def check_fl_client(cluster: Cluster, settle_seconds: int, sleep: Callable[[floa
     so sample twice a settle period apart: running both times, no restart in between."""
     pod = cluster.pod("fl-client")
     if not pod:
-        return Check("fl client running", False, "no running fl-client pod")
+        return failed("fl client running", "no running fl-client pod")
     first = cluster.container_state(pod)
     sleep(settle_seconds)
     second = cluster.container_state(pod)
     if first[0] and second[0] and second[1] == first[1]:
-        return Check("fl client running", True, f"{pod} steady over {settle_seconds}s (no FL server is needed)")
-    return Check("fl client running", False, f"{pod} not steady: running/restarts {first} -> {second}")
+        return passed("fl client running", f"{pod} steady over {settle_seconds}s (no FL server is needed)")
+    return failed("fl client running", f"{pod} not steady: running/restarts {first} -> {second}")
 
 
 # ── the report ──────────────────────────────────────────────────────────────────────
 
 
-def _cell(text: str) -> str:
-    """Text safe inside one markdown table cell: pipes escaped, line breaks folded to spaces."""
-    return " ".join(text.split()).replace("|", "\\|")
-
-
-def write_report(checks: list[Check], out: Path, backend: str, started: str, finished: str, stamp: str) -> bool:
-    """Write the JSON and markdown report in the node self-test's shape; return whether all passed."""
-    ok = bool(checks) and all(c.ok for c in checks)
-    report = {
-        "shape": "kubernetes",
-        "backend": backend,
-        "started": started,
-        "finished": finished,
-        "ok": ok,
-        "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail} for c in checks],
-    }
-    out.mkdir(parents=True, exist_ok=True)
-    base = out / f"selftest-k8s-{backend}-{stamp}"
-    base.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")
-    rows = "\n".join(f"| {'✅' if c.ok else '❌'} | {_cell(c.name)} | {_cell(c.detail)} |" for c in checks)
-    status = "PASSED" if ok else "FAILED"
-    md = (
-        f"# Kubernetes trust self-test: {backend}\n\n{status} · {started} → {finished}\n\n"
-        f"| | Check | Detail |\n|---|---|---|\n{rows}\n"
+def write_report(checks: list[Check], out: Path, backend: str, started: str, finished: str, stamp: str) -> None:
+    """Write the JSON and markdown report, in the shape every trust check shares."""
+    path = trust_checks.write_report(
+        checks,
+        out,
+        stem=f"selftest-k8s-{backend}-{stamp}",
+        latest=f"latest-k8s-{backend}",
+        title=f"Kubernetes trust self-test: {backend}",
+        started=started,
+        finished=finished,
+        shape="kubernetes",
+        backend=backend,
     )
-    base.with_suffix(".md").write_text(md)
-    (out / f"latest-k8s-{backend}.md").write_text(md)
-    print(f"Report: {base}.md")
-    return ok
+    print(f"Report: {path}")
 
 
 def now() -> str:
@@ -688,24 +666,31 @@ def run_checks(
 
     def record(check: Check) -> None:
         checks.append(check)
-        print(f"  ✅ {check.name}" if check.ok else f"  ❌ {check.name}: {check.detail}")
+        print(f"  ✅ {check.name}" if check.ok else f"  {check.status.glyph} {check.name}: {check.detail}")
+
+    def attempt(name: str, check: Callable[[], Check]) -> None:
+        record(trust_checks.run(name, check))
 
     def skip(name: str, reason: str) -> None:
-        checks.append(Check(name, True, f"skipped: {reason}"))
+        checks.append(skipped(name, reason))
         print(f"  ⏭️  {name}: skipped, {reason}")
 
-    record(check_release_ready(cluster))
+    attempt("release ready", lambda: check_release_ready(cluster))
     if fl_enabled:
-        record(check_fl_kit(cluster, backend))
+        attempt("fl kit delivered", lambda: check_fl_kit(cluster, backend))
     for component in API_COMPONENTS:
-        record(check_health(cluster, component))
+        attempt(f"{component} health", lambda component=component: check_health(cluster, component))
     if no_omop:
         skip("omop seeded", no_omop)
     else:
-        record(check_omop_seeded(cluster))
+        attempt("omop seeded", lambda: check_omop_seeded(cluster))
     # Orthanc's own count, not the seed values, decides whether there is a study to send: a release whose Orthanc
     # holds studies all the same (loaded another way, or a trust's own) still proves its DICOM path end to end.
-    orthanc_seeded, orthanc_auth = check_orthanc(cluster)
+    try:
+        orthanc_seeded, orthanc_auth = check_orthanc(cluster)
+    except Exception as error:  # noqa: BLE001 — as trust_checks.run: neither row could be checked
+        orthanc_seeded = trust_checks.could_not_run("orthanc seeded", error)
+        orthanc_auth = trust_checks.could_not_run("orthanc requires auth", error)
     nothing_to_send = no_orthanc and not orthanc_seeded.ok
     if nothing_to_send:
         skip("orthanc seeded", no_orthanc)
@@ -716,14 +701,17 @@ def run_checks(
         skip("xnat c-store", f"{no_orthanc}, and it reports no instance to send")
         skip("dcm2niix conversion", f"{no_orthanc}, and it reports no instance to convert")
     else:
-        record(check_cstore(smoke))
-        xnat_pod = cluster.pod("xnat-web")
-        if xnat_pod:
-            record(check_conversion(XnatPod(cluster, xnat_pod), cluster.orthanc_credentials(), conversion_timeout))
-        else:
-            record(Check("dcm2niix conversion", False, "no running xnat-web pod"))
+        attempt("xnat c-store", lambda: check_cstore(smoke))
+
+        def conversion() -> Check:
+            xnat_pod = cluster.pod("xnat-web")
+            if not xnat_pod:
+                return failed("dcm2niix conversion", "no running xnat-web pod")
+            return check_conversion(XnatPod(cluster, xnat_pod), cluster.orthanc_credentials(), conversion_timeout)
+
+        attempt("dcm2niix conversion", conversion)
     if fl_enabled:
-        record(check_fl_client(cluster, fl_settle_seconds))
+        attempt("fl client running", lambda: check_fl_client(cluster, fl_settle_seconds))
     return checks
 
 
@@ -754,7 +742,8 @@ def main(argv: list[str] | None = None) -> int:
         args.conversion_timeout,
         args.fl_settle_seconds,
     )
-    return 0 if write_report(checks, args.out, backend, started, now(), stamp) else 1
+    write_report(checks, args.out, backend, started, now(), stamp)
+    return trust_checks.exit_code(checks)
 
 
 if __name__ == "__main__":

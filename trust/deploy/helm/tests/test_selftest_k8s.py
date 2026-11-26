@@ -824,7 +824,8 @@ def test_a_release_without_sample_data_skips_what_needs_it_and_says_why():
     checks = _checks(_values(enabled=False), imaging_row="", orthanc_statistics='{"CountStudies": 0}')
     for name in ("omop seeded", "orthanc seeded", "xnat c-store", "dcm2niix conversion"):
         assert checks[name].ok, checks[name]
-        assert checks[name].detail.startswith("skipped: trustData.seed.enabled=false"), checks[name]
+        assert checks[name].status is selftest.trust_checks.Status.SKIPPED, checks[name]
+        assert checks[name].detail.startswith("trustData.seed.enabled=false"), checks[name]
     assert checks["orthanc requires auth"].ok
     assert all(c.ok for c in checks.values()), checks
 
@@ -833,7 +834,7 @@ def test_the_chart_default_without_orthanc_seeding_skips_only_the_orthanc_checks
     checks = _checks(_values(orthanc=False), orthanc_statistics='{"CountStudies": 0}')
     assert checks["omop seeded"].detail == "omop.image_occurrence holds rows"
     for name in ("orthanc seeded", "xnat c-store", "dcm2niix conversion"):
-        assert checks[name].detail.startswith("skipped: trustData.seed.orthanc=false"), checks[name]
+        assert checks[name].detail.startswith("trustData.seed.orthanc=false"), checks[name]
 
 
 @pytest.mark.parametrize(
@@ -842,10 +843,10 @@ def test_the_chart_default_without_orthanc_seeding_skips_only_the_orthanc_checks
 def test_an_orthanc_holding_studies_is_stored_and_converted_whatever_the_seed_values_say(monkeypatch, seed):
     """Orthanc's count decides, not the seed values: a broken DICOM import (FLIP#1411) on a trust whose Orthanc
     holds its own or otherwise-loaded studies must not hide behind a skip."""
-    converted = selftest.Check("dcm2niix conversion", True, "converted")
+    converted = selftest.passed("dcm2niix conversion", "converted")
     monkeypatch.setattr(selftest, "check_conversion", lambda *args: converted)
     checks = _checks(_values(**seed), smoke=lambda: (1, "❌ XNAT received nothing", ""))
-    assert checks["xnat c-store"] == selftest.Check("xnat c-store", False, "❌ XNAT received nothing")
+    assert checks["xnat c-store"] == selftest.failed("xnat c-store", "❌ XNAT received nothing")
     assert checks["dcm2niix conversion"] is converted
     assert checks["orthanc seeded"].detail == "25 studies"
 
@@ -854,21 +855,35 @@ def test_an_orthanc_holding_studies_is_stored_and_converted_whatever_the_seed_va
 
 
 def test_the_report_matches_the_node_self_tests_shape(tmp_path):
-    checks = [selftest.Check("a", True, "fine"), selftest.Check("b", False, "broken | piped\nsecond line")]
+    checks = [selftest.passed("a", "fine"), selftest.failed("b", "broken | piped\nsecond line")]
 
-    ok = selftest.write_report(
+    selftest.write_report(
         checks, tmp_path, "nvflare", "2026-10-10T10:00:00Z", "2026-10-10T10:05:00Z", "20261010T100000Z"
     )
 
-    assert ok is False
     report = json.loads((tmp_path / "selftest-k8s-nvflare-20261010T100000Z.json").read_text())
+    assert list(report) == ["shape", "backend", "started", "finished", "ok", "checks"]
     assert report["ok"] is False
     assert report["backend"] == "nvflare"
-    assert report["checks"][1] == {"name": "b", "ok": False, "detail": "broken | piped\nsecond line"}
+    assert report["checks"][1] == {
+        "name": "b",
+        "ok": False,
+        "status": "fail",
+        "detail": "broken | piped\nsecond line",
+    }
     md = (tmp_path / "latest-k8s-nvflare.md").read_text()
     assert "FAILED" in md
-    assert "| ❌ | b | broken \\| piped second line |" in md, "one row, three cells"
+    assert "| ❌ | b | broken \\| piped second line |" in md, "one row, the pipe escaped"
 
 
-def test_a_report_with_no_checks_is_not_a_pass(tmp_path):
-    assert selftest.write_report([], tmp_path, "flower", "s", "f", "x") is False
+def test_a_check_that_raises_could_not_run_and_the_rest_still_report(monkeypatch):
+    def broken_smoke():
+        raise RuntimeError("kubectl is not on PATH")
+
+    monkeypatch.setattr(selftest, "check_conversion", lambda *args: selftest.passed("dcm2niix conversion"))
+    checks = _checks(_values(orthanc=True), smoke=broken_smoke)
+
+    assert checks["xnat c-store"].status is selftest.trust_checks.Status.ERROR
+    assert "kubectl is not on PATH" in checks["xnat c-store"].detail
+    assert "fl client running" in checks, "later checks still ran"
+    assert selftest.trust_checks.exit_code(list(checks.values())) == 2
