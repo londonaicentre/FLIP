@@ -25,6 +25,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -129,21 +130,69 @@ def test_the_destination_is_emptied_before_the_copy(nvflare_kit):
     assert result.returncode == 0, result.stderr
 
     # The script wipes --dest before it copies, on both transports (tests/test_stage_to_node.py); this
-    # pins that KIT_DEST is what it is handed.
+    # pins that the kit path is what it is handed.
     assert '--dest "/opt/flip/fl-kit"' in result.stdout
     assert "stage-to-node.sh" in result.stdout
 
 
-@pytest.mark.parametrize("bad_dest", ["", "/"])
-def test_a_destination_the_wipe_must_not_touch_is_refused(nvflare_kit, bad_dest):
-    """The wipe is the one destructive step here, so its two escape values fail at parse time.
+def _kit_file(tmp_path, body: str) -> str:
+    kit_file = tmp_path / ".env.SITE.prod"
+    kit_file.write_text(body)
+    return f"KIT_FILE={kit_file}"
 
-    An empty KIT_DEST would make it ``find  -mindepth 1 -delete``, walking the working
-    directory; ``/`` would walk the node's root filesystem.
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "FL_KIT_DIR=/data/flip/fl-kit\n",
+        'FL_KIT_DIR="/data/flip/fl-kit"\n',
+        "FL_KIT_DIR=/old\nFL_KIT_DIR=/data/flip/fl-kit\n",
+        "FL_KIT_DIR=\n",
+        "FL_KIT_DIR=   \n",
+        "OTHER=1\n",
+    ],
+)
+def test_the_kit_is_staged_where_the_kit_file_says_the_chart_mounts_it(tmp_path, nvflare_kit, body):
+    """One fact, one home (FLIP#2042): stage-kit's destination is the path sync-kit renders for the same kit file."""
+    sys.path.insert(0, str(CHART_DIR))
+    try:
+        import sync_k8s_kit
+    finally:
+        sys.path.remove(str(CHART_DIR))
+    arg = _kit_file(tmp_path, body)
+    kit = {"FL_KIT_SLOT": "Trust_1", **sync_k8s_kit.read_env_vars(Path(arg.split("=", 1)[1]))}
+    rendered = re.search(r"^  kitHostPath: (.+)$", sync_k8s_kit.render_override(kit, "SITE", "eu-west-2"), re.M)
+    assert rendered is not None
+
+    result = make_n_stage_kit(nvflare_kit, "KIT=SITE", arg)
+    assert result.returncode == 0, result.stderr
+    assert f'--dest "{rendered.group(1)}"' in result.stdout
+
+
+@pytest.mark.parametrize("bad_dest", ["/", "relative/kit", "./kit"])
+def test_a_destination_the_wipe_must_not_touch_is_refused(tmp_path, nvflare_kit, bad_dest):
+    """The wipe is the one destructive step here, so a path that is not a directory of its own fails at parse time.
+
+    ``/`` would walk the node's root filesystem, and a relative path the node's working directory.
     """
-    result = make_n_stage_kit(nvflare_kit, f"KIT_DEST={bad_dest}")
+    result = make_n_stage_kit(nvflare_kit, "KIT=SITE", _kit_file(tmp_path, f"FL_KIT_DIR={bad_dest}\n"))
     assert result.returncode != 0
-    assert "KIT_DEST must not be" in result.stderr
+    assert "must be an absolute path other than /" in result.stderr
+    assert "stage-to-node.sh" not in result.stdout
+
+
+def test_a_kit_whose_file_is_missing_is_refused(tmp_path, nvflare_kit):
+    """Without it the path would be the default, and stage-kit would wipe and fill that instead."""
+    result = make_n_stage_kit(nvflare_kit, "KIT=SITE", f"KIT_FILE={tmp_path / '.env.SITE.development'}")
+    assert result.returncode != 0
+    assert "names no kit file" in result.stderr
+    assert "stage-to-node.sh" not in result.stdout
+
+
+def test_kit_dest_is_refused_naming_the_kit_file(nvflare_kit):
+    result = make_n_stage_kit(nvflare_kit, "KIT_DEST=/srv/kit")
+    assert result.returncode != 0
+    assert "FL_KIT_DIR in the kit file" in result.stderr
     assert "stage-to-node.sh" not in result.stdout
 
 
@@ -208,7 +257,7 @@ def test_the_shape_check_is_scoped_to_stage_kit():
     assert result.returncode == 0, result.stderr
 
 
-def _kit_file(tmp_path, *lines):
+def _root_kit_file(tmp_path, *lines):
     kit_file = tmp_path / ".env.ABC.prod"
     kit_file.write_text("\n".join(("FL_BACKEND=nvflare", *lines)) + "\n")
     return kit_file
@@ -216,21 +265,22 @@ def _kit_file(tmp_path, *lines):
 
 def test_the_kit_goes_under_the_kits_data_root(nvflare_kit, tmp_path):
     """A kit with FLIP_DATA_ROOT (FLIP#2113) stages to fl-kit/ under it, where a deploy with that KIT mounts."""
-    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod/")
+    kit_file = _root_kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod/")
     result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
     assert result.returncode == 0, result.stderr
     assert '--dest "/data/flip/ABC-prod/fl-kit"' in result.stdout
 
 
-def test_kit_dest_beats_the_data_root(nvflare_kit, tmp_path):
-    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod")
-    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", "KIT_DEST=/srv/kit")
+def test_the_data_root_beats_fl_kit_dir(nvflare_kit, tmp_path):
+    """As generate_values.kit_host_path: every kit from trust/.env.example sets FL_KIT_DIR, so the root wins."""
+    kit_file = _root_kit_file(tmp_path, "FL_KIT_DIR=/opt/flip/fl-kit", "FLIP_DATA_ROOT=/data/flip/ABC-prod")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
     assert result.returncode == 0, result.stderr
-    assert '--dest "/srv/kit"' in result.stdout
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in result.stdout
 
 
 def test_a_relative_data_root_is_refused(nvflare_kit, tmp_path):
-    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=data/flip")
+    kit_file = _root_kit_file(tmp_path, "FLIP_DATA_ROOT=data/flip")
     result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
     assert result.returncode != 0
     assert "FLIP_DATA_ROOT must be an absolute path" in result.stderr
@@ -238,7 +288,7 @@ def test_a_relative_data_root_is_refused(nvflare_kit, tmp_path):
 
 def test_an_inline_comment_on_the_data_root_is_dropped(nvflare_kit, tmp_path):
     """As make reads an included kit: the comment must not end up in the path."""
-    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod  # data disk")
+    kit_file = _root_kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod  # data disk")
     result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
     assert result.returncode == 0, result.stderr
     assert '--dest "/data/flip/ABC-prod/fl-kit"' in result.stdout
@@ -249,7 +299,7 @@ def test_an_inline_comment_on_the_data_root_is_dropped(nvflare_kit, tmp_path):
     [("FLIP_DATA_ROOT=/", "not / itself"), ("FLIP_DATA_ROOT=/mnt/Data Disk/flip", "one path with no spaces")],
 )
 def test_a_malformed_data_root_is_refused(nvflare_kit, tmp_path, line, error):
-    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={_kit_file(tmp_path, line)}")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={_root_kit_file(tmp_path, line)}")
     assert result.returncode != 0
     assert error in result.stderr
 
@@ -263,7 +313,7 @@ def test_a_kit_that_names_no_kit_file_is_refused(nvflare_kit, tmp_path):
 
 def test_an_exported_data_root_is_not_the_kits(nvflare_kit, tmp_path, monkeypatch):
     monkeypatch.setenv("FLIP_DATA_ROOT", "/data/other-trust")
-    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={_kit_file(tmp_path)}")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={_root_kit_file(tmp_path)}")
     assert result.returncode == 0, result.stderr
     assert '--dest "/opt/flip/fl-kit"' in result.stdout
 
@@ -282,15 +332,15 @@ def test_a_restage_elsewhere_than_the_live_release_mounts_is_refused(nvflare_kit
 
     Refused rather than followed: stage-kit empties its target, so it never takes that path from the cluster.
     """
-    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod")
+    kit_file = _root_kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod")
     helm = _helm_with_release(tmp_path, "/opt/flip/fl-kit")
     refused = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm)
     assert refused.returncode != 0
-    assert "mounts its kit at /opt/flip/fl-kit, and KIT_DEST defaults to /data/flip/ABC-prod/fl-kit" in refused.stderr
-    for dest in ("/opt/flip/fl-kit", "/srv/kit"):
-        named = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm, f"KIT_DEST={dest}")
-        assert f'--dest "{dest}"' in named.stdout, named.stderr
+    expected = "mounts its kit at /opt/flip/fl-kit, and the kit file puts it at /data/flip/ABC-prod/fl-kit"
+    assert expected in refused.stderr
+    moved = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm, "KIT_MOVED=1")
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in moved.stdout, moved.stderr
     same = make_n_stage_kit(
         nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", _helm_with_release(tmp_path, "/data/flip/ABC-prod/fl-kit")
     )
-    assert '--dest "/data/flip/ABC-prod/fl-kit"' in same.stdout, "the release's own path needs no KIT_DEST"
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in same.stdout, "the release's own path needs no KIT_MOVED"

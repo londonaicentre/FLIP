@@ -736,7 +736,8 @@ def render_override(
     vocab_dir = kit.get("OMOP_VOCAB_DIR", "").strip()
     if _is_placeholder(vocab_dir):
         vocab_dir = ""
-    # Where the operator placed this trust's kit ON THE NODE: generate_values.kit_host_path, as KIT_DEST.
+    # Where the operator placed this trust's kit ON THE NODE: generate_values.kit_host_path, the path
+    # the chart Makefile's stage-kit copies to (FLIP#2042), so one kit field serves both shapes.
     kit_host_path = _generate_values().kit_host_path(kit)
 
     lines = [

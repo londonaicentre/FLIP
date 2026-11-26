@@ -309,4 +309,4 @@ def test_a_first_deploy_mounts_the_kit_under_the_kits_data_root(tmp_path):
     ).stdout.replace("\\\n", " ")
     install = next(row for row in out.splitlines() if "upgrade --install" in row)
     assert "--set flClient.kitHostPath=/data/flip/ABC-stag/fl-kit" in install, install
-    assert '--default "/data/flip/ABC-stag/fl-kit"' in install, install
+    assert '--kit-path "/data/flip/ABC-stag/fl-kit"' in out, out

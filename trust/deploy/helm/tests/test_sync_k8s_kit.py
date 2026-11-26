@@ -264,7 +264,7 @@ def test_render_override_kit_host_path(fl_kit_dir, expected):
     `hostPath type check failed`, with nothing naming the staged path it disagrees with.
 
     A kit with no FL_KIT_DIR still renders the canonical path — the same value every shipped kit file sets, the
-    Ansible EC2/on-prem plays stage to, and the chart Makefile's KIT_DEST defaults to. Any other fallback would
+    Ansible EC2/on-prem plays stage to, and the chart Makefile's stage-kit falls back to. Any other fallback would
     render a path nothing staged to (FLIP#1009 review). An empty FL_KIT_DIR (a commented-out or cleared value) must
     fall back too rather than emit `kitHostPath:` with no value — Helm would read that as null and the chart's
     `required` guard would fire at deploy time instead of here.

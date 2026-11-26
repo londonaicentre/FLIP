@@ -335,26 +335,27 @@ the FL client starts.
   Flower ``certificates/`` and ``keys/`` with this slot's credential only. The target reads the backend from that
   shape and refuses a folder with neither shape or both (``FL_BACKEND=nvflare|flower`` overrides).
 - ``KUBE_CONTEXT`` is required, so the kit never lands in whichever cluster ``kubectl`` happens to point at.
-- The kit goes to ``KIT_DEST`` on the node, and the deploy targets mount that same path, whatever the kit's
-  ``FL_KIT_DIR`` says. It defaults to ``fl-kit/`` under the kit's ``FLIP_DATA_ROOT``, else ``/opt/flip/fl-kit``.
-  ``KIT`` and ``HUB`` name the kit file the root is read from, so pass the same ones here and at the deploy; a
-  ``KIT`` that names no kit file is refused. Any previous kit there is removed first. To use another path, pass
-  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the first deploy. Once the release exists, deploys and upgrades
-  keep the path it already mounts, even after the kit gains a ``FLIP_DATA_ROOT``, and ``stage-kit`` refuses to stage
-  anywhere else unless you name the path: ``KIT_DEST=<the mounted path>`` re-stages in place, and a new
-  ``KIT_DEST`` passed to ``stage-kit`` and to the next deploy moves the kit.
+- The kit goes to the path the kit file names: ``fl-kit/`` under its ``FLIP_DATA_ROOT``, else its ``FL_KIT_DIR``
+  (``/opt/flip/fl-kit`` in every kit as shipped). Every deploy and upgrade of that kit mounts the same path, so pass
+  the same ``KIT`` and ``HUB`` here and at the deploy; a ``KIT`` that names no kit file is refused. Any previous kit
+  there is removed first. To use another path, set it in the kit file before you stage. To move a deployed trust's
+  kit (a ``FLIP_DATA_ROOT`` added to its kit file moves it too), change the kit file, then pass ``KIT_MOVED=1`` to
+  ``stage-kit`` and to the next deploy or upgrade: without it, ``stage-kit`` refuses to stage anywhere else than the
+  release mounts, and a deploy that would change that path stops before it changes anything. Once the FL client is
+  running from the new path, delete the old folder on the node yourself: ``stage-kit`` clears only the folder it
+  copies to, and the old one still holds the kit's private key.
 - ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
   to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
 .. note::
 
    On a kind development cluster ``stage-kit`` copies with ``docker cp``. On any other cluster (k3s, a VM) it starts
-   a short-lived root pod on the node, with ``KIT_DEST`` mounted as a ``hostPath``, and copies with
+   a short-lived root pod on the node, with the kit's path mounted as a ``hostPath``, and copies with
    ``kubectl cp``. That needs no docker or shell on the host, but RBAC to read the nodes and to create and exec
    into that pod, which is as good as root on the node. If the cluster will not run the pod, ``stage-kit`` prints
    the same steps as one command to run as root on the node. A namespace under Pod Security ``baseline`` refuses
    every ``hostPath``, the chart's own kit mount included, so use the kit Secret below there. Otherwise place the
-   kit at ``KIT_DEST`` by your site's own means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one
+   kit at that path by your site's own means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one
    else. On a host
    shared with people, check that uid isn't a person's account: whoever holds it can read the kit's private key.
 
@@ -595,10 +596,10 @@ overlay win for the keys they set. Do not pass settings with
      - Default
      - What it does
    * - ``flClient.kitHostPath``
-     - ``fl-kit/`` under the kit's ``FLIP_DATA_ROOT``, else ``/opt/flip/fl-kit`` (set by the Makefile deploys)
+     - ``fl-kit/`` under the kit's ``FLIP_DATA_ROOT``, else its ``FL_KIT_DIR``, else ``/opt/flip/fl-kit`` (set by the Makefile deploys)
      - Path **on the node** holding the FL kit. Required whenever the FL client is enabled with the default
-       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). The first deploy sets it
-       from ``KIT_DEST``, over the kit's ``FL_KIT_DIR``, and later deploys keep it (see Step 3).
+       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). A deploy that names a
+       kit takes it from the kit file: ``fl-kit/`` under ``FLIP_DATA_ROOT``, else ``FL_KIT_DIR`` (see Step 3).
    * - ``flBackend``
      - from the kit
      - ``nvflare`` or ``flower``.

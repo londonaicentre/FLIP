@@ -71,16 +71,18 @@ def fl_client_pin(env: dict) -> str:
 
 
 # The canonical FLIP kit path on the node: every shipped kit sets FL_KIT_DIR to it, the Ansible
-# EC2/on-prem plays stage to it, and the chart Makefile's KIT_DEST defaults to it without a FLIP_DATA_ROOT.
+# EC2/on-prem plays stage to it, and the chart Makefile's stage-kit falls back to it for a kit that sets
+# neither FLIP_DATA_ROOT nor FL_KIT_DIR.
 DEFAULT_KIT_HOST_PATH = "/opt/flip/fl-kit"
 
 
 def kit_host_path(env: dict[str, str]) -> str:
     """flClient.kitHostPath for this kit, where the chart Makefile's stage-kit puts the kit and its deploys mount it.
 
-    fl-kit/ under the kit's FLIP_DATA_ROOT (FLIP#2113), as KIT_DEST: the deploys ignore FL_KIT_DIR, which every
-    kit made from trust/.env.example sets. Without a root, FL_KIT_DIR, else DEFAULT_KIT_HOST_PATH. Used by both
-    generators of a Helm override (this script and sync_k8s_kit.render_override), so they agree.
+    fl-kit/ under the kit's FLIP_DATA_ROOT (FLIP#2113), over FL_KIT_DIR, which every kit made from
+    trust/.env.example sets. Without a root, FL_KIT_DIR, else DEFAULT_KIT_HOST_PATH. The Makefile's KIT_PATH reads
+    the kit the same way (FLIP#2042), and both generators of a Helm override (this script and
+    sync_k8s_kit.render_override) call this, so all three agree.
     """
     root = env.get("FLIP_DATA_ROOT", "").strip().rstrip("/")
     return f"{root}/fl-kit" if root else (env.get("FL_KIT_DIR", "").strip() or DEFAULT_KIT_HOST_PATH)

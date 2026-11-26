@@ -640,7 +640,7 @@ spec:
           # `type: Directory` makes a missing path a scheduling failure that names the
           # path, rather than an empty dir the client fails against much later.
           hostPath:
-            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath to the path stage-kit printed (its KIT_DEST: fl-kit/ under the kit's FLIP_DATA_ROOT, else /opt/flip/fl-kit)" .Values.flClient.kitHostPath | quote }}
+            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>` and deploy with the kit (sync-kit renders this from the kit file: fl-kit/ under its FLIP_DATA_ROOT, else its FL_KIT_DIR), or --set flClient.kitHostPath=/opt/flip/fl-kit" .Values.flClient.kitHostPath | quote }}
             type: Directory
         {{- end }}
         {{- if $governed }}
