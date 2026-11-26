@@ -135,26 +135,26 @@ def test_sync_k8s_kit_runs_with_the_dependencies_it_declares():
     assert '# dependencies = ["pyyaml>=6.0.3"]' in script
 
 
-# A stand-in for kubectl, for xnat-db-migrate-dump (FLIP#1812): every call is logged to $CALLS,
-# `get` finds the xnat-db pod (or StatefulSet) unless $NO_DB, `exec … cat …PG_VERSION` answers
-# $CURRENT, `exec -i` logs which script came on stdin, and `rollout` times out under $ROLLOUT_FAILS.
+# A stand-in for kubectl, for the dump verbs (FLIP#1812): every call is logged to $CALLS,
+# `get` finds the xnat-db pod (or StatefulSet) unless $NO_DB, `exec -i` logs which script came on
+# stdin, and `rollout` times out under $ROLLOUT_FAILS.
 STUB_KUBECTL = r"""#!/bin/bash
 echo "$*" >> "$CALLS"
 case "$1" in
   get) [[ "$*" == *component=xnat-db* ]] && [ -z "$NO_DB" ] && echo pod/trust-release-flip-trust-xnat-db-0; exit 0 ;;
   exec)
     if [ "$2" = -i ]; then
-      [[ "$(cat)" == *"pg_dump -Fc"* ]] && echo "stdin: migrate-dump" >> "$CALLS"
-      [ -z "$DUMP_FAILS" ]; exit
+      [[ "$(cat)" == *"xnat-migrate.dump"* ]] && echo "stdin: drop-unused-dump" >> "$CALLS"
+      exit
     fi
-    echo "$CURRENT"; exit 0 ;;
+    exit 0 ;;
   rollout) [ -z "$ROLLOUT_FAILS" ]; exit ;;
 esac
 exit 0
 """
 
 
-def _migrate_dump(tmp_path: Path, fails: bool = False, target: str = "xnat-db-migrate-dump", **env: str) -> list[str]:
+def _make(tmp_path: Path, target: str, fails: bool = False, **env: str) -> list[str]:
     stub = tmp_path / "bin" / "kubectl"
     stub.parent.mkdir()
     stub.write_text(STUB_KUBECTL)
@@ -170,46 +170,27 @@ def _migrate_dump(tmp_path: Path, fails: bool = False, target: str = "xnat-db-mi
     return calls.read_text().splitlines() if calls.exists() else []
 
 
-def test_an_older_xnat_db_is_dumped_after_xnat_web_stops(tmp_path):
-    calls = _migrate_dump(tmp_path, CURRENT="12")
-    scale = next(i for i, c in enumerate(calls) if c.startswith("scale deployment") and "--replicas=0" in c)
-    dump = next(i for i, c in enumerate(calls) if c.startswith("exec -i") and c.endswith("sh -s 16"))
-    assert "component=xnat-web" in calls[scale], calls
-    assert scale < dump, calls
-    assert calls[dump + 1] == "stdin: migrate-dump", calls
-
-
-@pytest.mark.parametrize("env", [{"CURRENT": "16"}, {"CURRENT": "12", "NO_DB": "1"}], ids=["same-major", "no-xnat-db"])
-def test_xnat_db_migrate_dump_is_a_no_op_otherwise(tmp_path, env):
-    calls = _migrate_dump(tmp_path, **env)
-    assert not any(c.startswith(("scale", "exec -i")) for c in calls), calls
-
-
-def test_a_failed_dump_starts_xnat_web_again(tmp_path):
-    """Nothing was upgraded, so the site must not stay down on a full disk."""
-    calls = _migrate_dump(tmp_path, fails=True, CURRENT="12", DUMP_FAILS="1")
-    assert calls[-1].startswith("scale deployment"), calls
-    assert calls[-1].endswith("--replicas=1"), calls
-
-
-def test_a_major_that_is_not_a_number_is_refused_not_read_as_already_moved(tmp_path):
-    calls = _migrate_dump(tmp_path, fails=True, CURRENT="")
-    assert not any(c.startswith(("scale", "exec -i")) for c in calls), calls
-
-
-def test_upgrade_trust_k8s_takes_the_migration_dump_before_the_helm_upgrade():
+def test_the_helm_upgrade_verb_takes_no_dump_of_its_own(tmp_path):
+    """The chart's pre-upgrade hook takes it (FLIP#2071), so every Helm path gets it — including
+    the auto-upgrade agent, which cannot exec into a pod. A second implementation here would be a
+    second thing to keep in step with the image's restore."""
     makefile = (CHART_DIR / "Makefile").read_text()
     apply = makefile.split("\n_upgrade-trust-k8s-apply:\n", 1)[1].split("\n\n", 1)[0]
-    assert apply.index("sync-kit") < apply.index("xnat-db-migrate-dump") < apply.index("$(MAKE) deploy"), apply
-    # A release pinning the old xnat-db keeps it live, so the dump it did not use is dropped.
-    assert apply.index("$(MAKE) deploy") < apply.index("xnat-db-drop-unused-dump"), apply
-    # A failed deploy can leave it live too.
-    deploy = next(line for line in apply.replace("\\\n", "").splitlines() if "$(MAKE) deploy" in line)
-    assert deploy.endswith("|| { $(MAKE) xnat-db-drop-unused-dump AFTER_FAILED_DEPLOY=1; exit 1; }"), deploy
+    assert "xnat-db-migrate-dump" not in apply
+    assert "\nxnat-db-migrate-dump:" not in makefile
+    assert "migrateDump" in (CHART_DIR / "values.yaml").read_text()
+
+
+def test_the_deploy_path_does_not_switch_the_dump_hook_off(tmp_path):
+    """`deploy-release` passes xnat.initJob.enabled=false; nothing may disable the pre-upgrade hook,
+    or `--reset-then-reuse-values` would carry that forward to every later upgrade."""
+    release = (CHART_DIR / "Makefile").read_text().split("\ndeploy-release:", 1)[1].split("\n\n", 1)[0]
+    assert "--set xnat.initJob.enabled=false" in release
+    assert "migrateDump" not in release
 
 
 def _drop_unused_dump(tmp_path: Path, fails: bool = False, **env: str) -> list[str]:
-    return _migrate_dump(tmp_path, fails=fails, target="xnat-db-drop-unused-dump", **env)
+    return _make(tmp_path, "xnat-db-drop-unused-dump", fails=fails, **env)
 
 
 def test_the_unused_dump_is_dropped_only_once_xnat_db_has_rolled_out(tmp_path):

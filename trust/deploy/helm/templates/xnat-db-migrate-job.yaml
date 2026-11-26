@@ -1,0 +1,333 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- /*
+Dump the xnat database before an upgrade moves xnat-db to a newer PostgreSQL major (FLIP#2071).
+
+PostgreSQL cannot open a cluster made by an older major, so the new xnat-db image keeps its cluster
+in pg<major>/ under the volume and restores, on its first initdb, a dump left at the volume root by
+whoever took it (trust/xnat/postgres/restore-xnat-dump.sh). Taking it used to be a Makefile step --
+`kubectl exec` into the running xnat-db -- which no in-cluster upgrade can do: the auto-upgrade
+agent (FLIP#1644) holds no `pods/exec`, and must not. It is a pre-upgrade hook instead, so a plain
+`helm upgrade` of the published chart is a complete upgrade on any path.
+
+Nothing is dumped unless the volume says so. The init container reads the volume (the image's own
+$PGDATA and $PG_MAJOR are the target) and writes `dump` or `skip` to an emptyDir both containers
+read; on a pinned xnat (xnat.image.pin) the image is the running one, so every upgrade is a `skip`.
+
+Why two containers rather than one: the dump needs the xnat-db image (its newer pg_dump is what can
+read the older server), which carries no kubectl and no curl, and stopping xnat-web needs the
+Kubernetes API. They run side by side and hand over through the emptyDir:
+
+  init  decide         writes plan = dump | skip
+  main  stop-xnat-web  reads the Deployment's replicas, scales it to 0, waits for the pods to go,
+                       writes `go`, then waits for `dump-result` -- and on anything but `ok`
+                       (a failed dump, a timeout) scales xnat-web back to what it was
+  main  dump           waits for `go` (and gives up on `abort`), dumps over the network as uid 70,
+                       verifies the dump with `pg_restore -l`, renames it into place, writes
+                       `dump-result`
+
+So the site is only ever down while the dump is being taken: any failure fails this Job, which
+fails the pre-upgrade hook and with it the `helm upgrade`, leaving the trust on the old release
+with xnat-web back up. On success xnat-web stays at 0 and the upgrade itself brings it back,
+because templates/xnat-web.yaml renders an explicit `replicas: 1`.
+
+The pod needs the xnat-db PVC, which is ReadWriteOnce, so it is pinned to the node the xnat-db pod
+is on. The ServiceAccount, Role, RoleBinding, ConfigMap and NetworkPolicy below are hooks of the
+same phase at a lower weight: they do not exist in the release before the upgrade that introduces
+them, so they have to be created by the same hook run that needs them. The Role is deliberately
+tiny -- patching exactly one Deployment by name, and listing pods -- and every verb in it is
+already held by the upgrade agent's own Role (templates/upgrade-agent.yaml), which Kubernetes
+requires: RBAC refuses an identity that grants permissions it does not itself hold.
+*/}}
+{{- if and .Values.xnat.enabled .Values.xnat.db.enabled .Values.xnat.db.persistence.enabled .Values.xnat.db.migrateDump.enabled }}
+{{- $fullname := include "flip-trust.fullname" . }}
+{{- $ns := include "flip-trust.namespace" . }}
+{{- $name := printf "%s-xnat-db-migrate" $fullname }}
+{{- $secret := ternary (printf "%s-secrets" $fullname) .Values.secrets.existingName .Values.secrets.create }}
+{{- $dbImage := printf "%s:%s" .Values.xnat.db.image.repository (include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.db.image.tag)) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-db-migrate
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  # Kept as files rather than inlined so they can be read, linted and tested on their own; the
+  # chart is packaged by itself, so they travel with it (.helmignore ships config/).
+  xnat-db-migrate-decide.sh: |
+{{ .Files.Get "config/xnat-db-migrate-decide.sh" | indent 4 }}
+  xnat-db-migrate-dump.sh: |
+{{ .Files.Get "config/xnat-db-migrate-dump.sh" | indent 4 }}
+  xnat_db_migrate_scale.py: |
+{{ .Files.Get "config/xnat_db_migrate_scale.py" | indent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-db-migrate
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-db-migrate
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  # One Deployment, by name, read and scaled. No `create`, no `delete`, nothing else in the
+  # namespace, and no `secrets`: the two passwords arrive as env from the Secret the kubelet
+  # mounts without consulting this account.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["{{ $fullname }}-xnat-web"]
+    verbs: ["get", "patch"]
+  # RBAC cannot scope a list to a name, so this is the one unscoped verb: reading which pods exist
+  # is how the hook knows xnat-web is really gone and not just terminating.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-db-migrate
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $ns }}
+{{- if .Values.networkPolicies.enabled }}
+---
+# The namespace is default-deny ingress with a port-scoped egress policy, and the API server's real
+# port (6443 on kind/k3s/kubeadm) is not normally on it. Same shape and the same value as the
+# upgrade agent's policy, selecting this Job's pod alone.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-apiserver
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-db-migrate
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: xnat-db-migrate
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+      ports:
+{{- range .Values.autoUpgrade.apiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+{{- end }}
+  policyTypes:
+    - Egress
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-db-migrate
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  # No retry: a second attempt would start from a half-moved volume, and the first attempt's log is
+  # the only record of why it stopped.
+  backoffLimit: 0
+  # The backstop under the two waits inside the pod, which are the path: both are bounded by
+  # migrateDump.timeoutSeconds, and the scaler restores xnat-web when its wait expires. Only a pod
+  # killed here leaves xnat-web down, and the operator is told so by the failed hook.
+  activeDeadlineSeconds: {{ add (int .Values.xnat.db.migrateDump.timeoutSeconds) 300 }}
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: xnat-db-migrate
+    spec:
+      serviceAccountName: {{ $name }}
+      restartPolicy: Never
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      # The xnat-db PVC is ReadWriteOnce: on a multi-node cluster this pod only gets it where the
+      # xnat-db pod already has it.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "flip-trust.selectorLabels" . | nindent 18 }}
+                  app.kubernetes.io/component: xnat-db
+              topologyKey: kubernetes.io/hostname
+      securityContext:
+        # postgres in the xnat-db image, and the owner of everything on that volume.
+        runAsUser: 70
+        runAsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: decide
+          image: "{{ $dbImage }}"
+          imagePullPolicy: {{ .Values.xnat.db.image.pullPolicy }}
+          command: ["/bin/sh", "/scripts/xnat-db-migrate-decide.sh"]
+          env:
+            - name: PLAN_DIR
+              value: /plan
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: plan
+              mountPath: /plan
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              {{- with .Values.xnat.db.persistence.pgdataSubdir }}
+              subPath: {{ . }}
+              {{- end }}
+          resources:
+            {{- toYaml .Values.xnat.db.migrateDump.resources | nindent 12 }}
+      containers:
+        - name: stop-xnat-web
+          # FLIP's mirror of the uv image, the same digest-pinned one the seed hook runs
+          # (trust/deploy/mirror-images.manifest). Only its python3 is used: the script is
+          # standard library, so the hook installs nothing.
+          image: "{{ .Values.xnat.db.migrateDump.image.repository }}{{ with .Values.xnat.db.migrateDump.image.digest }}@{{ . }}{{ else }}:{{ $.Values.xnat.db.migrateDump.image.tag }}{{ end }}"
+          imagePullPolicy: {{ .Values.xnat.db.migrateDump.image.pullPolicy }}
+          command:
+            - python3
+            - /scripts/xnat_db_migrate_scale.py
+            - --namespace
+            - {{ $ns }}
+            - --deployment
+            - {{ $fullname }}-xnat-web
+            - --selector
+            - {{ printf "app.kubernetes.io/instance=%s,app.kubernetes.io/component=xnat-web" .Release.Name | quote }}
+            - --plan-dir
+            - /plan
+            - --timeout-seconds
+            - {{ .Values.xnat.db.migrateDump.timeoutSeconds | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: plan
+              mountPath: /plan
+          resources:
+            {{- toYaml .Values.xnat.db.migrateDump.resources | nindent 12 }}
+        - name: dump
+          image: "{{ $dbImage }}"
+          imagePullPolicy: {{ .Values.xnat.db.image.pullPolicy }}
+          command: ["/bin/sh", "/scripts/xnat-db-migrate-dump.sh"]
+          env:
+            - name: PLAN_DIR
+              value: /plan
+            - name: TIMEOUT_SECONDS
+              value: {{ .Values.xnat.db.migrateDump.timeoutSeconds | quote }}
+            - name: PGHOST
+              value: xnat-db
+            - name: PGPORT
+              value: {{ .Values.xnat.db.service.port | quote }}
+            - name: POSTGRES_DB
+              value: "xnat"
+            - name: XNAT_DATASOURCE_USERNAME
+              value: {{ .Values.xnat.db.datasourceUsername | quote }}
+            # The superuser's password, as xnat-db.yaml reads it. The app role's password is the
+            # fallback for a volume first initialised with POSTGRES_USER=xnat, where there is no
+            # `postgres` role and `xnat` is the superuser (FLIP#1666).
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: xnat-datasource-admin-password
+            - name: XNAT_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: xnat-datasource-password
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: plan
+              mountPath: /plan
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              {{- with .Values.xnat.db.persistence.pgdataSubdir }}
+              subPath: {{ . }}
+              {{- end }}
+          resources:
+            {{- toYaml .Values.xnat.db.migrateDump.resources | nindent 12 }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ $name }}
+            defaultMode: 0555
+        - name: plan
+          emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            # The StatefulSet's volumeClaimTemplate for its only replica.
+            claimName: data-{{ $fullname }}-xnat-db-0
+{{- end }}

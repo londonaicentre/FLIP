@@ -104,7 +104,7 @@ def test_the_agent_alone_may_reach_the_api_server():
 
     The API ports go to a policy that selects the agent, never to the namespace-wide egress policy.
     """
-    policies = _policies("--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=false")
+    policies = _policies("--set", "autoUpgrade.enabled=true")
     agent = policies["flip-trust-upgrade-agent-apiserver"]
     assert agent["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/component"] == "upgrade-agent"
     assert agent["spec"]["policyTypes"] == ["Egress"]
@@ -117,7 +117,5 @@ def test_no_api_server_path_without_the_agent():
 
 
 def test_api_server_ports_are_configurable():
-    policies = _policies(
-        "--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=false", "--set", "autoUpgrade.apiServerPorts={8443}"
-    )
+    policies = _policies("--set", "autoUpgrade.enabled=true", "--set", "autoUpgrade.apiServerPorts={8443}")
     assert _ports(policies["flip-trust-upgrade-agent-apiserver"]) == {8443}

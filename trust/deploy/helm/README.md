@@ -262,27 +262,36 @@ from `dicom.log` and the container log alike. See
 #### Upgrading: xnat-db moves from PostgreSQL 12 to 16 (FLIP#1812)
 
 PostgreSQL 16 cannot open a PostgreSQL 12 cluster, so this upgrade has to dump and restore XNAT's
-database. `make upgrade-trust-k8s` does it: before `helm upgrade`, `xnat-db-migrate-dump` scales
-`xnat-web` to zero and writes a dump of the `xnat` database beside the running cluster on the
-`xnat-db` volume. The new image keeps its cluster in `pg16/` below the mount, restores the dump
-there on its first start before it accepts connections, and leaves the PostgreSQL 12 cluster in
-place for a rollback. `make xnat-db-remove-old-cluster` shows it, and `YES=1` deletes it once the
+database. The chart does it: a **pre-upgrade hook** (`xnat.db.migrateDump`,
+`templates/xnat-db-migrate-job.yaml`) reads the volume, and when the release's xnat-db image is on a
+newer major it scales `xnat-web` to zero and writes a dump of the `xnat` database beside the running
+cluster on the `xnat-db` volume. The new image keeps its cluster in `pg16/` below the mount, restores
+the dump there on its first start before it accepts connections, and leaves the PostgreSQL 12 cluster
+in place for a rollback. `make xnat-db-remove-old-cluster` shows it, and `YES=1` deletes it once the
 site is confirmed.
+
+Being a hook, it is taken by every Helm path — `make upgrade-trust-k8s`, a plain `helm upgrade` of the
+published chart, and the auto-upgrade agent — and needs no `pods/exec`. If the dump fails, the hook
+scales `xnat-web` back to where it was and fails, so the `helm upgrade` stops and the trust keeps
+serving on the old release; if it succeeds, `xnat-web` stays at zero and the upgrade itself brings it
+back onto the restored database. The hook does nothing when the volume is already on the image's
+major — so an ordinary release upgrade, and any upgrade with `xnat.image.pin` set, passes straight
+through it.
 
 `xnat.db.persistence.pgdataSubdir` keeps its value: it now names the part of the volume xnat-db
 mounts (`subPath`) rather than setting `PGDATA`, so `pgdata` on AKS and EKS still finds the old
-cluster where it was. A plain `helm upgrade` takes no dump. The new xnat-db then refuses to start beside the old cluster, rather than start XNAT empty. To recover:
+cluster where it was. With the hook switched off (`xnat.db.migrateDump.enabled=false`) no dump is
+taken, and the new xnat-db then refuses to start beside the old cluster rather than start XNAT
+empty. To recover:
 
 1. Roll back with `xnat.image.pin` (or `XNAT_TAG` in the kit) and redeploy.
 2. Delete the `xnat-db` pod. The StatefulSet is `OrderedReady`, so Kubernetes does not replace a crash-looping pod with the pinned image on its own.
-3. Once xnat-db is up on the old release, remove the pin and upgrade through `upgrade-trust-k8s`. With the pin left in, the upgrade keeps xnat-db on 12.
+3. Once xnat-db is up on the old release, remove the pin and upgrade again. With the pin left in, the upgrade keeps xnat-db on 12.
 
-The same holds after a rollback: the old cluster has run again, so
-the earlier dump and `pg16/` are out of date, and xnat-db refuses them until `upgrade-trust-k8s`
-takes a new dump, moving that `pg16/` aside as `pg16.replaced-<timestamp>/` for
-`xnat-db-remove-old-cluster` to delete. Resume an upgrade that failed or was interrupted with
-`upgrade-trust-k8s` too, never a plain `helm upgrade`: xnat-db may have run on since the dump was
-taken. The first start's restore runs inside the postStart hook's wait, which is now an hour.
+After a rollback the old cluster has run again, so the earlier dump and `pg16/` are out of date and
+xnat-db refuses them; the next upgrade's hook takes a fresh dump and moves that `pg16/` aside as
+`pg16.replaced-<timestamp>/` for `xnat-db-remove-old-cluster` to delete. The first start's restore
+runs inside the postStart hook's wait, which is now an hour.
 
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
 
@@ -1179,6 +1188,10 @@ make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1
   them), and the agent could not patch the chart's Secret anyway. The chart refuses `autoUpgrade.enabled`
   together with `secrets.create`.
 - **`autoUpgrade.enabled=true`.**
+
+A trust that runs XNAT needs nothing extra: the agent passes `--set xnat.initJob.enabled=true`, so
+`xnat-init` runs on every upgrade, and the `xnat-db` dump a PostgreSQL major change needs is a
+pre-upgrade hook of the chart (below), not a step of the Makefile.
 
 `preflight` refuses a deploy whose driver cannot see the live release (`release_driver.py
 --deploy-driver`): `helm upgrade --install` would otherwise put a second release on top of the running one.

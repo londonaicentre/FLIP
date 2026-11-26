@@ -88,6 +88,11 @@ VERIFY_POLL_S = 10
 # health wait gets only what is left of it, less this reserve for the terminal report
 # (REPORT_ATTEMPTS x HTTP_TIMEOUT_S plus the retry waits is about 90 s).
 REPORT_RESERVE_S = 120
+# How long helm may wait on each hook of the upgrade: the pre-upgrade xnat-db dump and the post-upgrade
+# xnat-init (FLIP#2071), the same budget `make -C trust/deploy/helm upgrade-trust-k8s` gives xnat-init
+# (HELM_TIMEOUT). Helm's own default is 5 minutes, less than a first XNAT start can take. Capped by
+# what is left of the agent's budget, keeping VERIFY_TIMEOUT_S for the rollout wait and the verify after.
+HELM_HOOK_TIMEOUT_S = 1800
 _deadline: float | None = None
 
 
@@ -349,6 +354,14 @@ def cluster_state(cluster: Cluster) -> Local:
     return Local(current or health.version, health)
 
 
+def helm_timeout_s(now: Callable[[], float] = time.monotonic) -> int:
+    """Seconds helm may wait on each hook: HELM_HOOK_TIMEOUT_S, less if the agent's budget is shorter."""
+    budget = remaining_budget(now)
+    if budget is None:
+        return HELM_HOOK_TIMEOUT_S
+    return max(60, min(HELM_HOOK_TIMEOUT_S, int(budget) - 2 * VERIFY_TIMEOUT_S))
+
+
 def cluster_upgrade(cluster: Cluster, tag: str) -> tuple[bool, str]:
     """Pull the published chart for ``tag`` and move the release onto it, keeping the live values.
 
@@ -359,6 +372,11 @@ def cluster_upgrade(cluster: Cluster, tag: str) -> tuple[bool, str]:
     the stored overrides on top (Helm 3.14+; the agent image pins 3.17.3). Only
     ``global.image.tag`` moves — the per-image pins (omopDb, orthanc, xnat, flClient) are deliberate
     settings the kit owns, and an upgrade must not quietly reset them.
+
+    ``xnat.initJob.enabled=true`` (FLIP#2071): ``make deploy`` stores it as false because the Makefile
+    runs xnat-init itself after the rollout, and the stored overrides would otherwise carry that into
+    every agent upgrade, so a release that changes what ``configure-xnat.sh`` sets up would never reach
+    the trust. With it on, the post-upgrade hook runs and helm waits for it (``--timeout``).
 
     No ``--install``: a release the configmap driver cannot see (one still recorded as Secrets) has
     to fail loudly here rather than be installed a second time underneath the running one.
@@ -385,6 +403,10 @@ def cluster_upgrade(cluster: Cluster, tag: str) -> tuple[bool, str]:
                 "--reset-then-reuse-values",
                 "--set",
                 f"global.image.tag={tag}",
+                "--set",
+                "xnat.initJob.enabled=true",
+                "--timeout",
+                f"{helm_timeout_s()}s",
                 "--history-max",
                 "10",
             ],

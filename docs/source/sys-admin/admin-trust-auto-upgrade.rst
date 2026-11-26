@@ -375,16 +375,14 @@ admin-only: a Trust Admin's own Trust is on My Trust.
 Turning it on or off
 ********************
 
-.. warning::
-
-   Until FLIP#2071 lands, the agent runs neither ``xnat-init``
-   nor the xnat-db dump that must precede a PostgreSQL major-version change. **Do not switch it on for a Trust that
-   runs XNAT** — which is every production Trust. The chart refuses ``autoUpgrade.enabled`` while ``xnat.enabled`` is
-   set, so a deploy with the agent on fails until then. Upgrade those Trusts by hand (:ref:`admin-upgrading-sites`).
-
 - **Defaults.** The agent is off in the chart and the switch is off on the hub, so every Trust starts **off** — no
   live site is surprised. The operator enables the agent at deploy time, then a Trust Admin opts in from My Trust,
   and the setting can be turned off there at any time.
+- **XNAT.** A Trust that runs XNAT is upgraded like any other. The agent runs ``xnat-init`` on every upgrade, so a
+  release that changes XNAT's configuration takes effect; and before a release that moves ``xnat-db`` to a new
+  PostgreSQL major, the chart stops ``xnat-web`` and dumps the ``xnat`` database beside the running cluster for the
+  new server to restore on its first start. If that dump fails, nothing is upgraded: ``xnat-web`` is started again on
+  the old server, the attempt is reported as *Failed*, and the Trust stays on the release it was on.
 - **What the agent checks first.** Before the window or the job list it looks at the site itself: ``trust-api``'s
   ``/health`` answering, no dead tasks, and a hub key that still matches. A Trust that fails any of those is reported
   with the failing check, rather than being upgraded on top of a problem the upgrade did not cause. The full order

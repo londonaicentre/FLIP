@@ -348,19 +348,19 @@ populated data, and the API deployments roll onto the new images.
 ``KUBE_CONTEXT`` defaults to kubectl's current context; name it on a workstation with several clusters.
 
 **PostgreSQL major upgrades** (for example 12 to 16 with FLIP#1812). When a release moves ``xnat-db`` to a newer
-PostgreSQL major, the command:
+PostgreSQL major, the chart's own pre-upgrade hook:
 
 #. scales ``xnat-web`` to zero and dumps the ``xnat`` database onto the ``xnat-db`` volume;
-#. runs ``helm upgrade``, which starts the new ``xnat-db``. It restores the dump into a fresh cluster before XNAT can
-   connect, and ``xnat-web`` comes back.
+#. lets ``helm upgrade`` start the new ``xnat-db``. It restores the dump into a fresh cluster before XNAT can
+   connect, and ``xnat-web`` comes back with the upgrade.
 
 The old cluster stays on the volume for a rollback until
 ``make -C trust/deploy/helm xnat-db-remove-old-cluster [YES=1]`` removes it.
 
-Always use ``upgrade-trust-k8s``, including to resume an upgrade that failed or was interrupted. A plain ``helm
-upgrade`` takes no dump, so the new ``xnat-db`` refuses to start beside the old cluster. It also refuses after a
-rollback, when the old cluster has run again since the dump was taken; run ``upgrade-trust-k8s`` again to take a new
-dump.
+Because the dump is a chart hook, every Helm path takes it — ``upgrade-trust-k8s``, a plain ``helm upgrade`` of the
+published chart, and automatic upgrades (:ref:`admin-trust-auto-upgrade`). If it fails, ``xnat-web`` is started again
+on the old server and the upgrade stops, leaving the site on the release it was on. After a rollback the old cluster
+has run again since the dump was taken, so ``xnat-db`` refuses that dump; the next upgrade takes a fresh one.
 
 If ``xnat-db`` has refused to start:
 
