@@ -39,7 +39,7 @@ endif
 KIT_FILE = $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
 kit_get = $(shell sed -n 's/^$(1)=//p' $(KIT_FILE) 2>/dev/null | tail -1)
 KIT_SLOT = $(call kit_get,FL_KIT_SLOT_NUMBER)
-FL_PORT = $(call kit_get,FL_EDGE_PORT)
+FL_PORT = $(or $(call kit_get,FL_EDGE_PORT_OVERRIDE),$(call kit_get,FL_EDGE_PORT))
 FL_BACKEND = $(call kit_get,FL_BACKEND)
 lower = $(shell printf '%s' '$(1)' | tr '[:upper:]_' '[:lower:]-')
 
@@ -118,6 +118,9 @@ define require_node_dirs
 	@bad="$(strip $(foreach k,$(NODE_DIR_KEYS),$(if $(filter-out /%,$(call kit_get,$(k))),$(k))))"; [ -z "$$bad" ] || { \
 		echo "❌ $(notdir $(KIT_FILE)) sets relative host paths for a remote node: $$bad."; \
 		echo "   Comment them out (each but FL_KIT_DIR defaults under /opt/flip) or make them absolute."; exit 1; }
+	@[ -z "$(call kit_get,FLIP_DATA_ROOT)" ] || { \
+		echo "❌ $(notdir $(KIT_FILE)) sets FLIP_DATA_ROOT, which this root does not support: its plays prepare"; \
+		echo "   and fill /opt/flip. Comment it out, or set each store's own key to an absolute path."; exit 1; }
 	@[ -n "$(call kit_get,FL_KIT_DIR)" ] || { \
 		echo "❌ $(notdir $(KIT_FILE)) has no FL_KIT_DIR, and compose has no default for it: the FL client would mount /net-1."; \
 		echo "   Set it to where provision and stage-kit put the FL kit on the node (usually /opt/flip/fl-kit)."; exit 1; }
@@ -246,7 +249,9 @@ SEED_SKIP_TAGS = $(if $(NODE_KIT_BUCKET),$(if $(SAMPLE_DATA_OFF),--skip-tags see
 seed_tag = $(or $(call kit_get,$(1)),$(call kit_get,DOCKER_TAG))
 
 # The vocabulary comes from the kit bucket; without one the seed loads the dataset only, as on the
-# Azure node, and cohort queries need the vocabulary-free form.
+# Azure node, and cohort queries need the vocabulary-free form. Each store is seeded only while it is
+# empty (FLIP#2111); RESEED=1 seeds a seeded one again (Orthanc cleared first), the step after a
+# .data_version bump.
 seed: ## Seed OMOP + Orthanc from the canonical dataset (not with TRUST_DATA_SEED=false), then (on a node with a kit bucket) load the vocabulary (stack stopped)
 	$(require_kit)
 	$(require_trust_data_seed)
@@ -257,7 +262,8 @@ seed: ## Seed OMOP + Orthanc from the canonical dataset (not with TRUST_DATA_SEE
 		-e orthanc_username=$(call kit_get,ORTHANC_USERNAME) -e orthanc_password=$(call kit_get,ORTHANC_PASSWORD) \
 		-e vocab_s3_bucket=$(NODE_KIT_BUCKET) -e omop_db_tag=$(call seed_tag,OMOP_DB_TAG) -e orthanc_tag=$(call seed_tag,ORTHANC_TAG) \
 		$(if $(SEED_PROJECTS),-e seed_projects="$(SEED_PROJECTS)") $(if $(SEED_ORTHANC),-e seed_orthanc=$(SEED_ORTHANC)) \
-		$(if $(SOURCE_TRUST),-e source_trust=$(SOURCE_TRUST)) $(if $(filter 1,$(FORCE_DICOM_VOCAB)),-e force_dicom_vocab=true)))
+		$(if $(SOURCE_TRUST),-e source_trust=$(SOURCE_TRUST)) $(if $(filter 1,$(FORCE_DICOM_VOCAB)),-e force_dicom_vocab=true) \
+		$(if $(filter 1,$(RESEED)),-e seed_reseed=true)))
 
 # First install: the stack is stopped before the seed and started after it. The kit is read here, on
 # this workstation, and the node's daemon is driven over the ssh docker context, so the kit never

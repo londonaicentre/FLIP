@@ -87,6 +87,7 @@ on:
       - "trust/Makefile"
       - "trust/xnat/Makefile"
       - "deploy/portable.mk"
+      - "deploy/data_root.mk"
   pull_request:
     branches: [develop]
 

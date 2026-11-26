@@ -105,6 +105,8 @@ switch is keyed on `LOCAL_DEV` in `app_files/data_utils.py` (`_is_local_dev`).
 The cohort query for a real deployment is [`query.sql`](query.sql) — it selects the **hold-out** chest
 X-ray set (`procedure_source_value = 'Chest X-ray (holdout)'`) and returns the seven lesion-label columns
 both models are scored against.
+A trust holds those rows once it is seeded with `arkplus_project` (`make -C trust seed KIT=<CODE>
+PROJECTS=arkplus_project`; see [`datasets/arkplus/README.md`](../../../datasets/arkplus/README.md)).
 
 ## Checkpoint setup
 

@@ -825,6 +825,28 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
 
         expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("run");
     });
+
+    it("a model dispatched elsewhere moves you to Run when the poll sees it leave PENDING", async () => {
+        mockSwrvData.value = makeModel([], { status: "PENDING" });
+        const wrapper = await mountPage();
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("prepare");
+
+        mockSwrvData.value = makeModel([], { status: "INITIATED" });
+        await flushPromises();
+
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("run");
+    });
+
+    it("once dispatched, a later poll never pulls you off Prepare", async () => {
+        mockSwrvData.value = makeModel([], { status: "INITIATED" });
+        const wrapper = await mountPage();
+        await wrapper.find("[data-test='tab-prepare']").trigger("click");
+
+        mockSwrvData.value = makeModel([], { status: "RUNNING" });
+        await flushPromises();
+
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("prepare");
+    });
 });
 
 describe("pages/project/[projectId]/model/[modelId] — header actions follow the stage", () => {

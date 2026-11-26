@@ -56,7 +56,7 @@ Dashed boxes are optional: the own-VPC network mode, the SSM endpoints, the stop
    :alt: On the node: the trust stack under Docker Compose (trust-api, the FL client, imaging-api,
          data-access-api, the OMOP database and Orthanc), XNAT as a swarm stack (xnat-web and its database), and
          the observability stack (Alloy, Loki, Grafana). trust-api polls the hub over HTTPS, the FL client
-         connects to the hub's FL endpoint over mutual-TLS gRPC, and the host pulls images from GHCR and the
+         connects to the hub's FL endpoint over TLS, and the host pulls images from GHCR and the
          seed data from Hugging Face.
 
    The services on the host, and what each connects out to.
@@ -85,8 +85,8 @@ The root has two network modes:
      - A standalone or test install in an empty account
      - A NAT gateway created with the stack; its Elastic IP is destroyed with it.
 
-The hub never checks a trust's IP address: it admits a trust by its API key and the kit's mTLS
-certificates. So the node needs no fixed address, and no hub change is needed to add or remove it. The
+The hub never checks a trust's IP address: it admits a trust by its API key and the
+credentials in its FL kit. So the node needs no fixed address, and no hub change is needed to add or remove it. The
 exception is the hub's own account (below), where the estate's firewall allows the node by address.
 
 **Does the node expose an IP address?** No. The instance has no public IP and its security group no
@@ -120,7 +120,7 @@ On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true`` to create 
 (~$24/month per AZ). They cover Session Manager only: CloudWatch, S3 and every other destination above still
 need the site's own route.
 
-Neither of the two rows in the table has been measured behind a firewall yet.
+Both rows were measured behind a firewall in November 2026, on a node in the hub's own account (below).
 
 **What the instance role may do**: open Session Manager sessions (no ``ssm:GetParameter``, so it cannot
 read parameters in its account), ship logs and metrics to CloudWatch, and, only when ``KIT_BUCKET`` is
@@ -274,8 +274,8 @@ Operate and remove
 - ``make upgrade KIT=… HUB=… TAG=vX.Y.Z`` moves the node to a release with its data in place (see
   :doc:`/sys-admin/admin-upgrading-sites`). ``make deploy`` is the first-install verb: never use it on a
   live node.
-- ``make stage-kit`` re-stages the FL kit after a re-registration; ``make seed`` re-seeds after a data
-  version bump (the stack must be stopped).
+- ``make stage-kit`` re-stages the FL kit after a re-registration; ``make seed RESEED=1`` re-seeds after a
+  data version bump (the stack must be stopped). Without ``RESEED=1`` the seed fills only an empty store.
 - To remove the node, first deregister the trust on the hub, then run ``make destroy KIT=… HUB=…``. It
   removes the node with its root volume, and so the trust's data, and in own-VPC mode its network. It names
   the target account and asks for a typed yes first.

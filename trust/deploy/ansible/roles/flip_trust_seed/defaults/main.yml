@@ -26,6 +26,7 @@ seed_project_list: "{{ seed_projects | default('cxr_project', true) }}"
 seed_orthanc_enabled: "{{ seed_orthanc | default(true) }}"
 # Recovery only — see the seed task below.
 seed_force_dicom_vocab: "{{ force_dicom_vocab | default(false) }}"
+seed_reseed_enabled: "{{ seed_reseed | default(false) }}"
 hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
 hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version) }}"
 omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"

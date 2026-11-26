@@ -182,7 +182,7 @@ The report has twelve checks:
 - the delivered kit, the kit staged for the FL client, and the kit file
 - the stack starting
 - the three API health endpoints
-- the OMOP and Orthanc seed markers
+- the sample data in OMOP and Orthanc (an imaging row, a study)
 - Orthanc refusing anonymous requests
 - a real DICOM C-STORE from Orthanc into XNAT
 - the FL client staying up

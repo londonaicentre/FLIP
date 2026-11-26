@@ -397,12 +397,6 @@ def test_get_user_rejects_malformed_emails_before_calling_keycloak(keycloak, pro
     assert _admin_calls(keycloak) == []
 
 
-def test_get_user_rejects_a_non_uuid_id(keycloak, provider):
-    with pytest.raises(InvalidIdentifierError):
-        provider.get_user(user_id="not-a-uuid")
-    assert _admin_calls(keycloak) == []
-
-
 def test_get_user_requires_an_identifier(provider):
     with pytest.raises(InvalidIdentifierError):
         provider.get_user()

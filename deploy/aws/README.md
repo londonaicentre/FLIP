@@ -671,6 +671,13 @@ dial is set separately (FLIP#1365):
   (FLIP#1852). CI reads it from the optional `FL_EDGE_PORT` variable on the GitHub environment, so set that to
   `8003` on the staging environment.
 
+Production's edge listens on `:443` as well as `:8002` (FLIP#2051), for trusts whose firewall passes TLS only on 443.
+Set `FL_EDGE_PORT=443` in `.env.prod` and on the production GitHub environment, and every kit dials 443: for
+FLARE, the trust's fl-client-init writes the port into the kit's `fed_client.json`. A trust that must stay on
+8002 (a site-to-site VPN, whose edge listens on 8002 alone) sets `FL_EDGE_PORT_OVERRIDE=8002` in its own kit file,
+which hub tooling never overwrites. The edge admits only listed addresses on each port, so add a trust's address to
+the 443 listener before its kit dials it.
+
 **Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a never-used account `make plan`
 fails at the very end with `Error: reading KMS Alias (alias/aws/secretsmanager): empty result`
 (`data.aws_kms_alias.secretsmanager`, `rds_proxy.tf`) even though the plan computed cleanly: AWS creates that
@@ -1703,7 +1710,7 @@ commit a re-render whose only change is the graphviz that made it.
 - **Network**: the accelerator-provisioned VPC, discovered by Name tag (`network_lza.tf`): compute in its TGW-routed **app** subnets, RDS in the isolated **data** subnets. No IGW and no NAT — AWS APIs go through the estate's central interface endpoints, images through the in-account ECR pull-through cache.
 - **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in the **app subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`.
 - **Central Hub SSM bastion**: t3.micro instance with a 10 GB root volume in a **private subnet**. It carries only the SSM managed IAM policy and a PostgreSQL client for ad-hoc RDS operations; application workloads run on ECS Fargate.
-- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (TLS on the ACM certificate, ending at the NLB) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** FLARE FL traffic is end-to-end mutual-TLS over gRPC, and a Layer 7 load balancer terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
+- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (TLS on the ACM certificate, ending at the NLB) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** FLARE FL traffic is end-to-end mutual TLS (a WebSocket inside it), and a Layer 7 load balancer terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
 - **Edge (networking account)**: CloudFront with its WAF, serving the UI bucket over cross-account OAC and relaying `/api/*`, and an internet-facing edge NLB for FL traffic — declared in aicentre-lza-iac, not here.
 - **ACM**: one `eu-west-2` certificate for the web listener, issued into the account by `aicentre-lza-iac`.
 - **Route53**: a private hosted zone resolving the FL server's bare name to the internal NLB for in-VPC callers; the public records live in the networking account.
@@ -1740,7 +1747,7 @@ Ingress at the internal NLB (not at any EC2 SG — the bastion has no inbound ru
 | ---- | ------------- | ------ | ----------------- | ------- |
 | **22** | — | 🔴 **CLOSED everywhere** | n/a | SSH never exposed — remote access is via SSM Session Manager tunnel |
 | **443** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | `/api/*` relayed from the edge CloudFront to `flip-api` (TLS, ending at the NLB) |
-| **`FL_SERVER_PORT`** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | TCP/gRPC pass-through from the edge NLB to the `fl-server-net-1` Fargate task |
+| **`FL_SERVER_PORT`** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | TCP pass-through (TLS) from the edge NLB to the `fl-server-net-1` Fargate task |
 
 Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):
 

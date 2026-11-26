@@ -573,13 +573,13 @@ def test_unknown_project_is_indistinguishable_from_an_inaccessible_one_for_non_m
 
 
 def test_invalid_project_param_is_rejected(client: TestClient, session):
-    """A malformed id is a 400, never a silent fall-back to the whole estate."""
+    """A malformed id is refused by the typed query param, never a silent fall-back to the whole estate."""
     user_id = uuid4()
 
     override_verify_token_as(user_id)
     response = client.get(MODELS_URL, params={"project": "not-a-uuid"})
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 def test_admin_can_scope_to_any_project(client: TestClient, session, project_factory, model_factory):

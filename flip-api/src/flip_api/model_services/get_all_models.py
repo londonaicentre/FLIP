@@ -10,9 +10,10 @@
 # limitations under the License.
 #
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_access_project
@@ -27,7 +28,7 @@ from flip_api.model_services.services.model_service import (
     get_models_project_options_service,
 )
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import get_total_pages
+from flip_api.utils.paging_utils import PagingInfo, get_total_pages, paging_params
 from flip_api.utils.project_manager import get_project_by_id
 
 router = APIRouter(prefix="/models", tags=["model_services"])
@@ -63,33 +64,6 @@ def _parse_statuses(raw_status: str | None) -> list[ModelStatus] | None:
                 detail=f"Invalid model status filter: {value}",
             )
     return parsed or None
-
-
-def _parse_project_id(raw_project: str | None) -> UUID | None:
-    """Validate the optional ``project`` query param, which scopes the list to one project.
-
-    Parsed explicitly rather than passed through: ``get_paging_details`` silently ignores query
-    keys it does not recognise, so a malformed id would otherwise degrade to "no filter" and hand
-    back the whole estate under a UI that claims to be showing one project.
-
-    Args:
-        raw_project (str | None): The raw ``project`` query param, if supplied.
-
-    Returns:
-        UUID | None: The parsed project id, or None when no filter was requested.
-
-    Raises:
-        HTTPException: 400 if the value is not a UUID.
-    """
-    if not raw_project or not raw_project.strip():
-        return None
-    try:
-        return UUID(raw_project.strip())
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid project filter: {raw_project}",
-        )
 
 
 @router.get(
@@ -131,7 +105,9 @@ def get_models_project_options_endpoint(
     status_code=status.HTTP_200_OK,
 )
 def get_all_models_endpoint(
-    request: Request,
+    raw_status: Annotated[str | None, Query(alias="status")] = None,
+    project: UUID | None = None,
+    paging: PagingInfo = Depends(paging_params),
     session: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ) -> IModelsListResponse:
@@ -144,7 +120,9 @@ def get_all_models_endpoint(
     describe the project in view rather than the estate.
 
     Args:
-        request (Request): The HTTP request, used to read query params.
+        raw_status (str | None): The comma-separated ``status`` filter.
+        project (UUID | None): Only models of this project.
+        paging (PagingInfo): The page and search string.
         session (Session): The database session.
         user_id (UUID): The authenticated caller's id.
 
@@ -153,9 +131,7 @@ def get_all_models_endpoint(
     """
     logger.info("Requesting estate-wide models list")
 
-    query_params = dict(request.query_params)
-    status_filter = _parse_statuses(query_params.get("status"))
-    project_filter = _parse_project_id(query_params.get("project"))
+    status_filter = _parse_statuses(raw_status)
 
     # Managers see every model — drop the per-user access filter (equivalent to user_id = None),
     # mirroring get_projects_endpoint.
@@ -164,7 +140,7 @@ def get_all_models_endpoint(
     else:
         requesting_user_id = user_id
 
-    if project_filter is not None:
+    if project is not None:
         # Access is checked BEFORE existence, deliberately: a non-manager gets the same 403 whether
         # the project is merely not theirs or not there at all, so this route never confirms to a
         # caller probing ids whether a guessed project exists. The 404 is reachable only by
@@ -174,20 +150,18 @@ def get_all_models_endpoint(
         # from "not yours", and baffling on a shared link.
         # requesting_user_id is None exactly when the caller holds CAN_MANAGE_PROJECTS (computed
         # above), for whom can_access_project short-circuits True — skip the duplicate lookup.
-        if requesting_user_id is not None and not can_access_project(user_id, project_filter, session):
+        if requesting_user_id is not None and not can_access_project(user_id, project, session):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this project",
             )
-        if get_project_by_id(project_filter, session) is None:
+        if get_project_by_id(project, session) is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project {project_filter} not found",
+                detail=f"Project {project} not found",
             )
 
-    response, status_counts, paging = get_all_models_service(
-        session, requesting_user_id, query_params, status_filter, project_filter
-    )
+    response, status_counts = get_all_models_service(session, requesting_user_id, paging, status_filter, project)
     total_pages = get_total_pages(response.total_rows, paging.page_size)
 
     return IModelsListResponse(

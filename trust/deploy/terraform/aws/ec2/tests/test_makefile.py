@@ -404,6 +404,17 @@ def test_the_seed_runs_the_images_at_the_kits_pins(kit, tmp_path):
     assert "-e omop_db_tag=v0.15.0 -e orthanc_tag=v0.14.0" in pinned
 
 
+def test_deploy_refuses_a_data_root(tmp_path):
+    """FLIP#2113: the plays prepare and seed /opt/flip, so compose must not mount the root's folders instead."""
+    rooted = tmp_path / ".env.TEST.stag"
+    root = "/data/flip/TEST-stag"
+    rooted.write_text(f"{KIT}FLIP_DATA_ROOT={root}\n")
+    for target in ("deploy", "upgrade"):
+        result = make(target, rooted, dry=False)
+        assert result.returncode != 0, target
+        assert "sets FLIP_DATA_ROOT, which this root does not support" in result.stdout + result.stderr
+
+
 def test_provision_closes_the_shared_ssh_connection(kit):
     """The play adds ubuntu to the docker group; a connection opened before keeps the old groups."""
     assert "ssh -O exit flip-stag-test" in make("provision", kit).stdout

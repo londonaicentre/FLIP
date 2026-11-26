@@ -64,6 +64,18 @@ Create chart name and version as used by the chart label.
 {{- end }}
 
 {{/*
+Labels for a StatefulSet's volumeClaimTemplates. Kubernetes never lets that field change, so they must not
+carry the chart's version: they stay what every StatefulSet installed before the chart was versioned (FLIP#1752)
+was created with, chart 0.1.0 and app 1.0, or every upgrade to a new release is refused.
+*/}}
+{{- define "flip-trust.claimTemplateLabels" -}}
+helm.sh/chart: flip-trust-0.1.0
+{{ include "flip-trust.selectorLabels" . }}
+app.kubernetes.io/version: "1.0"
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
 Common labels
 */}}
 {{- define "flip-trust.labels" -}}

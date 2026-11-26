@@ -383,20 +383,20 @@ def test_run_selftest_stops_when_no_kit_was_delivered(tmp_path):
 # ── join: install a hub-registered kit and bring the trust up ───────────────────────────────
 
 
-def _join_kit(tmp_path: Path, backend: str) -> Path:
+def _join_kit(tmp_path: Path, backend: str, extra: dict[str, str] | None = None) -> Path:
     members = {".env.AZ1.stag": f"TRUST_CODE=AZ1\nFL_BACKEND={backend}\nFL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n"}
     if backend == "nvflare":
         members["fl-kit/net-1/services/Trust_3/startup/fed_client.json"] = "{}"
     else:
         members["fl-kit/net-1/certificates/ca.crt"] = "ca"
         members["fl-kit/net-1/keys/supernode_credentials_3"] = "key"
-    return _tarball(tmp_path / "join.tar.gz", members)
+    return _tarball(tmp_path / "join.tar.gz", {**members, **(extra or {})})
 
 
-def _join(tmp_path: Path, backend: str, *args: str):
+def _join(tmp_path: Path, backend: str, *args: str, extra: dict[str, str] | None = None):
     env, log = _setup(tmp_path, disk_present=True, has_fs=True)
     (Path(env["FLIP_DIR"]) / "FLIP" / "trust").mkdir(parents=True)
-    _stub_curl(env, tmp_path, _join_kit(tmp_path, backend))
+    _stub_curl(env, tmp_path, _join_kit(tmp_path, backend, extra))
     for tool in ("make", "chgrp"):
         _stub(Path(env["PATH"].split(":")[0]), tool, f'echo "{tool} $*" >> "{log}"')
     return env, log, _run(env, "run-join", *(args or ("flip-trust-kit-AZ1-20261009.tar.gz", "AZ1", "stag")))
@@ -437,6 +437,16 @@ def test_join_points_the_kit_at_the_images_tree_the_play_made(tmp_path):
     assert result.returncode == 0, result.stderr
     text = (Path(env["FLIP_DIR"]) / "FLIP" / "trust" / ".env.AZ1.stag").read_text()
     assert f"BASE_IMAGES_DOWNLOAD_DIR={env['FLIP_DIR']}/data/images\n" in text
+
+
+def test_join_stages_no_certificate_file_but_the_ca(tmp_path):
+    """A kit packed before the packager named its files also carries the SuperLink's TLS key: it is not staged."""
+    server_files = {"fl-kit/net-1/certificates/server.key": "key", "fl-kit/net-1/certificates/server.pem": "pem"}
+    env, _, result = _join(tmp_path, "flower", extra=server_files)
+    assert result.returncode == 0, result.stderr
+    certificates = Path(env["FLIP_FL_KIT_DIR"]) / "net-1" / "certificates"
+    assert sorted(p.name for p in certificates.iterdir()) == ["ca.crt"]
+    assert oct((certificates / "ca.crt").stat().st_mode & 0o777) == "0o644"
 
 
 def test_join_stages_the_flower_key_for_the_supernode(tmp_path):
