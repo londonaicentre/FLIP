@@ -560,6 +560,7 @@ def test_orthanc_knows_xnat_as_a_modality(specs: dict) -> None:
 # --- found on the live account (review of #1600, #1710, #1756) ------------------------------------
 
 import spec_templates  # noqa: E402
+from render_specs import load_digests, render  # noqa: E402
 
 
 def test_a_written_stage_volume_is_owned_by_the_user_its_container_runs_as(specs: dict, manifest: dict) -> None:
@@ -603,6 +604,26 @@ def test_trust_api_probes_omop_on_snowflake(specs: dict) -> None:
     assert containers(specs["trust-api"])[0]["env"]["OMOP_BACKEND"] == "snowflake"
 
 
+def test_trust_api_gets_the_kits_expected_trust_id(kit: dict, specs: dict) -> None:
+    """The wrong-host self-check: trust-api stops when the hub resolves it as another trust
+    (FLIP#2047). Without the kit line the value is empty, which is "check off" in trust-api."""
+    trust_id = "11111111-1111-1111-1111-111111111111"
+    built = {r.name: r for r in spec_templates.build_all({**kit, "EXPECTED_TRUST_ID": trust_id}, "GSTT")}
+    assert containers(built["trust-api"].spec)[0]["env"]["EXPECTED_TRUST_ID"] == trust_id
+    assert containers(specs["trust-api"])[0]["env"]["EXPECTED_TRUST_ID"] == ""
+
+
+@pytest.mark.parametrize("value", [None, "", "<run-make-register-trust>"])
+def test_trust_api_keeps_the_platform_header_without_a_kit_value(kit: dict, value: str | None) -> None:
+    """A placeholder is not a header name: sent as one, the hub answers 401 "API key is missing"."""
+    kit = {k: v for k, v in kit.items() if k != "TRUST_API_KEY_HEADER"}
+    if value is not None:
+        kit["TRUST_API_KEY_HEADER"] = value
+    built = {r.name: r for r in spec_templates.build_all(kit, "GSTT")}
+    env = containers(built["trust-api"].spec)[0]["env"]
+    assert env["TRUST_API_KEY_HEADER"] == "Authorization"  # pragma: allowlist secret
+
+
 def test_the_fl_client_image_follows_the_fl_tag(kit: dict) -> None:
     """The FL images are released on their own tag (DOCKER_FL_TAG), as in Compose and Helm."""
     client = next(
@@ -631,3 +652,143 @@ def test_imaging_api_survives_a_cohort_download(specs: dict) -> None:
     assert containers(specs["trust-api"])[0]["livenessProbe"]["failureThreshold"] == 3, (
         "only imaging-api blocks its loop"
     )
+
+
+def test_a_site_privacy_policy_in_the_kit_is_refused(kit: dict) -> None:
+    """Nothing on SPCS renders the client's privacy.json, so the trust would start with no site
+    filter while its kit asks for one. Refused here, naming the setting (fail closed)."""
+    with pytest.raises(ValueError, match="FL_SITE_PRIVACY_POLICY"):
+        spec_templates.build_all({**kit, "FL_SITE_PRIVACY_POLICY": "percentile"}, "GSTT")
+    # Unset or empty is no policy, as on Compose.
+    spec_templates.build_all({**kit, "FL_SITE_PRIVACY_POLICY": "", "FL_SITE_PRIVACY_GAMMA": ""}, "GSTT")
+
+
+@pytest.mark.parametrize("backend", ["nvflare", "flower"])
+def test_a_site_privacy_section_in_the_governance_document_is_refused(kit: dict, tmp_path: Path, backend: str) -> None:
+    document = tmp_path / "governance.toml"
+    document.write_text('[disclosure]\nmin_cohort_size = 20\n\n[fl_privacy.nvflare]\npolicy = "percentile"\n')
+    asked = {**kit, "FL_BACKEND": backend, "NLB_SUBDOMAIN": "fl.example", "FL_SERVER_PORT": "9092"}
+    with pytest.raises(ValueError, match=r"\[fl_privacy\]"):
+        spec_templates.build_all({**asked, "ACCESS_POLICY_FILE": str(document)}, "GSTT")
+
+
+def test_a_governance_document_without_a_site_privacy_section_still_renders(kit: dict, tmp_path: Path) -> None:
+    document = tmp_path / "governance.toml"
+    document.write_text("# [fl_privacy.nvflare] is left to the platform\n[disclosure]\nmin_cohort_size = 20\n")
+    rendered = spec_templates.build_all({**kit, "ACCESS_POLICY_FILE": str(document)}, "GSTT")
+    api = next(r for r in rendered if r.name == "data-access-api")
+    assert api.spec["spec"]["containers"][0]["env"]["ACCESS_POLICY_FILE"] == "/governance/governance.toml"
+
+
+def test_a_governance_document_that_cannot_be_read_is_refused(kit: dict, tmp_path: Path) -> None:
+    """Unread, it may hold a site privacy section: refusing is the only safe answer."""
+    with pytest.raises(ValueError, match="ACCESS_POLICY_FILE"):
+        spec_templates.build_all({**kit, "ACCESS_POLICY_FILE": str(tmp_path / "absent.toml")}, "GSTT")
+
+
+def test_the_pacs_availability_days_default_is_configure_xnats(kit: dict) -> None:
+    """A second default here said Monday to Friday, so weekend retrievals queued until Monday on
+    SPCS alone. Without the kit line the key is omitted and configure-xnat.sh's default applies."""
+    for rendered in spec_templates.build_all(kit, "GSTT"):
+        if rendered.name in ("xnat-web", "xnat-configure"):
+            assert "PACS_AVAILABILITY_DAYS" not in rendered.spec["spec"]["containers"][0]["env"], rendered.name
+    days = "SATURDAY,SUNDAY"
+    for rendered in spec_templates.build_all({**kit, "PACS_AVAILABILITY_DAYS": days}, "GSTT"):
+        if rendered.name in ("xnat-web", "xnat-configure"):
+            assert rendered.spec["spec"]["containers"][0]["env"]["PACS_AVAILABILITY_DAYS"] == days
+
+
+def _lock(tmp_path: Path, code: str = "GSTT", env: str = "stag", **tags: str) -> Path:
+    images = {repo: {"tag": tag, "digest": f"sha256:{repo}"} for repo, tag in tags.items()}
+    (tmp_path / "images.lock.json").write_text(json.dumps({"code": code, "env": env, "images": images}))
+    return tmp_path
+
+
+def test_the_image_lock_is_used_for_the_trust_it_was_written_for(kit: dict, tmp_path: Path) -> None:
+    lock = _lock(tmp_path, **{"trust-api": "v1.2.3", "flare-fl-client": "v1.2.3"})
+    assert load_digests(lock, "GSTT", "stag", kit) == {
+        "trust-api": "sha256:trust-api",
+        "flare-fl-client": "sha256:flare-fl-client",
+    }
+
+
+@pytest.mark.parametrize(("code", "env"), [("KCH", "stag"), ("GSTT", "prod")])
+def test_another_trusts_image_lock_is_not_used(kit: dict, tmp_path: Path, code: str, env: str) -> None:
+    """One lock per checkout: trust B rendered after mirroring trust A carried A's digests."""
+    assert load_digests(_lock(tmp_path, code, env, **{"trust-api": "v1.2.3"}), "GSTT", "stag", kit) == {}
+
+
+def test_an_image_mirrored_at_another_tag_is_refused(kit: dict, tmp_path: Path) -> None:
+    """DOCKER_TAG edited, no `make mirror-images`: the new tag is not in the account repository,
+    and `up` exited 0 on services that could not pull their image."""
+    lock = _lock(tmp_path, **{"trust-api": "v1.2.2", "orthanc": "v1.2.3", "flare-fl-client": "v1.2.3"})
+    with pytest.raises(SystemExit, match=r"trust-api:v1\.2\.3\. Run `make mirror-images`"):
+        load_digests(lock, "GSTT", "stag", kit)
+    moved = {**kit, "DOCKER_TAG": "v1.2.2", "DOCKER_FL_TAG": "v1.3.0", "ORTHANC_TAG": "v1.0.0"}
+    with pytest.raises(SystemExit, match=r"orthanc:v1\.0\.0, flare-fl-client:v1\.3\.0\."):
+        load_digests(lock, "GSTT", "stag", moved)
+
+
+def test_a_refused_render_keeps_the_previous_specs(kit: dict, tmp_path: Path) -> None:
+    """`up` deploys what the directory holds: a refusal must not leave it empty or half-written."""
+    out = tmp_path / "rendered"
+    render(kit, "GSTT", "stag", out, digests={})
+    before = {path.name: path.read_text() for path in out.iterdir()}
+    with pytest.raises(ValueError, match="FL_SITE_PRIVACY_POLICY"):
+        render({**kit, "FL_SITE_PRIVACY_POLICY": "percentile"}, "GSTT", "stag", out, digests={})
+    assert {path.name: path.read_text() for path in out.iterdir()} == before
+
+
+def test_a_misspelt_site_privacy_name_is_refused(kit: dict) -> None:
+    """The client refuses any FL_SITE_PRIVACY_* name it does not know, so Compose stops on a typo.
+    Looking for the three known names only, this shape deployed with no filter."""
+    with pytest.raises(ValueError, match="FL_SITE_PRIVACY_POLCY"):
+        spec_templates.build_all({**kit, "FL_SITE_PRIVACY_POLCY": "percentile"}, "GSTT")
+
+
+def test_an_empty_site_privacy_table_asks_for_nothing(kit: dict, tmp_path: Path) -> None:
+    """As flip.nvflare.site_policy reads it: [fl_privacy.nvflare] with no keys is no policy."""
+    document = tmp_path / "governance.toml"
+    document.write_text("[disclosure]\nmin_cohort_size = 20\n\n[fl_privacy.nvflare]\n")
+    spec_templates.build_all({**kit, "ACCESS_POLICY_FILE": str(document)}, "GSTT")
+    # Keys directly under [fl_privacy] stop the client on Compose: still refused here.
+    document.write_text('[fl_privacy]\npolicy = "percentile"\n')
+    with pytest.raises(ValueError, match=r"\[fl_privacy\]"):
+        spec_templates.build_all({**kit, "ACCESS_POLICY_FILE": str(document)}, "GSTT")
+
+
+def test_the_other_backends_client_image_in_the_lock_is_ignored(kit: dict, tmp_path: Path, capsys) -> None:
+    """After a backend switch the old client's entry stays in the lock for good (a mirror merges
+    into it), and every render warned about an image this kit does not run."""
+    lock = _lock(tmp_path, **{"trust-api": "v1.2.3", "flower-supernode": "v1.0.0", "flare-fl-client": "v1.2.3"})
+    assert load_digests(lock, "GSTT", "stag", kit) == {
+        "trust-api": "sha256:trust-api",
+        "flare-fl-client": "sha256:flare-fl-client",
+    }
+    assert capsys.readouterr().out == ""
+
+
+def test_an_invalid_backend_is_a_message_not_a_traceback(kit: dict, tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+
+    kit_file = tmp_path / "kit.env"
+    kit_file.write_text("".join(f"{key}={value}\n" for key, value in {**kit, "FL_BACKEND": "flwr"}.items()))
+    here = Path(__file__).resolve().parents[1]
+    (tmp_path / "images.lock.json").write_text(json.dumps({"code": "GSTT", "env": "stag", "images": {"x": {}}}))
+    script = (
+        "import sys, pathlib, render_specs; render_specs.HERE = pathlib.Path(sys.argv[1]); "
+        "sys.argv = ['render_specs.py', '--kit', 'GSTT', '--env', 'stag', '--kit-file', sys.argv[2], "
+        "'--out-dir', sys.argv[3]]; render_specs.main()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), str(kit_file), str(tmp_path / "out")],
+        capture_output=True,
+        text=True,
+        cwd=here,
+        env={key: value for key, value in os.environ.items() if key != "HUB_EGRESS"},
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "FL_BACKEND" in result.stderr

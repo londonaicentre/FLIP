@@ -194,6 +194,18 @@ run "no_kit_bucket_grants_no_s3_or_kms" {
     condition     = length(aws_iam_role_policy.kit_read) == 0
     error_message = "Without kit_bucket_name the node gets no S3 access: the kit is delivered out of band."
   }
+  assert {
+    condition     = output.kit_bucket_name == ""
+    error_message = "The state records that the node has no kit bucket, for the Makefile's host verbs."
+  }
+  assert {
+    condition     = output.kit_kms_key_arn == ""
+    error_message = "The state records that the node decrypts with no KMS key."
+  }
+  assert {
+    condition     = output.node_name == var.name
+    error_message = "The state names its node: the Makefile refuses to read another node's kit bucket."
+  }
 }
 
 run "kit_bucket_grants_read_on_this_slots_kit_only" {
@@ -208,6 +220,14 @@ run "kit_bucket_grants_read_on_this_slots_kit_only" {
   assert {
     condition     = length(aws_iam_role_policy.kit_read) == 1
     error_message = "kit_bucket_name grants the node a read policy."
+  }
+  assert {
+    condition     = output.kit_bucket_name == "hub-kits"
+    error_message = "The state records the bucket the node was applied with, so the host verbs need not be given it again."
+  }
+  assert {
+    condition     = output.kit_kms_key_arn == var.kit_kms_key_arn
+    error_message = "The state records the kit's KMS key, so a later plan keeps the node's kms:Decrypt."
   }
   assert {
     condition = toset(data.aws_iam_policy_document.kit_read[0].statement[1].resources) == toset([

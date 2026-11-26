@@ -176,7 +176,7 @@ The UI is served from S3 by the networking account's edge CloudFront at the cano
 
 **The UI ships with the apply (FLIP#1186).** Once `terraform_apply.yml` has applied a push to `develop` or `main`, its `ui` job runs [`publish_ui.yml`](../../.github/workflows/publish_ui.yml), which publishes flip-ui from the same commit to that environment's bucket. A held or failed apply publishes nothing, so the UI never reaches users ahead of the API it calls; the `fl_quiesced: true` re-dispatch that releases a held apply publishes it. The workflow has two jobs:
 
-- **`build`** runs `npm ci && npm run build:deploy` with no AWS credentials and no secrets, because `npm ci` runs third-party install scripts. `window.js` is generated from the environment's variables `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `CENTRAL_HUB_API_URL`, `AWS_REGION` and `BLACKLISTED_MODEL_FILES`. These values are public: every browser receives them. `RELEASE_VERSION` is the release tag, or `sha-<short7>`. The apply job warns when the two Cognito variables no longer match `terraform output`.
+- **`build`** runs `npm ci && npm run build:deploy` with no AWS credentials and no secrets, because `npm ci` runs third-party install scripts. `window.js` is generated from the environment's variables `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `CENTRAL_HUB_API_URL`, `AWS_REGION` and `BLACKLISTED_MODEL_FILES`. These values are public: every browser receives them. `RELEASE_VERSION` is the release tag, or `sha-<short7>`. When the two Cognito variables no longer match `terraform output` after an apply, the run's `ui-cognito-ids` job fails and the UI is not published: set them to Terraform's values, then re-run all jobs of the newest apply run on that branch (the apply job makes the comparison, and its log names the variable that differs). Not an older run: a re-run applies its own commit, so it would roll the environment back, while every later run fails the same check until the variables are fixed. Do not dispatch a new apply either: on `main` without `release_tag` it pins the commit's `sha-` images over a release. Both unset, as on a new environment, is a warning.
 - **`publish`** assumes `TF_UI_PUBLISH_ROLE_ARN` and runs `scripts/publish-ui.sh` against `FLIP_UI_BUCKET_NAME`. That role is the bootstrap module's `AICentre-FLIPUiPublishRole` (set `ui_bucket_name` on the module): it can list the bucket and write its objects, and nothing else. Afterwards the job reads `js/window.js` back through the site to confirm the new build is being served. While `TF_UI_PUBLISH_ROLE_ARN` is unset the job only warns.
 
 If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete`. The sync excludes the `demo/*` prefix, which still holds the last demo published under the app's host until `/demo/` redirects to the demo's own (below), and the publish role is denied writes there.
@@ -670,6 +670,13 @@ dial is set separately (FLIP#1365):
   `FL_EDGE_PORT` is set), which reaches nothing but flip-api's task env, for the kits downloaded from the UI
   (FLIP#1852). CI reads it from the optional `FL_EDGE_PORT` variable on the GitHub environment, so set that to
   `8003` on the staging environment.
+
+Production's edge listens on `:443` as well as `:8002` (FLIP#2051), for trusts whose firewall passes TLS only on 443.
+Set `FL_EDGE_PORT=443` in `.env.prod` and on the production GitHub environment, and every kit dials 443: for
+FLARE, the trust's fl-client-init writes the port into the kit's `fed_client.json`. A trust that must stay on
+8002 (a site-to-site VPN, whose edge listens on 8002 alone) sets `FL_EDGE_PORT_OVERRIDE=8002` in its own kit file,
+which hub tooling never overwrites. The edge admits only listed addresses on each port, so add a trust's address to
+the 443 listener before its kit dials it.
 
 **Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a never-used account `make plan`
 fails at the very end with `Error: reading KMS Alias (alias/aws/secretsmanager): empty result`
@@ -1518,7 +1525,9 @@ Three constraints are easy to break and worth keeping in mind:
   on the previous release. `release.yml` now watches for exactly that: its
   "Confirm the release apply actually ran" step re-dispatches the apply once if
   the queued one was cancelled before it started, and fails the release if it
-  happens twice.
+  happens twice. It recognises the release apply by its run title,
+  `Terraform Apply: release v<X.Y.Z>`, which only a dispatch carrying
+  `release_tag` gets, so a run without the tag is never taken for it.
 
 The push apply runs on every push, so this dispatch is not needed to reach the
 apply; it is what pins the release digests over the push apply's `sha-` images.

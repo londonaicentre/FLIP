@@ -23,7 +23,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
+from jinja2 import StrictUndefined, Template
 
 ANSIBLE_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = ANSIBLE_DIR.parent.parent.parent
@@ -79,3 +81,28 @@ def test_base_packages_precede_the_unzip_consumers() -> None:
 
 def test_galaxy_roles_are_gitignored_in_the_shared_roles_dir() -> None:
     assert "trust/deploy/ansible/roles/*.*/" in (REPO_ROOT / ".gitignore").read_text()
+
+
+@pytest.mark.parametrize(
+    ("extra_vars", "orthanc_tag"),
+    [
+        ({"omop_db_tag": "sha-abc1234", "orthanc_tag": "v0.15.0"}, "v0.15.0"),
+        ({"omop_db_tag": "sha-abc1234"}, "sha-abc1234"),
+        ({"omop_db_tag": "sha-abc1234", "orthanc_tag": ""}, "sha-abc1234"),
+        ({}, "stag"),
+    ],
+)
+def test_the_seed_runs_orthanc_at_its_own_tag(extra_vars: dict, orthanc_tag: str) -> None:
+    """A kit pins OMOP_DB_TAG and ORTHANC_TAG apart, as Compose reads them; the seed must not merge them."""
+    defaults = yaml.safe_load((ANSIBLE_DIR / "roles/flip_trust_seed/defaults/main.yml").read_text())
+    rendered = Template(defaults["orthanc_image"], undefined=StrictUndefined).render(**extra_vars)
+    assert rendered == f"ghcr.io/londonaicentre/orthanc:{orthanc_tag}"
+
+
+def test_the_gpu_check_runs_a_mirrored_image() -> None:
+    """A trust host reaches GHCR alone (FLIP#1721): a Docker Hub image fails the play behind a site proxy."""
+    role = ANSIBLE_DIR / "roles/flip_gpu_host"
+    image = yaml.safe_load((role / "defaults/main.yml").read_text())["gpu_check_image"]
+    assert image.startswith("ghcr.io/londonaicentre/mirror/")
+    check = next(t for t in yaml.safe_load((role / "tasks/runtime.yml").read_text()) if "docker run" in str(t))
+    assert "--gpus all {{ gpu_check_image }} nvidia-smi" in check["command"]

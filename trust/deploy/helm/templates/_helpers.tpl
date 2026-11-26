@@ -268,6 +268,7 @@ DATA_ACCESS_API_URL: {{ .Values.trustApi.env.dataAccessApiUrl | default "http://
 IMAGING_API_URL: {{ .Values.trustApi.env.imagingApiUrl | default "http://imaging-api:8000" | quote }}
 POLL_INTERVAL_SECONDS: {{ .Values.trustApi.env.POLL_INTERVAL_SECONDS | quote }}
 TRUST_API_KEY_HEADER: {{ .Values.trustApi.env.TRUST_API_KEY_HEADER | quote }}
+EXPECTED_TRUST_ID: {{ .Values.trustApi.env.EXPECTED_TRUST_ID | default "" | quote }}
 TRUST_NAME: {{ .Values.trustName | quote }}
 ENV: {{ .Values.environment | quote }}
 LOG_LEVEL: {{ .Values.logLevel | quote }}

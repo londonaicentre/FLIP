@@ -16,6 +16,7 @@ The chart's own targets are replaced by `echo make`, so these read what would be
 from __future__ import annotations
 
 import json
+import re
 from functools import partial
 
 import pytest
@@ -28,20 +29,61 @@ run_make = partial(run_any_make, root="aks")
 HELM = f"make -C {REPO_ROOT}/trust/deploy/helm KUBE_CONTEXT=flipaz-aks NAMESPACE=flip-trust"
 
 
-def test_deploy_layers_the_aks_overlays(tmp_path):
-    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag")
+def test_deploy_takes_the_overlays_join_recorded(tmp_path):
+    """A redeploy that passed the default overlays would drop the ones join was given."""
+    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", KIT_FILE=_kit_file(tmp_path))
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == (
-        f"{HELM} deploy-trust-k8s KIT=Trust_3 HUB=stag PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"
+    assert result.stdout.strip() == f"{HELM} deploy-trust-k8s KIT=Trust_3 HUB=stag"
+
+
+def _kit_file(tmp_path, text: str = "K8S_PLATFORM_VALUES=values-aks.yaml values-small-node.yaml\n") -> str:
+    path = tmp_path / ".env.Trust_3.stag"
+    path.write_text(text)
+    return str(path)
+
+
+@pytest.mark.parametrize("typed", [{"MOCK_PACS": "1"}, {"AKS_VALUES": "values-aks.yaml mine.yaml"}])
+def test_deploy_refuses_an_overlay_it_would_ignore(tmp_path, typed):
+    """The kit's K8S_PLATFORM_VALUES is the only source: an argument that changed nothing would exit 0."""
+    result, _ = run_make(
+        tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", KIT_FILE=_kit_file(tmp_path), **typed
     )
+
+    assert result.returncode != 0
+    assert "K8S_PLATFORM_VALUES in the kit file" in result.stdout
+    assert "deploy-trust-k8s" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "text", ["", "K8S_PLATFORM_VALUES=\n", "K8S_PLATFORM_VALUES=values-aks.yaml\nK8S_PLATFORM_VALUES=\n", None]
+)
+def test_deploy_refuses_a_kit_that_records_no_overlays(tmp_path, text):
+    """Without values-aks.yaml the chart moves PGDATA back to the volume root and the FL kit back to the node."""
+    kit_file = str(tmp_path / "absent") if text is None else _kit_file(tmp_path, text)
+    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", KIT_FILE=kit_file)
+
+    assert result.returncode != 0
+    assert "records no K8S_PLATFORM_VALUES" in result.stdout
+    assert "deploy-trust-k8s" not in result.stdout
+
+
+def _recorded_overlays(tmp_path, **variables: str) -> list[str]:
+    """The K8S_PLATFORM_VALUES that `join` appends to the kit file."""
+    result, _ = run_make(
+        tmp_path, "-n", "join", MAKE="echo make", TARBALL="kit.tar.gz", KIT="Trust_3", HUB="stag", **variables
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return re.search(r"""K8S_PLATFORM_VALUES=%s\\n' "([^"]*)" >>""", result.stdout).group(1).split()
+
+
+def test_join_records_the_aks_overlays_in_the_kit(tmp_path):
+    assert _recorded_overlays(tmp_path) == ["values-aks.yaml", "values-small-node.yaml"]
 
 
 def test_mock_pacs_seeds_orthanc_last(tmp_path):
-    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS="1")
-
     overlay = AZURE_DIR / "aks" / "values-mock-pacs.yaml"
-    recorded = result.stdout.split()[-1]
+    recorded = _recorded_overlays(tmp_path, MOCK_PACS="1")[-1]
     assert not recorded.startswith("/"), "the kit file must not pin this checkout's location"
     assert (REPO_ROOT / "trust" / "deploy" / "helm" / recorded).resolve() == overlay.resolve()
     assert overlay.read_text().endswith("trustData:\n  seed:\n    orthanc: true\n")
@@ -49,10 +91,7 @@ def test_mock_pacs_seeds_orthanc_last(tmp_path):
 
 @pytest.mark.parametrize("value", ["0", "false"])
 def test_mock_pacs_off_values_add_no_overlay(tmp_path, value):
-    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS=value)
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "values-mock-pacs.yaml" not in result.stdout
+    assert "values-mock-pacs.yaml" not in " ".join(_recorded_overlays(tmp_path, MOCK_PACS=value))
 
 
 @pytest.mark.parametrize("target", ["deploy", "join"])
@@ -80,7 +119,8 @@ def test_join_installs_the_kit_then_its_secrets_then_deploys(tmp_path):
         "make _fl-kit",
         "s/^FL_KIT_SLOT=//p",
         f'{HELM} kit-secret KIT_SRC="{AZURE_DIR}/aks/{kit_dir}/fl-kit-secret"',
-        "make deploy KIT=Trust_3 HUB=stag",
+        "sed -n 's/^K8S_PLATFORM_VALUES=//p'",
+        f"{HELM} deploy-trust-k8s KIT=Trust_3 HUB=stag",
     ]
     positions = [out.find(s) for s in steps]
     assert -1 not in positions, (steps[positions.index(-1)], out)

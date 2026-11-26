@@ -109,12 +109,13 @@ class PublishDemo(unittest.TestCase):
 
 class ApplyPublishesTheDemo(unittest.TestCase):
     def test_the_demo_follows_a_successful_apply_into_its_environment(self) -> None:
-        """The same gate as the UI's ui job, and the apply's environment."""
+        """The ui job's gate on the apply, and the apply's environment. The demo signs nobody in,
+        so the ui job's Cognito check does not hold it."""
         demo, ui = job("terraform_apply.yml", "demo"), job("terraform_apply.yml", "ui")
         assert "uses: ./.github/workflows/publish_demo.yml" in demo
-        for line in ("needs: apply", "if: always() && needs.apply.result == 'success'"):
+        for line in ("needs: apply\n", "if: always() && needs.apply.result == 'success'\n"):
             assert line in demo, line
-            assert line in ui, line
+        assert "if: always() && needs.apply.result == 'success' &&" in ui
         assert permissions(demo) == {"contents": "read", "id-token": "write"}
         environment = re.search(r"^      environment: (.+)$", ui, re.MULTILINE)
         assert environment, "ui passes no environment"

@@ -194,6 +194,14 @@ sees the trust behind every node id through `Grid.get_nodes()`), skipping alread
 keys. This is the Flower analogue of claiming a participant slot. With `TRUST_NAMES` unset each key
 names its own slot, `supernode_credentials_<N>.pub` being `Trust_<N>` (the ECS hub and the prod
 compose); the dev compose stacks pass `TRUST_NAMES`, paired with the keys by position.
+Where `FL_API_ADDRESS` is set the script then posts each node id → trust name pair to the fl-api, which
+keeps them in memory for `/check_client_status`; it exits with code 3 when the fl-api does not answer
+within `FL_API_READY_ATTEMPTS` tries (default 30, two seconds apart; the SuperLink's wait is
+`SUPERLINK_READY_ATTEMPTS`, default 60) or refuses a pair (a wrong `FL_API_KEY`), naming the trusts left
+unmapped. Every key is registered by then, so `add-fl-kits` still releases the new slots and then fails,
+saying how to run the registration alone. One case stays a warning: keys the SuperLink already holds whose
+node ids cannot be matched to them by position are left as the fl-api has them, so after an fl-api restart
+in that state the one-shot exits 0 with those trusts unmapped.
 
 ### Adding SuperNode keys to a deployed hub
 
@@ -251,7 +259,8 @@ To withdraw a slot that no trust holds, delete its private key from S3: flip-api
 out at the next registration. Keep the public key: it is what keeps the number from being minted again
 (a key provisioned with the kit is only in the minted-names record once an `add-fl-kits` run has seen
 it), and flip-api then logs the slot as not claimable at every registration, which is expected. `upload-creds-to-s3` is for a **new** kit date only, since its
-`--delete` removes every key added under a live one.
+`--delete` removes every key added under a live one; like FLARE's `upload-kits-to-s3` it is a dry run unless
+given `DRYRUN=`.
 
 **Registrations do not survive the SuperLink.** It runs without `--database`, so it holds registered
 SuperNodes in memory. Terraform runs the registration one-shot again whenever it registers a new
@@ -306,7 +315,7 @@ renames or drops a Fleet route fails CI instead of breaking SuperNodes mid-round
 
 ```bash
 make -C fl-services/flower up                 # INSECURE stack (1 SuperLink + 2 SuperNodes + fl-api)
-make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode auth); needs `provision` first
+make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode auth); needs `provision` first and FL_API_KEY set
 make -C fl-services/flower submit APP=xray_classification   # submit a job to the running stack
 make -C fl-services/flower down
 ```

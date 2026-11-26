@@ -38,4 +38,5 @@ write_files:
     content: |
       ${indent(6, flip_node_script)}
 runcmd:
-  - [/usr/local/sbin/flip-node, provision]
+  # The ref is named: a rebuilt VM finds the data disk's checkout, which a bare provision leaves alone.
+  - [/usr/local/sbin/flip-node, provision, "${ref}"]
