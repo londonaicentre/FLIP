@@ -70,7 +70,7 @@ echo "SuperLink Control API is ready."
 # supernode_credentials_<N>.pub is Trust_<N>, the slot flip-api derives from the same file name
 # (FLIP#1942), so the keys are the only list and one added later never renames another.
 # FL_API_ADDRESS is optional and, when set, needs FL_API_KEY (every FL API route but /health
-# requires it; FL_API_KEY_HEADER renames the header). An FL API that does not answer within
+# requires it). An FL API that does not answer within
 # FL_API_READY_ATTEMPTS tries (default 30, 2 s apart; the SuperLink's is SUPERLINK_READY_ATTEMPTS, 60),
 # or does not take a mapping, fails the run with exit code 3: every key is registered by then, which
 # is what add_fl_kits_flower.sh releases a slot on, so it tells this apart from exit 1. Keys already

@@ -198,6 +198,88 @@ class RestartFlFleetProxies(unittest.TestCase):
         assert "--remove-orphans" in step, step
 
 
+class RestartFlChecksTheKit(unittest.TestCase):
+    """restart-fl checks the backend's kit before step 1 removes every FL client (FLIP#2047).
+
+    ``make restart-fl FL_BACKEND=flower`` on a tree provisioned for NVFLARE alone otherwise stops the
+    clients and then starts the servers on bind sources that are not there.
+    """
+
+    def test_the_check_runs_before_anything_stops(self):
+        for backend in ("flower", "nvflare"):
+            with self.subTest(backend=backend):
+                lines = dry_run(
+                    "restart-fl", f"FL_BACKEND={backend}", "ALLOW_FOREIGN_PROJECT=1", subdir="."
+                ).splitlines()
+                check = next(i for i, line in enumerate(lines) if "scripts/check-fl-provisioned.sh" in line)
+                assert f"FL_BACKEND='{backend}'" in lines[check - 1] + lines[check], lines[check - 1 : check + 1]
+                assert check < next(i for i, line in enumerate(lines) if "down-fl-clients" in line), lines
+
+
+class RestartNoTrustIsFlipApiAlone(unittest.TestCase):
+    """restart-no-trust recreates the flip-api container and nothing else (FLIP#2047).
+
+    It used to forward to flip-api/Makefile's ``restart``, which names the hub project with the
+    common compose file alone: ``--remove-orphans`` then removed every FL overlay service, and
+    flip-db went down and came back with flip-api.
+    """
+
+    def test_it_names_only_flip_api_on_the_full_project(self):
+        for backend in ("flower", "nvflare"):
+            with self.subTest(backend=backend):
+                out = dry_run(
+                    "restart-no-trust",
+                    "HUB=",
+                    f"FL_BACKEND={backend}",
+                    "DEBUG=true",
+                    "ALLOW_FOREIGN_PROJECT=1",
+                    subdir=".",
+                )
+                assert "-C flip-api" not in out, out
+                compose = [line for line in out.splitlines() if "docker compose -p deploy " in line]
+                removed, started = compose  # exactly two compose commands
+                for line in compose:
+                    assert f"-f deploy/compose/compose.development.{backend}.yml" in line, line
+                    assert line.split()[-1] == "flip-api", line
+                    assert "--remove-orphans" not in line, line
+                    assert "flip-db" not in line, line
+                assert " rm -fsv " in removed, removed
+                assert started.startswith("DEBUG=true "), started
+                # Without --no-deps, so compose starts a stopped dependency and waits on it.
+                assert " up -d --no-recreate " in started, started
+                assert "--no-deps" not in started, started
+
+
+class DebugOffTakesWhatDebugTakes(unittest.TestCase):
+    """``debug-off`` accepts the FL API under the name ``debug`` starts it by (FLIP#2047)."""
+
+    def compose_calls(self, target: str, backend: str) -> list[str]:
+        """Each ``docker compose`` call the target really makes, as the stub docker prints it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            docker = Path(tmp).resolve() / "docker"
+            docker.write_text('#!/bin/sh\ncase "$1" in compose) echo "docker DEBUG=$DEBUG $*";; esac\n')
+            docker.chmod(0o755)
+            result = run_target(
+                target,
+                "SERVICE=fl-api-net-1",
+                f"FL_BACKEND={backend}",
+                subdir=".",
+                hub="",
+                env={"PATH": f"{docker.parent}:{os.environ['PATH']}"},
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            return [line for line in result.stdout.splitlines() if line.startswith("docker ")]
+
+    def test_the_fl_api_goes_into_debug_mode_and_out_of_it(self):
+        for backend in ("flower", "nvflare"):
+            for target, debug in (("debug", "true"), ("debug-off", "false")):
+                with self.subTest(backend=backend, target=target):
+                    (call,) = self.compose_calls(target, backend)
+                    assert call.startswith(f"docker DEBUG={debug} compose "), call
+                    assert f" -f deploy/compose/compose.development.{backend}.yml " in call, call
+                    assert call.endswith(" up --remove-orphans -d fl-api-net-1"), call
+
+
 class HubScratchVolumes(unittest.TestCase):
     """restart-fl and down remove a hub container's anonymous volumes with it (FLIP#1795).
 
@@ -708,8 +790,8 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
 
 
 # Every root target that acts on the hub compose project: the ones whose recipe runs compose on
-# it (see compose_targets), plus central-hub and restart-no-trust, which hand it to
-# flip-api/Makefile. `restart` is `down up`, so the guard reaches it through both.
+# it (see compose_targets), plus central-hub, which hands it to flip-api/Makefile. `restart` is
+# `down up`, so the guard reaches it through both.
 OWNER_GUARDED_TARGETS = {
     "up",
     "up-no-trust",

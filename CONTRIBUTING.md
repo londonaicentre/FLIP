@@ -388,11 +388,13 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 
 - `TRUST_API_KEY_HEADER` — HTTP header name for trust-to-hub authentication.
 - `TRUST_KEY_ROTATION_GRACE_DAYS` — how long a staged rotated trust key may stay unused before the
-  hub drops it (default 14). A deployed hub has no Terraform passthrough for it and uses the default.
+  hub drops it (default 14). Read from the env file by the development compose only; a deployed hub
+  has no Terraform passthrough for it and uses the default.
 - `TRUST_API_KEY` — single per-trust plaintext API key. Lives only in that trust's kit file
   (`trust/.env.<CODE>.<env>`), written by `make register-trusts`; never on the hub.
 - `FL_API_KEY` — the key flip-api sends to every FL API (`fl-api-net-N`) in the `FL_API_KEY_HEADER` header
-  (default `X-FL-API-Key`); every FL API route but `/health` requires it. Minted by `make up`; on ECS a
+  (default `X-FL-API-Key`, a code default on both sides that no compose file or ECS task passes);
+  every FL API route but `/health` requires it. Minted by `make up`; on ECS a
   Secrets Manager field.
 - `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
   `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
