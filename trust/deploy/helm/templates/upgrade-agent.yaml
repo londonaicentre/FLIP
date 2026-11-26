@@ -37,6 +37,11 @@
 {{- if .Values.secrets.create }}
 {{- fail "autoUpgrade.enabled needs the trust Secret managed outside the release: set secrets.create=false and secrets.existingName (make -C trust/deploy/helm deploy AUTO_UPGRADE=1 does both). With secrets.create the passwords are stored in the release record the agent can read, and the agent cannot patch the chart's Secret." }}
 {{- end }}
+{{- /* Until FLIP#2071 the agent runs neither xnat-init nor the xnat-db dump a PostgreSQL major-version change needs, so
+     a trust that runs XNAT (every production trust) is upgraded by hand. FLIP#2071 removes this guard. */}}
+{{- if .Values.xnat.enabled }}
+{{- fail "autoUpgrade.enabled cannot be used with XNAT until FLIP#2071: the agent runs neither xnat-init nor the xnat-db dump a PostgreSQL major-version change needs. Upgrade this trust by hand (make -C trust/deploy/helm upgrade-trust-k8s)." }}
+{{- end }}
 {{- if le (int .Values.autoUpgrade.activeDeadlineSeconds) 600 }}
 {{- fail "autoUpgrade.activeDeadlineSeconds must be more than 600: the agent keeps 300 s of it to report before the Job is stopped" }}
 {{- end }}

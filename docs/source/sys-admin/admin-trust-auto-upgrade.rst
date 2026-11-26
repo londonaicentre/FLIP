@@ -379,7 +379,8 @@ Turning it on or off
 
    Until FLIP#2071 lands, the agent runs neither ``xnat-init``
    nor the xnat-db dump that must precede a PostgreSQL major-version change. **Do not switch it on for a Trust that
-   runs XNAT** — which is every production Trust. Upgrade those by hand (:ref:`admin-upgrading-sites`).
+   runs XNAT** — which is every production Trust. The chart refuses ``autoUpgrade.enabled`` while ``xnat.enabled`` is
+   set, so a deploy with the agent on fails until then. Upgrade those Trusts by hand (:ref:`admin-upgrading-sites`).
 
 - **Defaults.** The agent is off in the chart and the switch is off on the hub, so every Trust starts **off** — no
   live site is surprised. The operator enables the agent at deploy time, then a Trust Admin opts in from My Trust,

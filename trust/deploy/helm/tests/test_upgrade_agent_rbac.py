@@ -58,25 +58,27 @@ KIND_TO_RESOURCE = {
 # the render against what is live before it applies.
 WRITE_VERBS = {"get", "list", "create", "update", "patch", "delete"}
 
+# The chart refuses the agent on a trust that runs XNAT until FLIP#2071, so every render that switches the agent on
+# switches XNAT off.
+AGENT_ON = ("--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=false")
+
 # The trust's per-image pins and the kit-derived values differ only in what they enable, so
 # rendering each variant is what makes the coverage check mean something.
 VARIANTS = [
-    ("defaults", ["--set", "autoUpgrade.enabled=true"]),
+    ("defaults", [*AGENT_ON]),
     (
         "optional-workloads",
         [
-            "--set",
-            "autoUpgrade.enabled=true",
+            *AGENT_ON,
             "--set",
             "autoscaling.enabled=true",
             "--set",
             "podDisruptionBudget.enabled=true",
         ],
     ),
-    (
-        "with-xnat",
-        ["--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=true"],
-    ),
+    # The agent cannot be rendered beside XNAT until FLIP#2071, so this variant checks the XNAT kinds against the
+    # Role rendered without XNAT (the Role does not depend on it): the Role is ready when the guard goes.
+    ("with-xnat", ["--set", "xnat.enabled=true"]),
 ]
 
 
@@ -126,14 +128,14 @@ def test_the_agent_is_absent_until_it_is_switched_on():
 
 
 def test_the_agent_renders_a_service_account_a_role_a_binding_and_a_cronjob():
-    docs = _render("--set", "autoUpgrade.enabled=true")
+    docs = _render(*AGENT_ON)
     for kind in ("ServiceAccount", "Role", "RoleBinding", "CronJob"):
         assert _agent(docs, kind)["metadata"]["namespace"] == "flip-trust"
 
 
 def test_the_role_never_grants_secrets():
     """A `secrets` verb here would let the agent read every credential in the trust's namespace."""
-    rendered = str(_agent(_render("--set", "autoUpgrade.enabled=true"), "Role"))
+    rendered = str(_agent(_render(*AGENT_ON), "Role"))
     assert "secrets" not in rendered.lower(), (
         "the agent reads its API key from a projected volume, which needs no RBAC; any secrets rule "
         "reopens the exposure #1644 exists to avoid"
@@ -141,7 +143,7 @@ def test_the_role_never_grants_secrets():
 
 
 def test_the_api_key_arrives_as_a_one_key_projection():
-    cronjob = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")
+    cronjob = _agent(_render(*AGENT_ON), "CronJob")
     pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
     (volume,) = [v for v in pod["volumes"] if v["name"] == "kit"]
     assert volume["name"] == "kit"
@@ -152,7 +154,7 @@ def test_the_api_key_arrives_as_a_one_key_projection():
 
 
 def _kit_secret(*extra: str) -> str:
-    cronjob = _agent(_render("--set", "autoUpgrade.enabled=true", *extra), "CronJob")
+    cronjob = _agent(_render(*AGENT_ON, *extra), "CronJob")
     (volume,) = [v for v in cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["volumes"] if v["name"] == "kit"]
     return volume["secret"]["secretName"]
 
@@ -184,7 +186,7 @@ def test_the_agent_reads_the_same_secret_as_the_trust_services(extra):
     failure: the tick pod waited forever on a Secret that did not exist).
     """
     cmd = ("--set", "fullnameOverride=site-release", *extra)
-    docs = _render("--set", "autoUpgrade.enabled=true", *cmd)
+    docs = _render(*AGENT_ON, *cmd)
     assert {_kit_secret(*cmd)} == _service_secret(docs)
 
 
@@ -220,7 +222,7 @@ def test_a_chart_created_secret_still_renders_without_the_agent():
 
 def test_the_agent_finishes_inside_the_job_deadline():
     """The agent's budget is under activeDeadlineSeconds, so it reports FAILED before it is killed."""
-    spec = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")["spec"]["jobTemplate"]["spec"]
+    spec = _agent(_render(*AGENT_ON), "CronJob")["spec"]["jobTemplate"]["spec"]
     deadline = spec["activeDeadlineSeconds"]
     pod = spec["template"]["spec"]
     args = pod["containers"][0]["args"]
@@ -238,8 +240,7 @@ def test_a_deadline_too_short_for_the_report_is_refused():
         str(CHART_DIR),
         "--set",
         "flClient.kitHostPath=/opt/flip/fl-kit",
-        "--set",
-        "autoUpgrade.enabled=true",
+        *AGENT_ON,
         "--set",
         "autoUpgrade.activeDeadlineSeconds=600",
     ]
@@ -256,7 +257,7 @@ def test_kit_secret_name_overrides_the_default():
 def test_the_role_covers_every_kind_the_chart_renders(variant, extra):
     """The rot guard: a template that renders a kind the Role lacks fails here, not on a live trust."""
     docs = _render(*extra)
-    rules = _role_rules(docs)
+    rules = _role_rules(docs if variant != "with-xnat" else _render(*AGENT_ON))
     missing = []
     for doc in docs:
         kind = doc.get("kind")
@@ -274,7 +275,7 @@ def test_the_role_covers_every_kind_the_chart_renders(variant, extra):
 
 
 def test_the_role_grants_the_verbs_an_upgrade_needs():
-    rules = _role_rules(_render("--set", "autoUpgrade.enabled=true"))
+    rules = _role_rules(_render(*AGENT_ON))
     for rule in rules:
         verbs = set(rule["verbs"])
         if "pods" in rule["resources"]:
@@ -284,7 +285,7 @@ def test_the_role_grants_the_verbs_an_upgrade_needs():
 
 
 def test_a_tick_cannot_overlap_the_next_one():
-    spec = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")["spec"]
+    spec = _agent(_render(*AGENT_ON), "CronJob")["spec"]
     assert spec["concurrencyPolicy"] == "Forbid"
     assert spec["jobTemplate"]["spec"]["backoffLimit"] == 0, (
         "a retry inside the same hour re-runs an hour-old decision; the hub's lease is then the only "
@@ -295,12 +296,12 @@ def test_a_tick_cannot_overlap_the_next_one():
 def test_the_tick_deadline_is_under_the_hubs_lease():
     """The hub's lease is 2h. A tick that outlives it would die holding it, and the release would
     only be re-attempted after expiry."""
-    spec = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")["spec"]["jobTemplate"]["spec"]
+    spec = _agent(_render(*AGENT_ON), "CronJob")["spec"]["jobTemplate"]["spec"]
     assert 0 < spec["activeDeadlineSeconds"] < 2 * 60 * 60
 
 
 def test_the_agent_runs_against_the_published_chart():
-    cronjob = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")
+    cronjob = _agent(_render(*AGENT_ON), "CronJob")
     container = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
     args = container["args"]
     # The agent is cluster-only, so it takes no mode switch; an old --mode would make argparse exit 2.
@@ -329,7 +330,7 @@ def test_the_rendered_args_are_what_the_agent_accepts():
     # dataclasses resolves annotations through sys.modules, so the module has to be registered first.
     with mock.patch.dict(sys.modules, {"trust_upgrade_agent": agent}):
         spec.loader.exec_module(agent)
-    cronjob = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")
+    cronjob = _agent(_render(*AGENT_ON), "CronJob")
     args = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["args"]
     with mock.patch.object(agent, "tick", return_value=0) as tick, mock.patch.object(agent.signal, "signal"):
         assert agent.main([str(a) for a in args]) == 0
@@ -340,9 +341,7 @@ def test_the_rendered_args_are_what_the_agent_accepts():
 
 
 def test_the_agent_sheds_every_capability_it_does_not_need():
-    pod = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")["spec"]["jobTemplate"]["spec"]["template"][
-        "spec"
-    ]
+    pod = _agent(_render(*AGENT_ON), "CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
     container = pod["containers"][0]
     assert container["securityContext"]["allowPrivilegeEscalation"] is False
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
@@ -354,9 +353,7 @@ def test_the_agent_user_can_read_its_projected_key():
     """FLIP#1644: found on kind. The kubelet writes the key root-owned; at 0400 with no fsGroup the
     agent (uid 65534) got EACCES on every tick. fsGroup must hand the file to the pod's group, the
     mode must grant that group read, and nobody else."""
-    pod = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")["spec"]["jobTemplate"]["spec"]["template"][
-        "spec"
-    ]
+    pod = _agent(_render(*AGENT_ON), "CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
     ctx = pod["securityContext"]
     (volume,) = [v for v in pod["volumes"] if v["name"] == "kit"]
     mode = volume["secret"]["defaultMode"]
@@ -368,7 +365,7 @@ def test_the_agent_user_can_read_its_projected_key():
 
 def test_the_agent_reads_health_from_the_trust_api_service():
     """FLIP#1644: the pod's loopback has no trust-api; the URL must name the Service the chart renders."""
-    docs = _render("--set", "autoUpgrade.enabled=true", "--set", "trustApi.service.port=8123")
+    docs = _render(*AGENT_ON, "--set", "trustApi.service.port=8123")
     pod = _agent(docs, "CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
     env = {e["name"]: e.get("value") for e in pod["containers"][0]["env"]}
     services = [d for d in docs if d.get("kind") == "Service" and d["metadata"]["name"] == "trust-api"]
@@ -382,9 +379,7 @@ def test_a_read_only_root_still_gets_a_writable_tmp_and_helm_home():
     """FLIP#1644, found on kind: with readOnlyRootFilesystem and no /tmp volume the upgrade died with
     "No usable temporary directory" after claiming the lease. Every path helm and tempfile write to
     must sit on a pod-scoped emptyDir."""
-    pod = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")["spec"]["jobTemplate"]["spec"]["template"][
-        "spec"
-    ]
+    pod = _agent(_render(*AGENT_ON), "CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
     (container,) = pod["containers"]
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
     mounts = {m["mountPath"]: m["name"] for m in container["volumeMounts"]}
@@ -393,3 +388,21 @@ def test_a_read_only_root_still_gets_a_writable_tmp_and_helm_home():
     env = {e["name"]: e.get("value") for e in container["env"]}
     for var in ("HOME", "HELM_CACHE_HOME", "HELM_CONFIG_HOME", "HELM_DATA_HOME"):
         assert env.get(var, "").startswith("/tmp"), f"{var} must be under the writable /tmp"
+
+
+def _render_result(*extra: str) -> subprocess.CompletedProcess[str]:
+    cmd = ["helm", "template", "flip-trust", str(CHART_DIR), "--namespace", "flip-trust"]
+    cmd += ["--set", "flClient.kitHostPath=/opt/flip/fl-kit", *extra]
+    return subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=CHART_DIR)
+
+
+def test_the_agent_is_refused_on_a_trust_that_runs_xnat():
+    """Until FLIP#2071 the agent cannot run xnat-init or the xnat-db dump, so the chart refuses it beside XNAT."""
+    out = _render_result("--set", "autoUpgrade.enabled=true", "--set", "xnat.enabled=true")
+    assert out.returncode != 0
+    assert "autoUpgrade.enabled cannot be used with XNAT until FLIP#2071" in out.stderr
+
+
+def test_xnat_alone_and_the_agent_without_xnat_still_render():
+    assert _render_result("--set", "xnat.enabled=true").returncode == 0
+    assert _render_result(*AGENT_ON).returncode == 0
