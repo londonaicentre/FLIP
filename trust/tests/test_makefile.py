@@ -222,7 +222,8 @@ class SampleDataOff(unittest.TestCase):
 class EnsureSeeded(unittest.TestCase):
     """ensure-seeded loads only an empty store, asking the store itself rather than a marker file (FLIP#2111)."""
 
-    KIT_DB = KIT + "OMOP_POSTGRES_USER=site_user\nOMOP_POSTGRES_DB=site_db\nORTHANC_USERNAME=o\nORTHANC_PASSWORD=p\n"
+    KIT_DB = KIT + "OMOP_POSTGRES_USER=site_user\nOMOP_POSTGRES_DB=site_db\n"
+    KIT_DB += "ORTHANC_USERNAME=o\nORTHANC_PASSWORD=p\n"  # pragma: allowlist secret
 
     def _ensure(self, omop_row: str, studies: str, *extra: str) -> tuple[str, str]:
         """`make -n ensure-seeded` against stub stores: what the probes asked, and the recipe that followed.
