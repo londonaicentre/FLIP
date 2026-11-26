@@ -76,7 +76,7 @@ cd trust/omop-db && OMOP_DB_PORT=5434 OMOP_POSTGRES_USER=… OMOP_POSTGRES_PASSW
 
 Seeding is how every trust gets its data:
 
-- At bring-up, `up-trust` seeds the default projects (`ensure-seeded`, which skips itself when the marker below says the trust is already seeded). A `.data_version` bump makes the next `up-trust` re-seed at the new tag.
+- At bring-up, `up-trust` seeds the default projects into an empty database (`ensure-seeded`, which skips itself once `omop.image_occurrence` holds a row). A seeded trust moves to a new `.data_version` only when re-seeded: `make -C trust seed KIT=<CODE> PROJECTS="…" CLEAR=1`.
 - On a **running** trust, the targets below load any other published project: a different set, or a third trust.
 
 Seeding is idempotent and persists in the bind-mounted volume.
@@ -101,9 +101,8 @@ either way. `seed-orthanc` (see [trust/orthanc/README.md](../orthanc/README.md))
 studies into its PACS, selected by the same column, so OMOP and PACS agree by
 construction rather than by keeping two snapshots in lockstep.
 
-A seed writes a `.seeded` marker beside the trust's `db_data` recording projects,
-partition and data version — what `ensure-seeded` compares to decide whether to
-re-seed. There is no `FORCE`: a re-seed replaces only the listed projects' rows.
+No record of a seed is kept beside the data (FLIP#2111): `ensure-seeded` asks the
+database whether it holds imaging rows. A re-seed replaces only the listed projects' rows.
 
 #### Starting the database alone
 
@@ -174,7 +173,7 @@ make -C trust/omop-db seed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> DRY_RU
 # Run it, as FLIP_GSTT_OMOP_LOADER, through a `snow connection add` entry
 make -C trust/omop-db seed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> SOURCE_TRUST=1 PROJECTS="cxr_project"
 
-# Only if the marker does not already record exactly this (the ensure-seeded equivalent)
+# Only into an OMOP with no IMAGE_OCCURRENCE row yet (the ensure-seeded equivalent)
 make -C trust/omop-db ensure-seeded-snowflake KIT=GSTT
 
 # Take a project out, as the tables at a given revision describe it
@@ -197,13 +196,13 @@ What a run does, in order:
    leaves the previous rows in place. `COPY INTO` carries `FORCE = TRUE`: Snowflake otherwise skips
    a staged file it has loaded before, which emptied the tables on a re-seed.
 4. **Counts what it loaded.** Each table's rows for the project are compared with the staged CSV.
-   A mismatch fails the run and the marker is not written.
-5. **Writes the marker last**, to `OMOP._FLIP_SEED_MARKER` (`projects` / `source_trust` /
-   `provenance`): the Snowflake equivalent of the Postgres path's `.seeded` file, rendering the
-   same text. A matching marker means nothing to do; a differing one (a `.data_version` bump, a
-   changed `PROJECTS`, a re-partition) re-seeds those projects and leaves every other project and
-   any Synthea rows alone. Last, so a run that fails part way leaves a marker that does not match
-   and the next run re-seeds.
+   A mismatch fails the run; since the OMOP then holds rows, `ensure-seeded-snowflake` would skip
+   it, so re-run `seed-omop-snowflake`.
+
+Like the Postgres seed it keeps no record of what it loaded (FLIP#2111): `ensure-seeded-snowflake` first
+asks whether `IMAGE_OCCURRENCE` holds a row (`--holds-data`, so a seeded trust downloads nothing), and a
+`.data_version` bump is an explicit `seed-omop-snowflake`, which always seeds. A
+`_FLIP_SEED_MARKER` table an earlier release created is no longer read and can be dropped.
 
 Object names follow the epic #1589 naming contract: database `FLIP_TRUST_<CODE>`, schemas `OMOP`
 and `STAGES`, stage `STAGES.SEED`, role `FLIP_<CODE>_OMOP_LOADER`, warehouse `FLIP_<CODE>_WH`.
@@ -323,8 +322,7 @@ make apply-constraints               # FK constraints go on AFTER the load
 
 `up-build` creates the bind-mount sources (`volumes/Trust_<N>/db_data`) as the invoking user
 before starting anything: left to Docker, a missing source is created by the daemon as root, and
-`seed-omop` — which writes its marker beside `db_data` — then fails with "Permission denied" on a
-checkout where the build stack ran first. A `volumes/` you cannot write to fails that target loudly,
+the invoking user can then neither reuse nor remove it. A `volumes/` you cannot write to fails that target loudly,
 with the `chown` to run.
 
 Populating runs from the host and needs `psql`/`pg_isready`

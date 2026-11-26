@@ -331,6 +331,40 @@ class TestMain:
         assert removed == [(fake_engine, tmp_path, ["spleen_project"])]
         assert fake_engine.begun == 0, "the sanity count after a load must not run on an unseed"
 
+    @pytest.mark.parametrize(("row", "answer"), [((1,), "yes"), (None, "no")])
+    def test_holds_data_answers_from_image_rows_and_loads_nothing(self, row, answer, monkeypatch, capsys, fake_engine):
+        """What seed_trust.sh asks before it fetches (FLIP#2111): image rows, since Synthea adds bare persons."""
+        asked = []
+
+        class _Conn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, statement):
+                asked.append(str(statement))
+
+                class _Result:
+                    @staticmethod
+                    def first():
+                        return row
+
+                return _Result()
+
+        class _Engine:
+            connect = staticmethod(_Conn)
+            begin = staticmethod(lambda: pytest.fail("a probe opens no transaction"))
+
+        monkeypatch.setattr(import_tables_module, "create_engine", lambda *a, **k: _Engine())
+        monkeypatch.setattr(import_tables_module, "load_project", lambda *a, **k: pytest.fail("must not load"))
+
+        import_tables_module.main(["--trust-index", "1", "--holds-data"])
+
+        assert capsys.readouterr().out.strip() == answer
+        assert asked == ["SELECT 1 FROM omop.image_occurrence LIMIT 1;"]
+
     def test_remove_strays_dispatches_with_dry_run_and_loads_nothing(self, tmp_path, monkeypatch, fake_engine):
         called = []
         monkeypatch.setattr(import_tables_module, "remove_strays", lambda *a, **k: called.append((a, k)))

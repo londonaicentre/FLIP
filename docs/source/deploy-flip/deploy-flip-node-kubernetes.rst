@@ -484,9 +484,9 @@ shares, the same one as the VM node self-test, against the deployed release:
    * - trust-api / imaging-api / data-access-api health
      - Each answers its own ``/health`` with ``"status":"ok"``.
    * - omop seeded
-     - ``omop.person`` has rows.
+     - ``omop.image_occurrence`` has rows (persons alone may be Synthea's).
    * - orthanc seeded
-     - Orthanc holds instances.
+     - Orthanc holds studies.
    * - orthanc requires auth
      - Orthanc answers 401 without credentials.
    * - xnat c-store
@@ -600,8 +600,10 @@ overlay win for the keys they set. Do not pass settings with
        device plugin.
    * - ``trustData.seed.enabled``
      - ``true``
-     - Loads the **mock** projects into OMOP (and Orthanc) on install and every upgrade. A site whose stores hold
-       real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit (see Step 1).
+     - Loads the **mock** projects into an empty OMOP (and Orthanc), on install or any later upgrade that finds it
+       empty; a store that holds data is left alone. ``make -C trust/deploy/helm reseed`` moves a seeded trust to a
+       new ``trustData.version``. A site whose stores hold real data turns it off with ``TRUST_DATA_SEED=false`` in
+       the kit (see Step 1).
    * - ``trustData.seed.orthanc``
      - ``false``
      - Also load the mock DICOM studies into Orthanc (about 2 GB per trust). A test trust taking part in imaging
@@ -675,9 +677,16 @@ When the admin refreshes your kit's hub-shared settings, see "Later — rotate h
 
 .. warning::
 
-   While ``trustData.seed.enabled`` is on, every upgrade re-applies the mock projects. A site whose stores hold real
-   data must set ``TRUST_DATA_SEED=false`` in the kit (see `Step 1 — Check out the release and copy in the kit`_);
-   the upgrade carries it into the release.
+   While ``trustData.seed.enabled`` is on, every upgrade loads the mock projects into a store that has no imaging
+   data yet. A site whose stores hold real data must set ``TRUST_DATA_SEED=false`` in the kit (see
+   `Step 1 — Check out the release and copy in the kit`_); the upgrade carries it into the release.
+
+   An upgrade never re-seeds a store that holds data (FLIP#2111). After a release that moves ``trustData.version``,
+   move a sample-data trust to it with:
+
+   .. code-block:: shell
+
+      make -C trust/deploy/helm reseed KIT=<CODE> HUB=<env>
 
 .. note::
 

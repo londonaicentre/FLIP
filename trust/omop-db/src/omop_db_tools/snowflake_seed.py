@@ -11,8 +11,8 @@
 #
 """Seed a Snowflake-hosted trust OMOP from the published canonical tables (FLIP#1580).
 
-The Snowflake twin of ``import_tables.py``. Same source, same selection, same re-seed
-semantics; a different load mechanism, because Snowflake has no row-by-row INSERT path worth
+The Snowflake twin of ``import_tables.py``. Same source, same selection; a different load
+mechanism, because Snowflake has no row-by-row INSERT path worth
 using:
 
 1. The canonical per-project CSVs are fetched from ``aicentreflip/trust-data`` at the tag in
@@ -27,11 +27,11 @@ using:
    duplicate its rows.
 4. The filtered CSVs are PUT to the ``STAGES.SEED`` internal stage and loaded with COPY INTO.
    A project's delete and its COPYs are one transaction, and the loaded rows are counted
-   against the CSVs before the marker is written.
-5. A marker table, ``OMOP._FLIP_SEED_MARKER``, records ``projects`` / ``source_trust`` /
-   provenance -- the Snowflake equivalent of the Postgres path's ``.seeded`` file, with the
-   same contract: a matching marker means nothing to do; a differing one means re-seed the
-   listed projects (delete their rows by person id, reload); other projects are untouched.
+   against the CSVs afterwards.
+5. ``--holds-data`` answers whether the trust's OMOP already holds an imaging row, the question
+   ``make -C trust ensure-seeded`` asks a Postgres trust (FLIP#2111). ``make ensure-seeded-snowflake``
+   asks it before fetching anything and seeds only an empty OMOP; no record of what was loaded is
+   kept, so a data-version bump is an explicit re-seed.
 
 Everything that talks to Snowflake goes through the ``snow`` CLI with SQL on stdin, as the
 SPCS node shape does (FLIP#1582), running as ``FLIP_<CODE>_OMOP_LOADER``. ``--dry-run`` prints
@@ -55,7 +55,6 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -70,11 +69,6 @@ from omop_db_tools.dataset import (
 )
 from omop_db_tools.import_tables import project_person_ids, validate_data_dir
 from omop_db_tools.snowflake_ddl import read_ddl, snowflake_ddl_statements
-
-#: The seed marker table, inside the OMOP schema so it travels with the data it describes
-#: (the Postgres marker lives beside the pgdata volume for the same reason). Leading
-#: underscore: it is FLIP bookkeeping, not an OMOP CDM table.
-MARKER_TABLE = "_FLIP_SEED_MARKER"
 
 #: Internal stage the filtered CSVs are PUT to before COPY INTO, per the naming contract.
 SEED_STAGE = "SEED"
@@ -145,10 +139,6 @@ class Names:
         return f"@{self.stages_schema}.{SEED_STAGE}"
 
     @property
-    def marker_table(self) -> str:
-        return f"{self.omop_schema}.{MARKER_TABLE}"
-
-    @property
     def loader_role(self) -> str:
         return f"FLIP_{self.code}_OMOP_LOADER"
 
@@ -167,118 +157,6 @@ def names_for(code: str) -> Names:
         Names: The object names.
     """
     return Names(normalise_code(code))
-
-
-# ── marker ───────────────────────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class Marker:
-    """What a trust's OMOP currently holds: projects, partition and provenance.
-
-    Deliberately the same three facts, in the same order, as the Postgres path's ``.seeded``
-    file, so ``marker_text`` renders a byte-identical string and the two backends can be
-    compared by eye during a migration.
-    """
-
-    projects: tuple[str, ...]
-    source_trust: int
-    provenance: str
-
-    def text(self) -> str:
-        """The marker as the Postgres ``.seeded`` file writes it.
-
-        Returns:
-            str: ``projects=<space separated>\\nsource_trust=<n>\\n<provenance>\\n``.
-        """
-        return f"projects={' '.join(self.projects)}\nsource_trust={self.source_trust}\n{self.provenance}\n"
-
-
-def provenance_for(revision: str | None, canonical_dir: str | None) -> str:
-    """The provenance line of a marker.
-
-    Args:
-        revision (str | None): Published data-version tag, when seeding from the dataset.
-        canonical_dir (str | None): Local canonical tree, when seeding from one instead.
-
-    Returns:
-        str: ``source=<dir>`` for a local tree (no published revision produced those rows),
-        else ``version=<tag>`` -- mirroring ``SEED_PROVENANCE`` in the omop-db Makefile.
-
-    Raises:
-        SnowflakeSeedError: When neither is given.
-    """
-    if canonical_dir:
-        return f"source={canonical_dir}"
-    if revision:
-        return f"version={revision}"
-    raise SnowflakeSeedError("a marker needs either a data-version revision or a canonical directory")
-
-
-def projects_to_reseed(wanted: Marker, current: Marker | None) -> list[str]:
-    """Which of ``wanted``'s projects must be (re-)loaded, given what is there now.
-
-    The Postgres contract, unchanged: a marker that matches exactly means nothing to do; a
-    missing marker means a fresh database; a differing one -- a data-version bump, a changed
-    project list, a re-partition -- means re-seed ALL the listed projects, because the marker
-    records no per-project version and a partial trust is worse than a redundant reload.
-
-    Args:
-        wanted (Marker): What this run is asked to produce.
-        current (Marker | None): What the marker table says is there, if anything.
-
-    Returns:
-        list[str]: Projects to re-seed; empty when the marker already matches.
-    """
-    if current is not None and current.text() == wanted.text():
-        return []
-    return list(wanted.projects)
-
-
-def sql_create_marker_table(names: Names) -> str:
-    """DDL for the seed-marker table."""
-    return (
-        f"CREATE TABLE IF NOT EXISTS {names.marker_table} (\n"
-        "    projects VARCHAR NOT NULL,\n"
-        "    source_trust NUMBER(38,0) NOT NULL,\n"
-        "    provenance VARCHAR NOT NULL,\n"
-        "    seeded_at TIMESTAMP_NTZ NOT NULL\n"
-        ");"
-    )
-
-
-def sql_read_marker(names: Names) -> str:
-    """Query returning the current marker, newest first (one row expected)."""
-    return f"SELECT projects, source_trust, provenance FROM {names.marker_table} ORDER BY seeded_at DESC LIMIT 1;"
-
-
-def sql_write_marker(names: Names, marker: Marker, now: datetime | None = None) -> list[str]:
-    """Replace the marker row with ``marker``.
-
-    A marker describes the whole OMOP, not one seed run, so the table holds exactly one row:
-    the DELETE and the INSERT together are the update.
-
-    Args:
-        names (Names): Target objects.
-        marker (Marker): The marker to record.
-        now (datetime | None): Timestamp to record; defaults to now in UTC.
-
-    Returns:
-        list[str]: Two statements.
-    """
-    stamp = (now or datetime.now(UTC)).replace(tzinfo=None).isoformat(timespec="seconds")
-    return [
-        f"DELETE FROM {names.marker_table};",
-        f"INSERT INTO {names.marker_table} (projects, source_trust, provenance, seeded_at) "
-        f"VALUES ({_literal(' '.join(marker.projects))}, {marker.source_trust}, "
-        f"{_literal(marker.provenance)}, '{stamp}'::TIMESTAMP_NTZ);",
-    ]
-
-
-def _literal(value: str) -> str:
-    """A SQL string literal with quotes and backslashes escaped."""
-    escaped = value.replace("\\", "\\\\").replace("'", "''")
-    return f"'{escaped}'"
 
 
 # ── DDL, staging and loading ─────────────────────────────────────────────────────────────
@@ -307,9 +185,9 @@ def sql_create_tables(names: Names, ddl_sql: str) -> list[str]:
         ddl_sql (str): Contents of the Postgres DDL file.
 
     Returns:
-        list[str]: DDL statements, marker table last.
+        list[str]: DDL statements.
     """
-    return [*snowflake_ddl_statements(ddl_sql, names.omop_schema), sql_create_marker_table(names)]
+    return snowflake_ddl_statements(ddl_sql, names.omop_schema)
 
 
 def sql_put(local_path: Path, stage_path: str) -> str:
@@ -449,6 +327,11 @@ def sql_count_person_rows(names: Names, person_ids: list[int], tables: list[str]
         )
         + ";"
     )
+
+
+def sql_holds_imaging(names: Names) -> str:
+    """Query that is non-empty exactly when the trust's OMOP already holds an imaging row."""
+    return f"SELECT 1 AS loaded FROM {names.omop_schema}.IMAGE_OCCURRENCE LIMIT 1;"
 
 
 def sql_dicom_vocab_loaded(names: Names) -> str:
@@ -674,60 +557,35 @@ def _row_value(row: dict[str, object], key: str) -> object:
     return None
 
 
-def read_marker(names: Names, connection: str, snow: str, dry_run: bool) -> Marker | None:
-    """The marker currently recorded in the trust's OMOP, if any.
-
-    A missing marker TABLE is not an error: it means a database that has never been seeded,
-    so the query is guarded by the CREATE TABLE IF NOT EXISTS the caller runs first.
-
-    Args:
-        names (Names): Target objects.
-        connection (str): ``snow`` connection name.
-        snow (str): The CLI executable.
-        dry_run (bool): When true nothing is executed and None is returned (unknown).
-
-    Returns:
-        Marker | None: The recorded marker, or None when there is none.
-    """
-    rows = run_sql(
-        [*sql_session_preamble(names), sql_create_marker_table(names), sql_read_marker(names)],
-        connection=connection,
-        snow=snow,
-        dry_run=dry_run,
-        capture=True,
-    )
-    if not rows:
-        return None
-    row = rows[-1]
-    projects = str(_row_value(row, "projects") or "").split()
-    source_trust = _row_value(row, "source_trust")
-    provenance = str(_row_value(row, "provenance") or "")
-    if not projects or source_trust is None:
-        return None
-    return Marker(projects=tuple(projects), source_trust=int(str(source_trust)), provenance=provenance)
+def _has_row(names: Names, query: str, table: str, connection: str, snow: str, dry_run: bool = False) -> bool:
+    """Whether ``query`` returns a row. On a fresh trust ``table`` does not exist yet (the seed
+    creates it), and Snowflake answers that with error 002003: that means no row, not a failure."""
+    try:
+        rows = run_sql(
+            [*sql_session_preamble(names), query], connection=connection, snow=snow, dry_run=dry_run, capture=True
+        )
+    except SnowflakeSeedError as e:
+        if "002003" in str(e) and f".{table}" in str(e).upper():
+            return False
+        raise
+    return bool(rows)
 
 
 def dicom_vocab_present(names: Names, connection: str, snow: str, dry_run: bool) -> bool:
     """Whether the DICOM vocabulary is already in this trust's OMOP.
 
     On a dry run this answers False, so the printed SQL shows the full seed including the
-    vocabulary load -- the interesting case to read. On a fresh trust the CONCEPT table does
-    not exist yet (the seed creates it after this check), and Snowflake answers that with
-    error 002003: that also means "not loaded", not a failure.
+    vocabulary load -- the interesting case to read.
     """
-    try:
-        rows = run_sql(
-            [*sql_session_preamble(names), sql_dicom_vocab_loaded(names)],
-            connection=connection,
-            snow=snow,
-            dry_run=dry_run,
-            capture=True,
-        )
-    except SnowflakeSeedError as e:
-        if "002003" in str(e) and ".CONCEPT" in str(e).upper():
-            return False
-        raise
-    return bool(rows)
+    return _has_row(names, sql_dicom_vocab_loaded(names), "CONCEPT", connection, snow, dry_run)
+
+
+def holds_imaging(names: Names, connection: str, snow: str) -> bool:
+    """Whether this trust's OMOP already holds imaging rows: what ``--holds-data`` answers.
+
+    Image rows, not persons, as on Postgres, whose ``ensure-seeded`` asks the same question.
+    """
+    return _has_row(names, sql_holds_imaging(names), "IMAGE_OCCURRENCE", connection, snow)
 
 
 # ── the seed and unseed flows ────────────────────────────────────────────────────────────
@@ -755,9 +613,7 @@ def build_seed_statements(
     transaction. ``snow sql`` stops at the first failing statement and the session closes
     without a COMMIT, which rolls the transaction back, so a load that fails cannot leave the
     project's tables empty. PUT is a file upload and DDL commits implicitly, so both come
-    before the BEGIN. The marker is not written here: ``main`` writes it once
-    ``verify_loaded`` has counted the rows, so a run that fails part way leaves a marker
-    that does not match and the next run re-seeds.
+    before the BEGIN.
 
     Args:
         names (Names): Target objects.
@@ -846,7 +702,7 @@ def verify_loaded(
         if wrong:
             raise SnowflakeSeedError(
                 f"{project} did not load completely into {names.omop_schema} ({', '.join(wrong)} rows). "
-                "The seed marker was not written."
+                "Re-run seed-omop-snowflake: ensure-seeded-snowflake skips an OMOP that holds any imaging row."
             )
 
 
@@ -854,9 +710,7 @@ def build_unseed_statements(names: Names, data_dir: Path, projects: list[str]) -
     """Statements that take the listed projects OUT and load nothing.
 
     The unseed twin of the scoped clean: point ``data_dir`` at the tables of the cut that IS
-    in the database to remove exactly those rows. The marker is left as it is, matching
-    ``unseed-omop`` on Postgres -- an unseed is a deliberate intervention, and the operator
-    decides what the trust should hold next.
+    in the database to remove exactly those rows, as ``unseed-omop`` does on Postgres.
 
     Args:
         names (Names): Target objects.
@@ -891,14 +745,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--partition", choices=PARTITION_MODES, default="source_trust", help="Split mode.")
     parser.add_argument("--data-dir", type=Path, default=Path("data/canonical"), help="Canonical tables directory.")
     parser.add_argument("--vocab-dir", type=Path, default=None, help="DICOM vocabulary directory.")
-    parser.add_argument("--revision", default=None, help="Data-version tag, recorded in the marker.")
-    parser.add_argument("--canonical-dir", default=None, help="Local canonical tree, recorded in the marker instead.")
     parser.add_argument("--ddl-file", type=Path, default=None, help="Postgres OMOP DDL to translate.")
     parser.add_argument(
-        "--if-needed",
+        "--holds-data",
         action="store_true",
-        help="Do nothing when the marker already records exactly these projects, partition and version, the "
-        "Snowflake equivalent of `make -C trust ensure-seeded`.",
+        help="Print yes when the trust's OMOP already holds an imaging row, else no, and do nothing else: what "
+        "`make ensure-seeded-snowflake` asks before it fetches anything. Needs only --code and --connection.",
     )
     parser.add_argument(
         "--remove-only",
@@ -910,23 +762,15 @@ def main(argv: list[str] | None = None) -> int:
 
     names = names_for(args.code)
 
+    if args.holds_data:
+        print("yes" if holds_imaging(names, args.connection, args.snow) else "no")
+        return 0
+
     if args.remove_only:
         statements = build_unseed_statements(names, args.data_dir, args.projects)
         run_sql(statements, connection=args.connection, snow=args.snow, dry_run=args.dry_run)
         print(f"✅ Unseeded {' '.join(args.projects)} from {names.database}")
         return 0
-
-    marker = Marker(
-        projects=tuple(args.projects),
-        source_trust=args.source_trust,
-        provenance=provenance_for(args.revision, args.canonical_dir),
-    )
-
-    if args.if_needed and not args.dry_run:
-        current = read_marker(names, args.connection, args.snow, dry_run=False)
-        if not projects_to_reseed(marker, current):
-            print(f"✅ OMOP ({names.database}) already seeded: {' '.join(args.projects)} ({marker.provenance})")
-            return 0
 
     validate_data_dir(args.data_dir, args.projects)
     load_vocab = not dicom_vocab_present(names, args.connection, args.snow, dry_run=args.dry_run)
@@ -963,19 +807,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.dry_run:
             verify_loaded(names, args.data_dir, args.projects, Path(tmp), args.connection, args.snow)
 
-    # Written last, and only once the counts match: a marker over empty tables would make
-    # the next --if-needed run skip the trust.
-    run_sql(
-        [*sql_session_preamble(names), *sql_write_marker(names, marker)],
-        connection=args.connection,
-        snow=args.snow,
-        dry_run=args.dry_run,
-    )
-
-    print(
-        f"✅ Seeded {names.database}.OMOP with: {' '.join(args.projects)} "
-        f"(source_trust {args.source_trust}; {marker.provenance})"
-    )
+    print(f"✅ Seeded {names.database}.OMOP with: {' '.join(args.projects)} (source_trust {args.source_trust})")
     return 0
 
 

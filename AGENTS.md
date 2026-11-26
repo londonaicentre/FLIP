@@ -270,7 +270,8 @@ make -C fl-tutorials seed-brain-mri KIT=GSTT   # seeding runs from fl-tutorials 
 **Trust data has one path — seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
 Orthanc on empty volumes and then seeds them from the published canonical tables at the version
 pinned in `trust/.data_version` — the one pin for OMOP and Orthanc together, a data version being a
-git tag on `aicentreflip/trust-data`. The seed markers, what re-seeds, and the publishing rule:
+git tag on `aicentreflip/trust-data`. Only an empty store is seeded, so a pin bump is an explicit
+re-seed (the release checklist names it). What seeds, and the publishing rule:
 [`trust/AGENTS.md`](trust/AGENTS.md#trust-data-seeding-and-versioning).
 
 ### Demo Video Recorder
@@ -355,6 +356,7 @@ Scripts in `scripts/release/` (stdlib only, so the GPU host's plain `python3` ru
 make upgrade-onprem-trust KIT=<CODE> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
 make -C trust upgrade-trust KIT=<CODE> HUB=<env> [TAG=…]                 # the verb itself (pull, recreate, XNAT in place)
 make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG=… [KUBE_CONTEXT=…]  # Helm: sync-kit → global.image.tag
+make -C trust/deploy/helm reseed KIT=<CODE> HUB=<env>   # sample-data trust after a .data_version bump: the seed hook fills only empty stores (FLIP#2111); Compose `make -C trust seed … CLEAR=1`, EC2 `make seed RESEED=1`
 make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> [YES=1]  # after an xnat-db PostgreSQL major upgrade (FLIP#1812): list, then delete, the old cluster kept for a rollback (Helm: make -C trust/deploy/helm xnat-db-remove-old-cluster)
 make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env> TAG=… # EC2 node from that root (no re-seed)
 make -C deploy/aws deploy-centralhub HUB=prod TAG=vX.Y.Z        # hub; the guard takes sha-<short7> or vX.Y.Z
@@ -371,7 +373,7 @@ warning. The resolver refuses (exit 5) a tag any site image was never built at �
 `sha-` build is path-filtered, so most `sha-` tags lack orthanc / omop-db / xnat-* / the FL client; the
 opt-outs are `FL_TAG=` and the kit's `OMOP_DB_TAG` / `ORTHANC_TAG` / `XNAT_TAG` (on Helm:
 `flClient|omopDb|orthanc|xnat.image.pin`, which beat `global.image.tag`). `up-trust` / `up-onprem-trust` / `restart-trust` / the EC2 root's `deploy` stay the
-**first-install** verbs: they run `ensure-seeded` (re-seeds on a data-version bump) and `xnat-reset`, so never use them to move a live site.
+**first-install** verbs: they run `ensure-seeded` (seeds an empty OMOP or PACS) and `xnat-reset`, so never use them to move a live site.
 The heartbeat reply carries `hub_version` + an AES-key fingerprint; trust-api's `/health` reports
 `hub_version` / `hub_key_match` / `hub_key_fingerprint` (forgotten when a heartbeat fails), and the onboarding
 checklist's *Hub-shared block current* row judges the KIT's key against that fingerprint — a refreshed kit on a

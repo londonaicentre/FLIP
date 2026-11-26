@@ -304,7 +304,7 @@ FLIP has no restore command for a trust. When you restore one with your own tool
 
    **Never run a first-install command on a restored site.** ``make up-onprem-trust``, ``make -C trust up-trust``,
    ``make -C trust restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` delete the whole
-   ``XNAT_DATA_DIR`` (archive, database and dumps) and may re-seed OMOP and Orthanc. Starting a stopped site with them
+   ``XNAT_DATA_DIR`` (archive, database and dumps). Starting a stopped site with them
    has the same effect.
 
 - **The upgrade command touches no data.** It recreates the trust containers on their existing directories (see
@@ -397,8 +397,9 @@ Restoring a Kubernetes node
 - **A restored** ``xnat-db`` **keeps its old superuser password.** The ``xnat`` application role's password is
   re-applied at every pod start, but the ``postgres`` superuser's is set only when the database is first created. See
   the :gh:`Helm chart README <trust/deploy/helm/README.md>` for rotating it by hand.
-- **Mock-data seeding runs on every upgrade** while ``trustData.seed.enabled`` is on, replacing the listed mock
-  projects' rows. If your stores hold real data, turn seeding off by setting ``TRUST_DATA_SEED=false`` in the kit file.
+- **Mock-data seeding runs on every upgrade** while ``trustData.seed.enabled`` is on, and loads the mock projects
+  into a store that has no imaging data yet. If your stores hold real data, turn seeding off by setting
+  ``TRUST_DATA_SEED=false`` in the kit file.
 
 ***********************
 Local development stack

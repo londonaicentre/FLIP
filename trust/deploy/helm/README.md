@@ -241,7 +241,8 @@ from `dicom.log` and the container log alike. See
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
 | `trustData.version` | `20261125` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
-| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
+| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc — each only while it is empty (no imaging row, no study; FLIP#2111), so an upgrade of a seeded trust loads nothing. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
+| `trustData.seed.reseed` | `false` | Seed a store that already holds data, Orthanc clearing the listed projects first. Leave it off: `make reseed KIT=<CODE>` sets it for one run of the seed Job, how a seeded trust moves to a new `trustData.version` |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
 | `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
@@ -1406,7 +1407,8 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 
 **Mock-data seed** (`trust-seed`, FLIP#1187):
 
-- A Helm `post-install,post-upgrade` hook, deleted on success and kept on failure:
+- A Helm `post-install,post-upgrade` hook that seeds only an empty store, deleted on success and kept on
+  failure (`make reseed` runs the same Job once with `trustData.seed.reseed=true`, after a version bump):
   `kubectl logs -n <ns> job/<release>-flip-trust-trust-seed` after a failed release. It fetches the canonical tables (and, with `trustData.seed.orthanc`, the DICOM sets) from
   Hugging Face at `trustData.version`, installs the loaders from FLIP at `trustData.seed.sourceRef`,
   and loads this trust's `source_trust` slice. No AWS credentials are involved.

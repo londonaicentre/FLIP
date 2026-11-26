@@ -66,8 +66,8 @@ tolerate the DICOM vocab the seed has already loaded):
   `omop_readonly_base` + `data_analyst_reader` (SELECT-only, explicit REVOKEs) — the database half of
   data-access-api's SQL-injection defence-in-depth (`data_access_api/services/cohort.py`). The analyst
   password is NOT in the image — it is set at first init from `DATA_ACCESS_POSTGRES_PASSWORD` and lives
-  in the pgdata volume; rotate via `ALTER ROLE` + kit update, or re-initialise the trust's data dir (and
-  its `.seeded` marker) with the new kit value (see CONTRIBUTING.md).
+  in the pgdata volume; rotate via `ALTER ROLE` + kit update, or re-initialise the trust's data dir
+  with the new kit value (see CONTRIBUTING.md).
 - **Canonical dataset + N-trust split** (`src/omop_db_tools/dataset.py`): mock rows are ONE dataset on
   HF (`omop-csv/<project>/`, read at the pinned tag), each row carrying `source_trust` — the trust it
   belongs to, decided by the dataset's generator. Partition modes: `source_trust` (default) and `modulo`
@@ -81,15 +81,15 @@ tolerate the DICOM vocab the seed has already loaded):
   and other projects untouched, one transaction per project) and their DICOMs (`orthanc/seed_orthanc.py`)
   into that trust, selected by `source_trust == FL_KIT_SLOT_NUMBER`. Same lifecycle as
   `load-omop-vocab`: idempotent, persists in the bind-mounted volume. `up-trust` runs it at bring-up
-  (`make -C trust ensure-seeded`, #1187) on the empty database the container initialises; a `.seeded`
-  marker beside `db_data` records projects/partition/version so a later `up` skips it and a
-  `.data_version` bump re-seeds. `load-dicom-vocab` runs first (skipped when present — its
+  (`make -C trust ensure-seeded`, #1187) on the empty database the container initialises, and only
+  there: it asks `omop.image_occurrence` for a row, so a later `up` skips a seeded trust and a
+  `.data_version` bump is an explicit `make -C trust seed … CLEAR=1` (FLIP#2111; no marker file).
+  `load-dicom-vocab` runs first (skipped when present — its
   relationship rows have no unique key). `populate` is the same loader with `--clean all`
   (`seed-omop CLEAN=all` does the same on a running trust — the one-time move off a re-cut project
   whose person ids all changed). `seed-omop CANONICAL_DIR=<dir>` loads a local canonical tree
   instead of fetching the tag (#1221): spleen and brain_mri regenerate their DICOMs locally and are
-  seeded from `make -C fl-tutorials seed-<dataset> KIT=<CODE>`, both halves local, so the marker
-  records `source=<dir>` in place of a version. `unseed-omop` (`import_tables --remove-only`) deletes
+  seeded from `make -C fl-tutorials seed-<dataset> KIT=<CODE>`, both halves local. `unseed-omop` (`import_tables --remove-only`) deletes
   the listed projects' rows by the person ids in the given tables and loads nothing — the surgical
   move off a re-cut project (point `HF_TRUST_DATA_REVISION` at the cut the trust holds).
   `remove-stray-studies` (`import_tables --remove-strays`, FLIP#2084) deletes the persons holding a
@@ -98,9 +98,9 @@ tolerate the DICOM vocab the seed has already loaded):
 - **Seeding a Snowflake trust** (#1580): `omop_db_tools.snowflake_seed` is the twin of `import_tables`,
   reached by `make -C trust/omop-db seed-omop-snowflake KIT=<CODE>` (and `ensure-seeded-snowflake` /
   `unseed-omop-snowflake`). Same canonical source, same `source_trust` selection (it calls
-  `dataset.split_for_trust`, it does not reimplement it), same re-seed contract; the load is an internal
-  stage PUT + `COPY INTO`, and the marker is the table `OMOP._FLIP_SEED_MARKER` instead of the `.seeded`
-  file, rendering the same text. The OMOP tables are **translated from
+  `dataset.split_for_trust`, it does not reimplement it); the load is an internal stage PUT + `COPY INTO`,
+  and `ensure-seeded-snowflake` asks first (`snowflake_seed --holds-data`, before any download) and seeds
+  only an OMOP with no `IMAGE_OCCURRENCE` row, as on Postgres (FLIP#2111). The OMOP tables are **translated from
   `files/OMOPCDM_postgresql_5.4_ddl.sql`** by `snowflake_ddl.py`, never maintained separately, and
   `tests/unit/test_snowflake_ddl.py` fails if a table is missed. The DICOM vocabulary is loaded first and
   skipped when present. Everything runs through `snow sql --stdin` as `FLIP_<CODE>_OMOP_LOADER` (role pinned

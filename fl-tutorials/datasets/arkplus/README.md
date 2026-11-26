@@ -82,8 +82,8 @@ alone: `make -C fl-tutorials reproduce-arkplus-omop`.
 | `omop_convert_arkplus.py` | Metadata table -> OMOP tables: person, visit, procedure and image occurrence per accession, and one `image_feature` -> `observation` pair per label (Yes/No). Ids from the project's 6,000,000 block |
 | `prepare_arkplus_dicom.py` | Fills `StudyDescription`, `ReferringPhysicianName` and `PatientSex` where empty: imaging-api drops a study without the first two and requires the third |
 
-Trusts loaded before FLIP#2084 hold the same cohorts from an unmerged loader script, with other ids
-and no seed marker. Seeding on top of them would load every study twice, so remove those rows first:
+Trusts loaded before FLIP#2084 hold the same cohorts from an unmerged loader script, with other ids.
+Seeding on top of them would load every study twice, so remove those rows first:
 
 ```bash
 make -C trust remove-stray-studies KIT=<CODE> PROJECTS=arkplus_project DRY_RUN=1  # counts only

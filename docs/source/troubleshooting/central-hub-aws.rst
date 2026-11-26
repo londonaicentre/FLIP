@@ -141,8 +141,8 @@ older ``rootCA.pem``).
 
 .. warning::
 
-   Do not use a node's ``make deploy`` to recopy a kit on a live trust. It is a first-install command that re-seeds
-   the trust's data and wipes its XNAT archive (see :ref:`admin-upgrading-sites`).
+   Do not use a node's ``make deploy`` to recopy a kit on a live trust. It is a first-install command that wipes
+   its XNAT archive (see :ref:`admin-upgrading-sites`).
 
 .. _ts-hub-fl-clients-lost:
 

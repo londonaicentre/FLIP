@@ -423,8 +423,9 @@ published per-project tables:
 
 - A data version is a git tag on the dataset, pinned in ``trust/.data_version`` (one pin for OMOP and Orthanc).
 - The download is anonymous; no AWS credentials are needed.
-- Bringing a Trust up seeds it automatically, and later starts reuse the seeded volume. A change to the pinned
-  version re-seeds it.
+- Bringing a Trust up seeds an empty database automatically, and later starts reuse the seeded volume. A change
+  to the pinned version does not reach a seeded Trust on its own: re-seed it with ``make -C trust seed`` and
+  ``CLEAR=1``.
 - By default only the chest X-ray project is seeded this way. The spleen and brain MRI projects regenerate their
   DICOM locally, so they are seeded from ``fl-tutorials`` instead, for example with
   ``make -C fl-tutorials seed-spleen KIT=GSTT``. See the :gh:`datasets README <fl-tutorials/datasets/README.md>`.
@@ -433,8 +434,9 @@ To seed by hand:
 
 .. code-block:: shell
 
-   make -C trust ensure-seeded KIT=GSTT             # seed unless already seeded at this version
+   make -C trust ensure-seeded KIT=GSTT             # seed an empty OMOP and PACS; leave a seeded one alone
    make -C trust seed KIT=GSTT PROJECTS="…"         # load further published projects
+   make -C trust seed KIT=GSTT PROJECTS="…" CLEAR=1 # move a seeded Trust to a new pinned version
 
 Every row carries a ``source_trust`` column, its OMOP partition: N Trusts are a deterministic split of the one dataset.
 

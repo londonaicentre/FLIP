@@ -187,7 +187,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
+.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init reseed _reseed-job kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -557,35 +557,38 @@ template-egress-variants: ## Render the egress NetworkPolicy in default / harden
 clean: ## Clean up rendered output
 	@rm -f $(CHART_DIR)/*.rendered.yaml
 
-xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=false)
-	@# One shell for the whole target: the "nothing to do" case must skip the wait too, and a
-	@# bare `exit 0` in one recipe line would only end that line.
-	@# Render first and look, because with `xnat.enabled=false` the chart renders no init Job at
-	@# all (templates/xnat-init-job.yaml is guarded on both). `kubectl apply --selector` is then
-	@# handed zero objects and fails with "no objects passed to apply", which turned a deploy of a
-	@# trust that has no XNAT to configure into exit 3.
-	@# The wait ends on Complete or Failed, whichever comes first: a Job past its backoffLimit never
-	@# completes. Only a Failed condition fails it; a Failed-waiter that errors is dropped.
-	@echo "▶  Rendering XNAT init job from chart templates..."
+# Run one of the chart's hook Jobs on its own, outside a helm upgrade: render the chart with the
+# extra --set $(2), and when it renders a Job labelled app.kubernetes.io/component=$(1), replace any
+# earlier run of it and wait. $(3) names it in the output; $(4) is what to say when the chart renders
+# none (the Job's own guard is off), which is not an error.
+# One shell for the whole recipe: the "nothing to do" case must skip the wait too, and a bare
+# `exit 0` in one recipe line would only end that line.
+# Render first and look, because a guarded-off Job is not rendered at all: `kubectl apply --selector`
+# is then handed zero objects and fails with "no objects passed to apply", which turned a deploy of
+# a trust that has no XNAT to configure into exit 3.
+# The wait ends on Complete or Failed, whichever comes first: a Job past its backoffLimit never
+# completes. Only a Failed condition fails it; a Failed-waiter that errors is dropped.
+define run_chart_job
+	@echo "▶  Rendering the $(3) job from chart templates..."
 	@tmp=$$(mktemp); \
 	trap 'rm -f "$$tmp"' EXIT; \
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		$(VALUES_OPTS) \
-		--set xnat.initJob.enabled=true > $$tmp \
-		|| { echo "❌  could not render the chart — xnat-init not run."; exit 1; }; \
-	if ! grep -q 'app.kubernetes.io/component: xnat-init' $$tmp; then \
-		echo "⏭  XNAT is disabled (xnat.enabled=false) — nothing to initialise."; \
+		--set $(2) > $$tmp \
+		|| { echo "❌  could not render the chart — $(3) not run."; exit 1; }; \
+	if ! grep -q 'app.kubernetes.io/component: $(1)' $$tmp; then \
+		echo "⏭  $(4)"; \
 		exit 0; \
 	fi; \
-	$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
+	$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=$(1) \
 		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT) || exit 1; \
 	$(KUBECTL) apply -n $(NAMESPACE) -f $$tmp \
-		--selector app.kubernetes.io/component=xnat-init || exit 1; \
-	echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."; \
-	init="--selector app.kubernetes.io/component=xnat-init --namespace $(NAMESPACE) --timeout=$(HELM_TIMEOUT)"; \
-	$(KUBECTL) wait job $$init --for=condition=complete > /dev/null & complete=$$!; \
-	$(KUBECTL) wait job $$init --for=condition=failed > /dev/null 2>&1 & failed=$$!; \
+		--selector app.kubernetes.io/component=$(1) || exit 1; \
+	echo "⏳  Waiting for the $(3) job to complete (timeout $(HELM_TIMEOUT))..."; \
+	job="--selector app.kubernetes.io/component=$(1) --namespace $(NAMESPACE) --timeout=$(HELM_TIMEOUT)"; \
+	$(KUBECTL) wait job $$job --for=condition=complete > /dev/null & complete=$$!; \
+	$(KUBECTL) wait job $$job --for=condition=failed > /dev/null 2>&1 & failed=$$!; \
 	job_failed=; \
 	while kill -0 $$complete 2>/dev/null; do \
 		if [ -n "$$failed" ] && ! kill -0 $$failed 2>/dev/null; then \
@@ -596,14 +599,33 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	done; \
 	if [ -z "$$job_failed" ] && wait $$complete; then \
 		[ -z "$$failed" ] || kill $$failed 2>/dev/null; \
-		echo "✅  XNAT init complete."; \
+		echo "✅  $(3) complete."; \
 	else \
 		kill $$complete $$failed 2>/dev/null; \
 		if [ -n "$$job_failed" ]; then reason="the Job failed"; else reason="it did not complete in $(HELM_TIMEOUT)"; fi; \
-		echo "❌  XNAT init failed ($$reason) — check logs:"; \
-		$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
+		echo "❌  $(3) failed ($$reason) — check logs:"; \
+		$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=$(1) --tail=40; \
 		exit 1; \
 	fi
+endef
+
+xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=false)
+	$(call run_chart_job,xnat-init,xnat.initJob.enabled=true,XNAT init,XNAT is disabled (xnat.enabled=false) — nothing to initialise.)
+
+# The trust-seed hook seeds only an empty store (FLIP#2111), so neither an upgrade nor a
+# trustData.version bump reaches a seeded trust. This runs it once with trustData.seed.reseed=true:
+# OMOP's listed projects reloaded, Orthanc's cleared and re-uploaded, at the release's version.
+# KIT is required, and its k8s-trust-<KIT>.yaml with it (OVERRIDES_FILE= names another): the
+# partition (trustNumber, trustData.seed.sourceTrust) comes from that override, and without it the
+# Job would load slot 1's data into any trust.
+reseed: ## Re-seed a seeded trust's sample data at its trustData.version (after a pin bump); needs KIT
+	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> is required: the re-seed loads that trust's partition, from its override"; exit 1; }
+	@[ -f "$(RESEED_OVERRIDES)" ] || { echo "❌ $(RESEED_OVERRIDES) not found — run make sync-kit KIT=$(KIT) first"; exit 1; }
+	@$(SUBMAKE) --no-print-directory _reseed-job KIT=$(KIT) HUB=$(HUB) OVERRIDES_FILE=$(RESEED_OVERRIDES)
+RESEED_OVERRIDES = $(or $(OVERRIDES_FILE),$(CHART_DIR)/k8s-trust-$(KIT).yaml)
+
+_reseed-job:
+	$(call run_chart_job,trust-seed,trustData.seed.reseed=true,Trust re-seed,Seeding is off for this release (trustData.seed) — nothing to re-seed.)
 
 sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s HUB=stag"; exit 1)

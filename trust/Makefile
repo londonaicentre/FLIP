@@ -582,14 +582,6 @@ prepare-host-dirs:
 	  echo "❌ prepare-host-dirs sets directory owners to the containers' uids, which needs root."; \
 	  echo "   Run it as root on the trust host (sudo -E make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))),"; \
 	  echo "   or ask the host owner to."; exit 1; }
-	@# The seed markers are written beside the OMOP and Orthanc dirs by the operator's own bring-up
-	@# (OMOP_SEED_MARKER / ORTHANC_SEED_MARKER below), so that parent is theirs to create: made here
-	@# it would be root's, and ensure-seeded would fail on the marker after a complete seed.
-	@for d in "$(OMOP_DATA_ABS)" "$(ORTHANC_STORAGE_ABS)"; do \
-	  parent="$$(dirname "$$d")"; [ -d "$$parent" ] || { \
-	    echo "❌ $$parent does not exist. Create it as yourself first (mkdir -p $$parent): the bring-up writes"; \
-	    echo "   the seed markers beside the data dirs, and a parent made here would be root's."; exit 1; }; \
-	done
 	@base="$(IMAGES_BASE)"; mkdir -p "$$base"; \
 	[ "$$($(call stat_fmt,%u) "$$base")" = "$(API_UID)" ] || chown $(API_UID):$(API_GID) "$$base"
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
@@ -605,9 +597,8 @@ prepare-host-dirs:
 # Pull/build behaviour: see UP_PULL_FLAGS above. require-xnat-aetitle goes first so a bad
 # kit is refused before anything is created or fetched.
 #
-# FIRST-INSTALL VERB. Its ensure-seeded step (re-)seeds the data volumes whenever the
-# seed markers differ from the kit's PROJECTS / data version (never with TRUST_DATA_SEED=false),
-# and its up-xnat step runs xnat-reset, which wipes the XNAT archive and database — never run
+# FIRST-INSTALL VERB. Its ensure-seeded step seeds an empty OMOP or PACS (never with
+# TRUST_DATA_SEED=false), and its up-xnat step runs xnat-reset, which wipes the XNAT archive and database — never run
 # it, or restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
 up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(require_kit_file)
@@ -724,7 +715,7 @@ endef
 #
 # Deliberately NOT up-trust, and not restart-trust: up-trust is the first-install verb,
 # whose up-xnat step runs xnat-reset (wiping the XNAT archive and database) and whose
-# ensure-seeded step can replace the data volumes. A policy edit has no business going
+# ensure-seeded step seeds an empty OMOP or PACS. A policy edit has no business going
 # anywhere near either. Nor does it pull images or pre-create data dirs: --pull never keeps
 # a dev compose's pull_policy: always from swapping the image under the edit, and the net
 # dirs of a live trust already exist (as in _upgrade-trust-apply).
@@ -823,12 +814,11 @@ restart-trust: down-trust up-trust
 # ── Release upgrade (FLIP#1204) ───────────────────────────────────────────
 # Move a LIVE trust to a release, data intact: "pull the target tag, recreate what
 # changed, touch no data". Deliberately not a prerequisite chain through up-trust —
-# that is the first-install verb, and both of its data steps rewrite a live site:
-# ensure-seeded re-seeds OMOP/Orthanc whenever the seed markers differ from the kit
-# (a .data_version bump or changed PROJECTS replaces those projects' rows and studies),
-# and up-xnat runs xnat-reset (`sudo rm -rf $XNAT_DATA_DIR`, archive AND database).
+# that is the first-install verb, and its data steps belong to a first install:
+# ensure-seeded loads the sample data into an empty OMOP or PACS, and up-xnat runs
+# xnat-reset (`sudo rm -rf $XNAT_DATA_DIR`, archive AND database).
 # restart-trust inherits all of that. A deliberate re-seed stays an explicit
-# `make -C trust ensure-seeded`, never a side effect of an upgrade. Use this for every redeploy of
+# `make -C trust seed`, never a side effect of an upgrade. Use this for every redeploy of
 # an existing site; use up-trust only to install one.
 #
 # Two phases, because the kit is -include'd at parse time: phase 1 lets the resolver
@@ -999,16 +989,8 @@ down-fl-clients-kit:
 # The two data bind sources, resolved to what the compose file mounts, as absolute paths:
 # the sub-makes in omop-db/ and orthanc/ run from their own directories, so a relative
 # kit value (./omop-db/volumes/Trust_1/db_data) would resolve one level too deep there.
-# The seed markers sit BESIDE each store (the store itself is owned by the container uid):
-# volumes/Trust_<N>/.seeded next to db_data, and orthanc/.orthanc-storage-trust<N>.seeded
-# next to the storage dir (the default storage dirs share a parent, hence the name).
 OMOP_DATA_ABS = $(abspath $(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
 ORTHANC_STORAGE_ABS = $(abspath $(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-trust$(TRUST_NUM)))
-OMOP_SEED_MARKER = $(dir $(OMOP_DATA_ABS)).seeded
-ORTHANC_SEED_MARKER = $(dir $(ORTHANC_STORAGE_ABS)).$(notdir $(ORTHANC_STORAGE_ABS)).seeded
-# The data version everything is seeded at: the pin, or HF_TRUST_DATA_REVISION to override
-# (main, a sha) — the same resolution the omop-db and orthanc Makefiles apply.
-TRUST_DATA_REVISION = $(or $(HF_TRUST_DATA_REVISION),$(shell tr -d ' \n\r\t' < .data_version))
 
 # The containers are found by their compose labels rather than by name, so this works
 # on a second FLIP_INSTANCE too (container names are never set, see AGENTS.md).
@@ -1035,36 +1017,36 @@ wait-pacs:
 	  sleep 2; \
 	done; echo "❌ Orthanc ($(KIT)) not ready after 120s — docker logs $(call trust_container,orthanc)"; exit 1
 
-# Seed this trust if (and only if) it is not already seeded with exactly these PROJECTS at
-# this data version, for this partition. Each half keeps a marker beside its store saying
-# what it holds; a marker that matches means nothing to do (no fetch, no upload), a missing
-# one means a fresh volume, and a differing one — a .data_version bump, a changed PROJECTS,
-# a re-partition — means re-seed: OMOP replaces the listed projects' rows (--clean projects,
-# so other projects and any Synthea rows stay), Orthanc clears those projects' studies first
-# (CLEAR=1) and re-uploads. This is what a .data_version bump does to a seeded trust now;
-# there is no FORCE, because nothing here can clobber data a seed did not put there.
-# Run by up-trust; safe to call on its own after changing PROJECTS or the pin:
+# Load the sample data into each store that is still empty: OMOP with no image_occurrence row
+# (persons alone may be Synthea's, which load-synthea-ehr adds), Orthanc with no study. A store
+# that holds anything is left alone, so a later `up` fetches and uploads nothing — asked of the
+# stores themselves, with no record kept beside them (FLIP#2111). Neither a trust/.data_version
+# bump nor a changed PROJECTS reaches a seeded trust from here: re-seed it explicitly with
+# `make -C trust seed KIT=<CODE> PROJECTS="…" CLEAR=1` (the release checklist says so whenever
+# the pin moved). A seed that failed part-way leaves a store that is not empty: re-run the seed.
+# The node self-test (deploy/scripts/selftest_node.sh) makes the same two probes.
+# Run by up-trust; safe to call on its own:
 #   make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project prostate_project"
 # A real trust, whose OMOP and PACS hold its own data, sets TRUST_DATA_SEED=false in its kit:
-# nothing is then fetched, loaded or marked, whatever the markers or the pin say. Any value but
-# true or false is refused rather than read as true, which would seed a real trust.
+# nothing is then asked, fetched or loaded. Any value but true or false is refused rather than
+# read as true, which would seed a real trust.
 ensure-seeded: $(if $(filter true,$(TRUST_DATA_SEED_EFFECTIVE)),wait-omop-db wait-pacs)
 	$(require_kit)
 	$(require_trust_data_seed)
 ifeq ($(TRUST_DATA_SEED_EFFECTIVE),false)
 	@echo "⏭️  Sample data is off for $(KIT) (TRUST_DATA_SEED=false): nothing loaded into OMOP or the PACS."
 else
-	@want=$$(printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(TRUST_DATA_REVISION)"); \
-	if [ "$$(cat '$(OMOP_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
-	  echo "✅ OMOP ($(KIT)) already seeded: $(PROJECTS) @ $(TRUST_DATA_REVISION)"; \
+	@if docker exec $(call trust_container,omop-db) psql -U '$(OMOP_POSTGRES_USER)' -d '$(OMOP_POSTGRES_DB)' \
+	    -tAc 'SELECT 1 FROM omop.image_occurrence LIMIT 1' 2>/dev/null | grep -qx 1; then \
+	  echo "✅ OMOP ($(KIT)) already holds data, left as it is (re-seed: make -C trust seed-omop KIT=$(KIT))"; \
 	else \
 	  $(MAKE) seed-omop KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) || exit 1; \
 	fi; \
-	if [ "$$(cat '$(ORTHANC_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
-	  echo "✅ PACS ($(KIT)) already seeded: $(PROJECTS) @ $(TRUST_DATA_REVISION)"; \
+	if curl -fs --max-time 30 -u "$(ORTHANC_USERNAME):$(ORTHANC_PASSWORD)" "http://127.0.0.1:$(PACS_UI_PORT)/statistics" 2>/dev/null \
+	    | grep -Eq '"CountStudies"[[:space:]]*:[[:space:]]*[1-9]'; then \
+	  echo "✅ PACS ($(KIT)) already holds studies, left as they are (re-seed: make -C trust seed-orthanc KIT=$(KIT) CLEAR=1)"; \
 	else \
-	  clear=$$([ -f '$(ORTHANC_SEED_MARKER)' ] && echo 1); \
-	  $(MAKE) seed-orthanc KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) $${clear:+CLEAR=1} || exit 1; \
+	  $(MAKE) seed-orthanc KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) || exit 1; \
 	fi
 endif
 
@@ -1103,8 +1085,8 @@ load-adni-cohort:
 # untouched); the DICOM vocabulary is loaded first when absent, so the rows'
 # imaging concepts resolve whether or not the licensed core vocabulary
 # (`load-omop-vocab`, a separate credentialed step) has been loaded yet.
-# Persists in the bind-mounted volume; ensure-seeded re-runs it on a
-# .data_version bump.
+# Persists in the bind-mounted volume; after a .data_version bump, re-run it
+# (with seed-orthanc CLEAR=1, or `seed` for both) to move the trust to the new data.
 # The default is every project whose OMOP tables AND DICOM set are both published, because
 # ensure-seeded loads both halves from the pinned tag and a project missing either one fails
 # the bring-up. Since FLIP#1221 that is cxr_project alone: spleen and brain_mri publish their
@@ -1136,8 +1118,7 @@ seed-omop:
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
-	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(CLEAN),CLEAN=$(CLEAN)) \
-	  OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_ABS)
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(CLEAN),CLEAN=$(CLEAN))
 
 # The PACS half: this trust's slice of each project's DICOMs into its running
 # Orthanc, selected by the same source_trust column, so OMOP and PACS agree by
@@ -1152,12 +1133,13 @@ seed-orthanc:
 	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
-	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_ABS) PROJECTS="$(PROJECTS)" \
+	  PROJECTS="$(PROJECTS)" \
 	  $(if $(DICOM_SOURCE),DICOM_SOURCE=$(DICOM_SOURCE)) $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) \
 	  $(if $(CLEAR),CLEAR=$(CLEAR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 # Both halves for one trust, then for the shipped dev roster — unconditionally, unlike
-# ensure-seeded (use these to add projects to a running trust, or to force a re-seed).
+# ensure-seeded (use these to add projects to a running trust, or to re-seed one after a
+# .data_version bump, with CLEAR=1 so Orthanc replaces the studies it already holds).
 #   make -C trust seed KIT=GSTT PROJECTS="cxr_project prostate_project"
 #   make -C trust seed-trusts PROJECTS="cxr_project prostate_project"
 seed: seed-omop seed-orthanc
@@ -1179,15 +1161,14 @@ unseed-omop:
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
-	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) \
-	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR))
 
 unseed-orthanc:
 	$(refuse_seed_when_off)
 	$(ORTHANC_CMD) unseed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
-	  ORTHANC_STORAGE_DIR_TRUST_$(TRUST_NUM)=$(ORTHANC_STORAGE_DIR) PROJECTS="$(PROJECTS)" \
+	  PROJECTS="$(PROJECTS)" \
 	  $(if $(TABLES_DIR),TABLES_DIR=$(TABLES_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 unseed: unseed-orthanc unseed-omop
@@ -1202,8 +1183,7 @@ remove-stray-studies:
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
 	  OMOP_POSTGRES_DB=$(OMOP_POSTGRES_DB) PROJECTS="$(PROJECTS)" \
-	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN)) \
-	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
+	  $(if $(CANONICAL_DIR),CANONICAL_DIR=$(CANONICAL_DIR)) $(if $(DRY_RUN),DRY_RUN=$(DRY_RUN))
 
 # Publish a new data version to aicentreflip/trust-data (FLIP#1100): ONE commit on
 # main that replaces exactly the artefacts passed, then ONE tag = VERSION. The
@@ -1224,15 +1204,12 @@ publish-trust-data:
 
 # Unit tests + lint for the trust-level data tooling: publish_trust_data.py, seed_trust.sh
 # (the one seeding procedure the Kubernetes hook and the EC2 play both execute, so it runs
-# where no service suite would see it — shellcheck is the only automated signal it has), and
-# the seed-marker contract between ensure-seeded above and the two writers it dispatches to
-# (tests/test_seed_marker_contract.sh — dry-run only, needs no service). The seeders'
-# own suites are `make -C orthanc test` and `make -C omop-db local_test`.
+# where no service suite would see it — shellcheck is the only automated signal it has). The
+# seeders' own suites are `make -C orthanc test` and `make -C omop-db local_test`.
 test-trust-data-tools:
 	uv run --no-project --with pytest --with 'huggingface_hub>=1.6' pytest tests -q
 	uvx ruff@0.14.7 check publish_trust_data.py tests && uvx ruff@0.14.7 format --check publish_trust_data.py tests
 	uvx --from shellcheck-py==0.11.0.1 shellcheck seed_trust.sh
-	bash tests/test_seed_marker_contract.sh
 
 tests:
 	cd data-access-api && make test && \
