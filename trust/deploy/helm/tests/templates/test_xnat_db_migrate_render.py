@@ -57,7 +57,9 @@ def _job(*sets: str) -> dict:
 
 def test_the_hook_is_a_pre_upgrade_hook_only():
     """An install has no database to dump and no xnat-db Service to dump it from."""
-    for kind, doc in _hook().items():
+    hook = _hook()
+    assert set(hook) == {"ConfigMap", "ServiceAccount", "Role", "RoleBinding", "NetworkPolicy", "Job"}
+    for kind, doc in hook.items():
         annotations = doc["metadata"]["annotations"]
         assert annotations["helm.sh/hook"] == "pre-upgrade", kind
         assert "before-hook-creation" in annotations["helm.sh/hook-delete-policy"], kind
