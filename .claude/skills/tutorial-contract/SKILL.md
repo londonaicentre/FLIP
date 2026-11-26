@@ -155,7 +155,10 @@ parity test refuses any difference.
 true` (`flip.flower.privacy.LocalDpConfig`; a statistics app sets `false`, §5); the `flip-model-id` / `flip-project-id` /
 `flip-cohort-query` / `flip-job-dir` placeholders fl-api overrides at submit; `flip-min-clients = 2`
 as a TOML int ≥ 2 at line start (`sim-tutorial.sh` seds it for the site count, the min_clients guard
-asserts it, fl-api overrides it — it is a quorum, never a partition count); `best-model-metric` /
+asserts it, fl-api overrides it — it is a quorum, never a partition count); `flip-trusts = ""`
+(empty string; fl-api overrides it with the approved trusts' slot names and `FlipFedAvg` scopes the
+run to their SuperNodes, so the trust-scope guard asserts both the declaration and the
+`trusts=trusts_from_run_config(run_config)` wiring); `best-model-metric` /
 `best-model-metric-minimize`, a key the evaluate reply reports. Evaluation apps drop the `dp-*` and
 best-model keys, set `num-server-rounds = 1` and add `checkpoint = "model.pt"`.
 
@@ -177,6 +180,7 @@ Without it the runner exits `No data mapping` and `test_sim_tutorial_exit_status
 
 Guards that see a Flower tutorial automatically: `test_flower_platform_parity.py` (job type names a
 template, required files present, template files byte-identical), `test_flower_min_clients_wiring.py`,
+`test_flower_trust_scope_wiring.py`,
 `test_flwr_import_paths.py`, `test_sim_tutorial_exit_status.py`, `test_offline_apps.py`,
 `test_tutorial_catalogue.py` (twin query pinned, no direct `SUPERNODE_NAME` read, query shape), ruff.
 

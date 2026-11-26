@@ -24,6 +24,10 @@ emit around configure_train/aggregate_train; an evaluation-only strategy
 (``fraction_train=0.0``) emits around the evaluate phase instead, so every job
 type yields a coherent round timeline without double-emission.
 
+The grid it hands to ``FedAvg`` is scoped to the run's approved trusts
+(``trusts=``, see ``flip.flower.scope``), so a shared Flower net never dispatches a
+project's rounds to a trust outside it.
+
 Like ``flip.flower.privacy``, importing this module requires the ``flwr`` package
 (the ``flower`` extra; present in the Flower fl-server images) — it subclasses the real ``FedAvg``.
 Keep logic in the helpers; this class is wiring.
@@ -45,6 +49,7 @@ from flip.flower.progress import (
     report_round_aggregated,
     report_round_started,
 )
+from flip.flower.scope import scope_grid_to_trusts
 from flip.flower.selection import BestModelSelector
 
 __all__ = ["MIN_CLIENTS_KEY", "FlipFedAvg", "min_clients_from_run_config"]
@@ -112,6 +117,12 @@ class FlipFedAvg(FedAvg):
         min_clients: Number of participating trusts. Pins ``min_train_nodes``,
             ``min_evaluate_nodes`` and ``min_available_nodes`` unless the caller sets
             them explicitly by keyword. ``None`` leaves ``FedAvg``'s own defaults (2) in place.
+        trusts: Slot names of the trusts the run was approved for
+            (``flip.flower.scope.trusts_from_run_config``). The grid handed to flwr is scoped
+            to those trusts' SuperNodes, so no round can be dispatched to a trust outside the
+            project when several share a Flower net. ``None`` or empty leaves the grid
+            unscoped and logs a warning — the off-platform case (flwr simulator,
+            ``submit_tutorial``), where no SuperNode carries a registered trust name.
         **kwargs: Passed through to ``FedAvg``.
     """
 
@@ -123,6 +134,7 @@ class FlipFedAvg(FedAvg):
         best_model_metric: str | None = None,
         best_model_metric_minimize: bool = False,
         min_clients: int | None = None,
+        trusts: Iterable[str] | None = None,
         **kwargs: Any,
     ) -> None:
         # flwr defaults all three node thresholds to 2, so a single-trust run waits for a second
@@ -146,6 +158,10 @@ class FlipFedAvg(FedAvg):
         self.flip = flip
         self.model_id = model_id
         self.num_rounds: int | None = None
+        # The run's approved trusts. Held rather than resolved to node ids: nodes connect and
+        # drop throughout a run, so the allow-list has to be applied to the grid's live view at
+        # each round, not frozen here.
+        self._trusts = list(trusts) if trusts is not None else []
         self._best_selector = (
             BestModelSelector(best_model_metric, minimize=best_model_metric_minimize) if best_model_metric else None
         )
@@ -162,18 +178,29 @@ class FlipFedAvg(FedAvg):
         self._telemetry = RoundTelemetry()
 
     def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, *args: Any, **kwargs: Any) -> Result:
-        """Capture the round total and mark the run as executing on the hub."""
+        """Capture the round total, scope the grid to the run's trusts, and mark the run executing."""
         # *args keeps FedAvg's optional params (timeout, …) passable positionally — a
         # kwargs-only override silently breaks such callers.
         self.num_rounds = num_rounds
+        # Scoped here, not in each hook alone: FedAvg's round loop also pushes and pulls through
+        # this same object (strategy_utils.send_and_receive), so wrapping it once is what makes
+        # the whole run — sampling, the min_available_nodes wait and every dispatch — stay on the
+        # project's SuperNodes.
+        grid = self._scoped(grid)
         self.flip.update_status(self.model_id, ModelStatus.RUNNING)
         return super().start(grid, initial_arrays, num_rounds, *args, **kwargs)
+
+    def _scoped(self, grid: Grid) -> Grid:
+        """The grid restricted to the run's approved trusts (idempotent, see ``flip.flower.scope``)."""
+        return scope_grid_to_trusts(grid, self._trusts)
 
     def configure_train(
         self, server_round: int, arrays: ArrayRecord, config: ConfigRecord, grid: Grid
     ) -> Iterable[Message]:
         """Dispatch the round's train tasks, reporting the round start."""
-        messages = list(super().configure_train(server_round, arrays, config, grid))
+        # Re-scoped rather than assumed: a subclass (or a caller driving the hooks itself) may
+        # pass the unscoped grid straight in, and scoping is idempotent.
+        messages = list(super().configure_train(server_round, arrays, config, self._scoped(grid)))
         self._telemetry.record_dispatch("train", {msg.metadata.dst_node_id for msg in messages})
         if messages:
             report_round_started(self.flip, self.model_id, server_round, self.num_rounds)
@@ -197,7 +224,7 @@ class FlipFedAvg(FedAvg):
         self, server_round: int, arrays: ArrayRecord, config: ConfigRecord, grid: Grid
     ) -> Iterable[Message]:
         """Dispatch the round's evaluate tasks; owns the round events when nothing trains."""
-        messages = list(super().configure_evaluate(server_round, arrays, config, grid))
+        messages = list(super().configure_evaluate(server_round, arrays, config, self._scoped(grid)))
         # Always recorded — evaluate absences must resolve against the evaluate
         # roster even when the train phase owns the round events.
         self._telemetry.record_dispatch("evaluate", {msg.metadata.dst_node_id for msg in messages})

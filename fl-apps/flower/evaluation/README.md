@@ -97,6 +97,7 @@ keys at submission:
 | `checkpoint` | Filename of the checkpoint to evaluate, relative to `flip-job-dir`. Dummy placeholder in `pyproject.toml`; the real value comes from the researcher's uploaded `config.toml` (the FL API injects only the `flip-*` keys below). |
 | `flip-model-id` / `flip-project-id` / `flip-cohort-query` / `flip-job-dir` | FLIP plumbing injected by the FL API at submission time. |
 | `flip-min-clients` | Quorum for the run. The FL API overrides the placeholder at submit time with the number of participating trusts; the placeholder must exist because `flwr` rejects a `--run-config` key the app config does not declare. A malformed or zero value raises in `min_clients_from_run_config` / the `EvaluationStrategy` constructor, and the model is marked `ERROR`. |
+| `flip-trusts` | The approved trusts' FL kit slot names, comma-separated. The FL API overrides the placeholder at submit time; `FlipFedAvg` evaluates on those trusts' SuperNodes only, so a net shared with other trusts does not widen the run. Empty off-platform (the simulator's nodes carry no registered names). A value that names no trust raises in `trusts_from_run_config` and the model is marked `ERROR`. |
 | `local-epochs`, `learning-rate`, `batch-size`, `spatial-dims`, `num-classes` | Placeholders for model/training config consumed by user code; unused by this template's own server logic. |
 
 ## Local test

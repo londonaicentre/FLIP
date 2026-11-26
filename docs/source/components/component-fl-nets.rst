@@ -123,8 +123,10 @@ model is left as it is, and the next tick tries again.
   scheduler holds the job until all of them are connected. It retries for about 40 minutes, and then the job ends
   and the model is set to ``ERROR``. While no client at all is connected to the net, FLARE does not try, so the hub
   fails the job itself once it has waited ``FL_JOB_START_TIMEOUT_MINUTES``.
-- **Flower** waits until at least as many SuperNodes are connected as Trusts were selected, then trains on
-  **every SuperNode connected to the net**, selected or not.
+- **Flower** waits until at least as many SuperNodes are connected as Trusts were selected, and trains on the
+  SuperNodes of **those Trusts only**. The hub sends the run the selected Trusts' kit-slot names, and the
+  SuperLink holds the same name against each SuperNode's registered key, so the server can tell which connected
+  node belongs to which Trust and dispatches to no other — a net shared with other Trusts does not widen a run.
 
 On both backends a selected Trust that is not connected when the job is submitted does not stop it: the model's
 log names the Trust and says what the backend does next.

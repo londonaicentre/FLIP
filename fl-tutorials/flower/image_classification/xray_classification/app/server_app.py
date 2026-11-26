@@ -22,6 +22,7 @@ import torch
 from flip import FLIP
 from flip.constants import PTConstants
 from flip.constants.flip_constants import ModelStatus
+from flip.flower.scope import trusts_from_run_config
 from flip.flower.selection import parse_best_model_run_config
 from flip.flower.strategy import min_clients_from_run_config
 from flwr.app import ArrayRecord, Context
@@ -61,6 +62,10 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     try:
         best_model_metric, best_model_metric_minimize = parse_best_model_run_config(run_config, num_rounds=num_rounds)
         min_clients = min_clients_from_run_config(run_config)
+        # The trusts this run was approved for. The strategy dispatches to their SuperNodes
+        # and to no others, so a shared Flower net never trains a project on a trust outside
+        # it; a malformed value must fail the run rather than leave it unscoped.
+        trusts = trusts_from_run_config(run_config)
     except ValueError as err:
         # Fail the run rather than mislabel a model. ERROR is the only channel the researcher
         # can actually see — the ServerApp log stream is not surfaced through the platform.
@@ -83,6 +88,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
             flip=flip,
             model_id=model_id,
             min_clients=min_clients,
+            trusts=trusts,
             fraction_train=1.0,
             fraction_evaluate=1.0,
             best_model_metric=best_model_metric,

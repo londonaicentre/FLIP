@@ -64,7 +64,13 @@ def upsert_flwr_run_config(
         model_id: Model ID to inject as ``flip-model-id``.
         project_id: Project ID to inject as ``flip-project-id``.
         cohort_query: Cohort query to inject as ``flip-cohort-query``.
-        trusts: Participating trusts; their count is injected as ``flip-min-clients``.
+        trusts: Participating trusts; their count is injected as ``flip-min-clients`` and their
+            slot names as ``flip-trusts``.
+
+    Raises:
+        ValueError: If a trust slot name contains a comma, which is the separator of the
+            ``flip-trusts`` value — such a name would split into two the strategy cannot match,
+            and the run would train on fewer trusts than were approved.
     """
     doc = parse(config_path.read_text()) if config_path.exists() else parse("")
 
@@ -79,6 +85,22 @@ def upsert_flwr_run_config(
     # ServerApp log, which the platform does not surface. The FLARE adapter has always done
     # the equivalent (each workflow's min_clients = len(trusts) in configure_server).
     doc["flip-min-clients"] = len(trusts)
+    # The names behind that count. A Flower net is shared by every trust onboarded onto it, and
+    # flwr's FedAvg samples from every connected SuperNode, so the count alone cannot keep a run
+    # on the trusts its project was approved for. These are the hub's FL kit slot names, which
+    # are also the names the SuperLink holds against each SuperNode's registered public key
+    # (register-supernode-keys.sh: `flwr supernode register <key> --name Trust_<N>`), so the
+    # strategy can map them to node ids from SuperLink-authenticated information alone
+    # (flip.flower.scope). A run-config value is a scalar, hence comma-separated.
+    # This is written here, after the researcher's bundle has been downloaded, so an uploaded
+    # config.toml cannot set it: the platform's value always wins (FLIP#1743, FLIP-SR-048).
+    invalid = [name for name in trusts if "," in name]
+    if invalid:
+        raise ValueError(
+            f"Trust slot names must not contain a comma, got {invalid} — the flip-trusts run "
+            "config value is comma-separated, so such a name would scope the run to the wrong set"
+        )
+    doc["flip-trusts"] = ",".join(trusts)
 
     config_path.write_text(dumps(doc))
 

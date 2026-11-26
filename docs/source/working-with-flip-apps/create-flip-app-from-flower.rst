@@ -291,6 +291,29 @@ will:
    ``make submit``, and a low constant would let a round start before every Trust has connected — silently training
    on part of the federation.
 
+.. warning::
+
+   **Scope the run to its Trusts with** ``flip-trusts``. A Flower net is shared by every Trust onboarded onto it,
+   and flwr's ``FedAvg`` samples from every connected SuperNode. FLIP injects ``flip-trusts`` with the kit-slot
+   names of the Trusts the run was approved for — the same names the SuperLink holds against each SuperNode's
+   registered key — and ``FlipFedAvg`` uses them to dispatch to those SuperNodes only:
+
+   .. code-block:: python
+
+      from flip.flower.scope import trusts_from_run_config
+
+      strategy = FedAvgWithClientMetrics(
+          flip=flip,
+          model_id=model_id,
+          min_clients=min_clients_from_run_config(run_config),
+          trusts=trusts_from_run_config(run_config),
+      )
+
+   The template already does this, so an uploaded app inherits it. A strategy built on flwr's ``FedAvg`` directly
+   must pass ``trusts`` itself, or its rounds reach every Trust on the net. As with ``min_clients``, never
+   substitute a hard-coded list when the key is absent: the helper returns ``None``, which is correct for a local
+   ``flwr run .`` (no SuperNode there carries a registered name).
+
 ****************************************
 ClientApp: fetching the FLIP DataFrame
 ****************************************
@@ -569,6 +592,7 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
    flip-cohort-query = "*"
    flip-job-dir = "job-dir"
    flip-min-clients = 2  # placeholder matching flwr's default; FLIP injects the trust count
+   flip-trusts = ""      # placeholder; FLIP injects the approved Trusts' slot names
    # Best-model selection (opt-in) — see below
    best-model-metric = ""
    best-model-metric-minimize = false
@@ -634,8 +658,9 @@ app. FLIP checks that the required files for the job type are present (they diff
 When you submit, FLIP:
 
 - injects ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query``, ``flip-min-clients`` (the number of
-  participating Trusts) and ``flip-job-dir`` (the app directory, where an ``evaluation`` job finds its uploaded
-  checkpoint) into the run config, on top of your ``config.toml``;
+  participating Trusts), ``flip-trusts`` (their kit-slot names, which scope the run to their SuperNodes) and
+  ``flip-job-dir`` (the app directory, where an ``evaluation`` job finds its uploaded checkpoint) into the run
+  config, on top of your ``config.toml``;
 - starts the ``ServerApp`` on the Central Hub's SuperLink and the ``ClientApp`` on each approved Trust's SuperNode.
 
 ************************************
@@ -727,8 +752,8 @@ Common pitfalls
   ``flip-utils`` the run should use. Leave it undeclared; on the platform the app always imports the FL image's copy.
 - **Undeclared run-config keys.** Flower — and therefore FLIP — can only override keys already declared in
   ``[tool.flwr.app.config]``. Declare ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query``,
-  ``flip-job-dir`` and ``flip-min-clients`` with placeholder values in your own ``pyproject.toml``, or a local run
-  fails. On the platform, the template's ``pyproject.toml`` (under ``fl-apps/flower/<job_type>/``) is what FLIP's
+  ``flip-job-dir``, ``flip-min-clients`` and ``flip-trusts`` with placeholder values in your own
+  ``pyproject.toml``, or a local run fails. On the platform, the template's ``pyproject.toml`` (under ``fl-apps/flower/<job_type>/``) is what FLIP's
   overrides and your ``config.toml`` are checked against; an uploaded ``pyproject.toml`` is not used.
 - **One failing accession aborting the round.** If a Trust lacks the requested ``ResourceType`` for an accession,
   ``get_by_accession_number`` raises. Wrap the call in ``try / except`` and skip that accession, so one bad study
