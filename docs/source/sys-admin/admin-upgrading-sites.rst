@@ -32,7 +32,7 @@ Two rules apply throughout:
 .. warning::
 
    **Never use the first-install commands to move a live site.** ``make up-onprem-trust``, ``make -C trust
-   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` re-seed the mock data and **wipe
+   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` **wipe
    the XNAT archive**. Use only the upgrade commands below.
 
 .. list-table:: Upgrade command per deployment shape
@@ -432,7 +432,7 @@ Docker context as ``make deploy`` in ``trust/deploy/terraform/aws/ec2``.
    make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
 
 It takes the same options as the on-premises upgrade and never re-seeds data. ``make deploy`` remains the
-first-install command: it re-seeds OMOP and Orthanc and resets the XNAT archive.
+first-install command: it seeds an empty OMOP and Orthanc and resets the XNAT archive.
 
 .. _upgrade-rolling-back:
 

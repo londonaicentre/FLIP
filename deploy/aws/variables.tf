@@ -207,7 +207,7 @@ variable "fl_api_name" {
 }
 
 variable "fl_server_name" {
-  description = "FL server Docker image name (backend-specific: flare-fl-server or flower-fl-server)"
+  description = "FL server Docker image name (backend-specific: flare-fl-server or flower-superlink)"
   type        = string
   default     = "flare-fl-server"
 }

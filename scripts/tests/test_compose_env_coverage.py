@@ -103,10 +103,68 @@ def check_dev_composes_are_covered(failures: list[str]) -> None:
             )
 
 
+# flip-api settings the example lists as commented lines with their code default (FLIP#2047):
+# the dev compose passes each as ``${NAME:-}``, and flip_api/config.py turns the empty value
+# of a line left commented back into the default.
+OFFERED_FLIP_API_SETTINGS = (
+    "MAX_MODEL_FILE_BYTES",
+    "MAX_RESULTS_FILE_BYTES",
+    "PRE_SIGNED_URL_EXPIRATION_SECONDS",
+    "ALLOWED_MODEL_FILE_EXTENSIONS",
+    "PICKLESCAN_FILE_SUFFIXES",
+    "PICKLESCAN_TIMEOUT_SECONDS",
+    "BANDIT_TIMEOUT_SECONDS",
+    "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE",
+    "TRUST_KEY_ROTATION_GRACE_DAYS",
+)
+# FL_APP_BASE_DIR and FL_API_KEY_HEADER are not in the list: no container reads them (no compose
+# passes them, and config.py does not coerce their empty value). A line for one is still read by
+# a host run that loads flip-api's Settings from the env file, so it is not forbidden here.
+FLIP_API_CONFIG = REPO_ROOT / "flip-api" / "src" / "flip_api" / "config.py"
+
+
+def empty_coercing_settings() -> set[str]:
+    """Fields with a ``mode="before"`` validator in config.py that handles the empty string."""
+    names: set[str] = set()
+    for chunk in FLIP_API_CONFIG.read_text().split("@field_validator(")[1:]:
+        args, _, rest = chunk.partition("@classmethod")
+        body = rest.split("\n    @", 1)[0]
+        if 'mode="before"' in args and '== ""' in body:
+            names.update(re.findall(r'"([A-Z][A-Z0-9_]*)"', args))
+    return names
+
+
+def check_offered_settings_reach_flip_api(failures: list[str]) -> None:
+    example = ENV_EXAMPLE.read_text()
+    compose = (REPO_ROOT / DEV_COMPOSE_FILES[0]).read_text()
+    block = re.search(r"^  flip-api:\n((?:(?:    .*)?\n)+)", compose, re.MULTILINE)
+    if not block:
+        raise ValueError(f"{DEV_COMPOSE_FILES[0]}: no flip-api service block")
+    coerced = empty_coercing_settings()
+    if not coerced:
+        raise ValueError(f"{FLIP_API_CONFIG.name}: no empty-coercing validators found — parser broken")
+    for name in OFFERED_FLIP_API_SETTINGS:
+        if name not in coerced:
+            failures.append(
+                f"{FLIP_API_CONFIG.name}: no before-validator turns an empty {name} into its default, but the "
+                f"dev compose passes `${{{name}:-}}`: every dev flip-api would fail at boot."
+            )
+        if not re.search(rf"^# {name}=", example, re.MULTILINE):
+            failures.append(
+                f"{ENV_EXAMPLE.name}: no commented `# {name}=` line; drop it from OFFERED_FLIP_API_SETTINGS"
+            )
+        if f"      - {name}=${{{name}:-}}\n" not in block[1]:
+            failures.append(
+                f"{DEV_COMPOSE_FILES[0]}: flip-api does not pass `{name}=${{{name}:-}}`, so the example's "
+                f"`# {name}=` line changes nothing when uncommented."
+            )
+
+
 def main() -> int:
     failures: list[str] = []
     try:
         check_dev_composes_are_covered(failures)
+        check_offered_settings_reach_flip_api(failures)
     except ValueError as exc:
         failures.append(str(exc))
 

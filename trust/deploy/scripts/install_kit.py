@@ -62,6 +62,15 @@ NOT_A_KIT = "could not decrypt the kit: wrong passphrase, or not a kit downloade
 XNAT_PASSWORD_KEYS = ("XNAT_DATASOURCE_PASSWORD", "XNAT_DATASOURCE_ADMIN_PASSWORD", "XNAT_ACTIVEMQ_PASSWORD")
 TAG_KEYS = ("DOCKER_TAG", "DOCKER_FL_TAG")
 DEFAULT_FL_KIT_DIR = "/opt/flip/fl-kit"
+# The store lines a new kit file comments out (FLIP#2113): its stores go under FLIP_DATA_ROOT=/opt/flip/<CODE>-<hub>,
+# one directory per trust and hub. An existing kit file keeps its lines: the root moves no data.
+STORE_KEYS = (
+    "OMOP_DATA_DIR",
+    "ORTHANC_STORAGE_DIR",
+    "XNAT_DATA_DIR",
+    "BASE_IMAGES_DOWNLOAD_DIR",
+    "COHORT_SNAPSHOT_STORAGE_DIR",
+)
 # The uid each backend's FL client image runs as, unless the kit sets FLIP_UID.
 CLIENT_UID = {"nvflare": 1000, "flower": 49999}
 # Names a kit file answered to before FLIP#1479 (deploy/env_mode.mk's kit_names).
@@ -303,6 +312,8 @@ def install(args: argparse.Namespace) -> None:
             lines = kit_file.read_text().splitlines()
             for key in XNAT_PASSWORD_KEYS:
                 lines = tkl.upsert(lines, key, secrets.token_urlsafe(32))
+            lines = [f"# {line}" if line.split("=", 1)[0] in STORE_KEYS else line for line in lines]
+            lines = tkl.upsert(lines, "FLIP_DATA_ROOT", f"/opt/flip/{code}-{args.env}")
             tkl.write_secure(kit_file, lines)
             if os.geteuid() == 0:
                 # Under sudo the file would be root's, and make skips a kit file it cannot read without a word.
@@ -371,7 +382,7 @@ def install(args: argparse.Namespace) -> None:
         print(f"        make up-onprem-trust KIT={code}{hub}")
     else:
         print("   Next, from the repo root, with no FL job running (never up-onprem-trust on a running trust:")
-        print("   it resets XNAT and re-seeds):")
+        print("   it resets XNAT):")
         print(f"        make -C trust down-fl-clients-kit KIT={code} HUB={args.env}   # to remount the new FL kit")
         print(f"        make upgrade-onprem-trust KIT={code} YES=1{hub}   # recreates what changed, data intact")
     print()

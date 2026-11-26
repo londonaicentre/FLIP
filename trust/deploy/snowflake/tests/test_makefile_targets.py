@@ -13,12 +13,14 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 SNOWFLAKE_DIR = Path(__file__).resolve().parents[1]
+MAKEFILE = (SNOWFLAKE_DIR / "Makefile").read_text()
 TARGETS = ("plan", "apply", "destroy", "sync-kit", "up", "down", "suspend", "status", "selftest")
 
 
@@ -56,3 +58,45 @@ def test_an_unknown_root_is_refused() -> None:
     )
     assert result.returncode != 0
     assert "TF_ROOT must be workload, platform or identity" in result.stdout
+
+
+#: Every target that renders, and so sets or clears the integration from what it is given.
+RENDERING = ("render", "up", "xnat-configure", "seed-orthanc", "smoke-cstore", "reconvert-nifti", "selftest")
+
+
+def _without_hub_egress() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if key != "HUB_EGRESS"}
+
+
+@pytest.mark.parametrize("on_make_line", [True, False])
+@pytest.mark.parametrize("target", RENDERING)
+def test_a_per_run_hub_egress_is_refused_by_every_target_that_renders(target: str, on_make_line: bool) -> None:
+    """The kit holds it: a value given for one run is gone on the next, which detaches the trust.
+    render_specs.py sees it in the environment (make exports a make-line value) and stops before a
+    kit is read, so the target's own recipe (the SQL) never runs. `snow` is `false` so nothing
+    could reach an account."""
+    assert f"\n{target}: require-kit require-connection render\n" in f"\n{MAKEFILE}" or target == "render"
+    result = subprocess.run(
+        ["make", "-C", str(SNOWFLAKE_DIR), target, "KIT=GSTT", "SNOW_CONNECTION=x", "SNOW=false"]
+        + (["HUB_EGRESS=true"] if on_make_line else []),
+        capture_output=True,
+        text=True,
+        env=_without_hub_egress() if on_make_line else {**_without_hub_egress(), "HUB_EGRESS": "true"},
+    )
+    assert result.returncode != 0
+    assert "HUB_EGRESS" in result.stderr
+    assert "kit" in result.stderr
+    assert "CREATE" not in result.stdout
+    assert "EXECUTE" not in result.stdout
+
+
+@pytest.mark.parametrize("target", ["help", "status", "suspend", "down", "plan"])
+def test_an_exported_hub_egress_does_not_block_the_targets_that_render_nothing(target: str) -> None:
+    """`suspend` is the cost-control verb: a variable left in a shell must not stop it."""
+    result = subprocess.run(
+        ["make", "-n", "-C", str(SNOWFLAKE_DIR), target, "KIT=GSTT", "SNOW_CONNECTION=x"],
+        capture_output=True,
+        text=True,
+        env={**_without_hub_egress(), "HUB_EGRESS": "true"},
+    )
+    assert result.returncode == 0, result.stderr

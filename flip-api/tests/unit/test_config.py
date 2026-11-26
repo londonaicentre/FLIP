@@ -75,6 +75,28 @@ def test_picklescan_suffixes_default_and_parsing():
     assert Settings(PICKLESCAN_FILE_SUFFIXES="").PICKLESCAN_FILE_SUFFIXES == Settings().PICKLESCAN_FILE_SUFFIXES
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "MAX_MODEL_FILE_BYTES",
+        "MAX_RESULTS_FILE_BYTES",
+        "PRE_SIGNED_URL_EXPIRATION_SECONDS",
+        "ALLOWED_MODEL_FILE_EXTENSIONS",
+        "PICKLESCAN_FILE_SUFFIXES",
+        "PICKLESCAN_TIMEOUT_SECONDS",
+        "BANDIT_TIMEOUT_SECONDS",
+        "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE",
+        "TRUST_KEY_ROTATION_GRACE_DAYS",
+    ],
+)
+def test_settings_the_dev_compose_passes_empty_keep_their_default(name):
+    """The dev compose passes each as ``${NAME:-}``: empty unless the env file sets it (FLIP#2047).
+
+    One of them rejecting the empty string would stop every development flip-api at boot.
+    """
+    assert getattr(Settings(**{name: ""}), name) == getattr(Settings(), name)
+
+
 def test_scan_int_settings_empty_string_falls_back_to_default():
     """Empty-string ints must fall back, not blow up at import time.
 

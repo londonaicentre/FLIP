@@ -20,6 +20,7 @@ egress" and it has to be provable offline.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -194,3 +195,35 @@ def test_the_integration_is_an_option_of_the_service_not_of_its_spec(tmp_path: P
         "ALTER SERVICE FLIP_TRUST_GSTT.APP.TRUST_API SET EXTERNAL_ACCESS_INTEGRATIONS = (FLIP_GSTT_HUB_EAI);" in altered
     )
     assert "ALTER SERVICE FLIP_TRUST_GSTT.APP.XNAT_DB UNSET EXTERNAL_ACCESS_INTEGRATIONS;" in altered
+
+
+def render_cli(kit_file: Path, out: Path, **env: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SNOWFLAKE_DIR / "render_specs.py"), "--kit", CODE, "--env", ENV]
+        + ["--kit-file", str(kit_file), "--out-dir", str(out)],
+        capture_output=True,
+        text=True,
+        env={key: value for key, value in os.environ.items() if key != "HUB_EGRESS"} | env,
+    )
+
+
+def test_the_kit_is_the_only_place_that_holds_the_switch(tmp_path: Path, kit: dict[str, str]) -> None:
+    """Given per run it was stored nowhere, and the next `make up` without it issued
+    UNSET EXTERNAL_ACCESS_INTEGRATIONS: the trust left the hub and the FL network, exit 0."""
+    kit_file = tmp_path / "kit.env"
+    kit_file.write_text("".join(f"{key}={value}\n" for key, value in {**kit, "HUB_EGRESS": "true"}.items()))
+    out = tmp_path / "rendered"
+    result = render_cli(kit_file, out)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["external_access_integrations"] == ["FLIP_GSTT_HUB_EAI"]
+
+
+@pytest.mark.parametrize("value", ["true", "false", ""])
+def test_a_per_run_switch_is_refused_naming_the_kit(tmp_path: Path, kit_file: Path, value: str) -> None:
+    out = tmp_path / "rendered"
+    result = render_cli(kit_file, out, HUB_EGRESS=value)
+    assert result.returncode != 0
+    assert "HUB_EGRESS" in result.stderr
+    assert "kit" in result.stderr
+    assert not out.exists(), "nothing may be rendered from a switch the next run will not have"

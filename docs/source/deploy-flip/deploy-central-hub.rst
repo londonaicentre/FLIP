@@ -381,7 +381,11 @@ again and deliver the newer kit. A kit lost in transit is recovered the same way
 lost one, and the site never stopped working.
 
 ``TRUST_KEY_ROTATION_GRACE_DAYS`` is a flip-api setting with no Terraform passthrough, so a deployed hub always uses
-the 14-day default; only a local hub reads it from ``.env.<hub>``.
+the 14-day default; only a local development hub reads it from ``.env.development``. The same holds for the other
+flip-api settings the env example lists as commented lines (upload size caps, presigned-URL lifetime, allowed file
+types, scan timings): a deployed hub runs the code defaults, except ``MAX_MODEL_FILE_BYTES``, which the ECS task
+definition fixes at 5,000,000,000 bytes. ``LOG_LEVEL``, ``NET_ENDPOINTS`` and ``DB_PORT`` in ``.env.<hub>`` are not
+read by a deployed hub either: it logs at ``INFO``, and Terraform sets the other two.
 
 **For a key known to be leaked, cut it off at once** with ``REVOKE_OLD=1``:
 
@@ -413,7 +417,7 @@ Two more things to plan for:
 
        make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
-  Do **not** use that root's ``deploy``: it is a first-install command that re-seeds the trust's data and resets XNAT.
+  Do **not** use that root's ``deploy``: it is a first-install command that resets XNAT.
 
   The hub never checks the trust-internal service key, so a site on a Docker Compose host can also rotate it on its
   own, without the hub and without touching its API key:
@@ -512,8 +516,7 @@ one maintenance window.
 2. **Redeploy the hub and every trust** in the same window: ``deploy-centralhub`` for the hub (see
    :ref:`deploy-central-hub-deploys`), and the upgrade command for each trust's platform (``upgrade-onprem-trust``,
    ``upgrade-trust-k8s``, or an EC2 node's ``make upgrade``; see :ref:`admin-upgrading-sites`). Do not use a
-   first-install command (``up-onprem-trust``, an EC2 node's ``make deploy``) here: it re-seeds the trust's data and
-   resets XNAT.
+   first-install command (``up-onprem-trust``, an EC2 node's ``make deploy``) here: it resets XNAT.
 3. **Resume.** Disable Deployment Mode.
 
 .. warning::
@@ -756,7 +759,7 @@ old state would destroy it. Move the hub instead:
    new either way, so invite every user again and re-grant their roles.
 4. **Re-onboard each trust** against the new hub from Step 1 of :ref:`onboarding-a-trust`. The hub URL, AES key and
    FL kit all change. On a trust host that is already running, install the new kit and FL kit and upgrade the trust;
-   do not use the first-install commands, which re-seed its data and reset XNAT.
+   do not use the first-install commands, which reset XNAT.
 5. **Destroy the old account's stack** once no trust points at it, from a checkout of a release that still has that mode
    (``v0.13.2`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
    the Cognito pool, the ``FLIP_API`` secret and the S3 buckets: delete them by hand, or close the account.

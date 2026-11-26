@@ -97,7 +97,8 @@ Things worth knowing before touching any of it:
   script's manifest, to all three workflow `env:` blocks, and to both GitHub
   environments — `scripts/tests/test_compose_ci_env.sh` fails the build otherwise.
   `FL_EDGE_PORT` (`TF_VAR_fl_edge_port`, FLIP#1852) is an optional key there: unset,
-  the kits flip-api issues carry `FL_SERVER_PORT`, so the staging environment must set it.
+  the kits flip-api issues carry `FL_SERVER_PORT`, so the staging environment must set it (8003), and production
+  sets it to 443 once its trusts dial that listener (FLIP#2051; see the README beside it).
 - **flip-api's task env carries the hub-shared kit values** (`locals.tf`, FLIP#1852):
   `FL_KITS_URI` (the kit bucket prefix of the active backend's kit date),
   `CENTRAL_HUB_API_URL`, both kit dates, `DOCKER_TAG`, `DOCKER_FL_TAG`, `NLB_SUBDOMAIN`,

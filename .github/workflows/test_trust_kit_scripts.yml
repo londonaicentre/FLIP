@@ -63,7 +63,8 @@ on:
       # mirror manifest (FLIP#1721).
       - "trust/deploy/mirror-images.manifest"
       - "trust/xnat/docker-compose-stack.yml"
-      - "trust/deploy/ansible/roles/flip_trust_seed/defaults/main.yml"
+      - "trust/deploy/ansible/roles/*/defaults/main.yml"
+      - "trust/deploy/ansible/roles/*/tasks/*.yml"
       # test_secret_scanning_gate.py asserts on the secret-scanning workflow, the
       # pre-commit pin and the baseline (FLIP#1215) — same trap, same fix.
       - ".github/workflows/secret-scanning.yml"
@@ -86,6 +87,14 @@ on:
       - "trust/Makefile"
       - "trust/xnat/Makefile"
       - "deploy/portable.mk"
+      - "deploy/data_root.mk"
+      # test_kit_key_coverage.py holds every key of the kit template to each node shape's
+      # kit readers (FLIP#2047).
+      - "trust/.env.example"
+      - "trust/deploy/helm/Makefile"
+      - "trust/deploy/helm/sync_k8s_kit.py"
+      - "trust/deploy/helm/scripts/generate_values.py"
+      - "trust/deploy/snowflake/*.py"
   pull_request:
     branches: [develop]
 

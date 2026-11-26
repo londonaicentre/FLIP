@@ -167,7 +167,7 @@ the version used in the service's Dockerfile.
 Every image a trust node runs comes from `ghcr.io/londonaicentre/`: FLIP's own, and byte-identical copies of the
 third-party ones (Grafana, Loki, Alloy, XNAT's Docker socket proxy, the chart's `uv` and `busybox` helpers) under
 `ghcr.io/londonaicentre/mirror/`, listed with their digests in `trust/deploy/mirror-images.manifest` and pinned
-`<name>:<tag>@<digest>` in the compose files, the Helm chart and the Ansible seed role
+`<name>:<tag>@<digest>` in the compose files, the Helm chart and the Ansible roles
 (`scripts/tests/test_mirror_images.py` fails on drift). A site's proxy allowlist is by host name and cannot be
 narrowed to FLIP's packages, so one registry is the smallest ask and the digest is the control. Never add a
 `docker.io` image to anything a trust runs. To bump one: `docker buildx imagetools inspect <upstream>` for the new
@@ -388,11 +388,13 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 
 - `TRUST_API_KEY_HEADER` — HTTP header name for trust-to-hub authentication.
 - `TRUST_KEY_ROTATION_GRACE_DAYS` — how long a staged rotated trust key may stay unused before the
-  hub drops it (default 14). A deployed hub has no Terraform passthrough for it and uses the default.
+  hub drops it (default 14). Read from the env file by the development compose only; a deployed hub
+  has no Terraform passthrough for it and uses the default.
 - `TRUST_API_KEY` — single per-trust plaintext API key. Lives only in that trust's kit file
   (`trust/.env.<CODE>.<env>`), written by `make register-trusts`; never on the hub.
 - `FL_API_KEY` — the key flip-api sends to every FL API (`fl-api-net-N`) in the `FL_API_KEY_HEADER` header
-  (default `X-FL-API-Key`); every FL API route but `/health` requires it. Minted by `make up`; on ECS a
+  (default `X-FL-API-Key`, a code default on both sides that no compose file or ECS task passes);
+  every FL API route but `/health` requires it. Minted by `make up`; on ECS a
   Secrets Manager field.
 - `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
   `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
@@ -783,7 +785,7 @@ make -C trust/deploy/helm template-all-backends
 make -C trust/deploy/helm validate
 
 # Place this trust's FL participant kit onto the node, BEFORE deploying
-make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
 # The OMOP core vocabulary (FLIP#923): download it on this host (AI Centre bucket access, your
 # AWS CLI profile; otherwise an OHDSI Athena export), then place the folder onto the node and set

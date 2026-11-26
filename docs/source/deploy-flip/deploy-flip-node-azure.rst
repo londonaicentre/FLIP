@@ -182,7 +182,7 @@ The report has twelve checks:
 - the delivered kit, the kit staged for the FL client, and the kit file
 - the stack starting
 - the three API health endpoints
-- the OMOP and Orthanc seed markers
+- the sample data in OMOP and Orthanc (an imaging row, a study)
 - Orthanc refusing anonymous requests
 - a real DICOM C-STORE from Orthanc into XNAT
 - the FL client staying up
@@ -245,7 +245,8 @@ Operate and remove
 
 Run these from ``vm/`` with ``AZ_SUBSCRIPTION="$SUB"``, like every node command.
 
-- ``make reprovision REF=<sha or vX.Y.Z>`` moves the node's code without rebuilding it.
+- ``make reprovision REF=<sha or vX.Y.Z>`` moves the node's code without rebuilding it. Without ``REF`` it runs the
+  play again on the code the node is already at: the ref given to ``plan`` is the one for first boot only.
 - ``make stop`` / ``make start`` deallocate and start the VM (a stopped VM costs only its disks,
   plus the NAT gateway on a standalone node). The VM also shuts itself down at 19:00 UK time by default.
 - ``make destroy`` (with the same ``SUBNET_ID``) removes the node, its network and the kit drop,
