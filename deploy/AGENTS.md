@@ -9,12 +9,16 @@ provisioning live in [`../fl-services/AGENTS.md`](../fl-services/AGENTS.md).
 
 | File | Purpose |
 |------|---------|
-| `compose.development.yml` | Dev hub stack (bind-mounted `src/`, pull-by-default images) |
-| `compose.prod.yml` | Prod hub stack (baked images, no mounts) — a local prod-image harness, never an ECS deployment target |
-| `compose.{development,prod}.{flower,nvflare}.yml` | Per-backend FL overlays |
+| `compose/compose.development.yml` | Dev hub stack (bind-mounted `src/`, pull-by-default images) |
+| `compose/compose.prod.yml` | Prod hub stack (baked images, no mounts) — a local prod-image harness, never an ECS deployment target |
+| `compose/compose.{development,prod}.{flower,nvflare}.yml` | Per-backend FL overlays |
+| `compose/compose.development.debug.override.yml` | Debug-mode overlay (`make debug SERVICE=…`, port 5678) |
 | `keycloak/flip-realm.json` (+ `keycloak/README.md`) | The dev identity provider's realm (FLIP#919), imported by the ephemeral `keycloak` service in the dev compose at every boot; `${...}` placeholders resolve from the container env. Edits need `make reset-keycloak` |
 | `instance.mk` | Derives `INSTANCE_PREFIX` and `COMPOSE_PROJECT` once, for every Makefile that needs them |
 | `fl_backend.mk` | Derives `FL_PROVISIONED_DIR` and `DOCKER_FL_CLIENT_NAME` from `FL_BACKEND` |
+| `env_mode.mk` | Derives everything `HUB` means (`ENV`, `ENV_FILE_NAME`, `ENV_CLASS`, `IS_DEPLOYED`, `kit_file`) once, for every Makefile that takes it |
+| `portable.mk` | Portability helpers for the trust Makefiles (BSD/macOS hosts, Docker without root) and the GHCR-mirrored throwaway helper container (FLIP#1784) |
+| `aws/` | The hub's Terraform/OpenTofu root (moved from `providers/AWS/` in #1438; `providers/AWS/GNUmakefile` forwards there for one release) |
 | `README.md` | Compose file matrix and the external networks these files join |
 
 ## Dev object store (FLIP#1291)

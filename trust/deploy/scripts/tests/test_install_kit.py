@@ -213,6 +213,10 @@ def _assert_first_install(s: Site, result: subprocess.CompletedProcess[str], bac
     ]
     assert "TRUST_API_KEY" in result.stdout
     assert "make up-onprem-trust KIT=DEMO" in result.stdout
+
+    # Every store under the kit's own data root, not the template's development paths (FLIP#2113).
+    assert values["FLIP_DATA_ROOT"] == "/opt/flip/DEMO-prod"
+    assert not [key for key in install_kit.STORE_KEYS if key in values], "a store path still overrides the root"
     assert "egress IP" in result.stdout
     assert f"rm {s.download / 'kit.enc'}" in result.stdout
     assert not list(s.tmp.iterdir()), "temp dir left behind"
@@ -294,6 +298,22 @@ def test_update_keeps_keys_tags_and_site_lines() -> None:
         assert "make upgrade-onprem-trust KIT=DEMO YES=1" in result.stdout
         assert "make up-onprem-trust" not in result.stdout, "a first-install verb, for a live trust"
         assert not list(s.tmp.iterdir())
+
+
+def test_update_over_a_kit_from_before_the_data_root_moves_no_store() -> None:
+    """FLIP#2113: the root goes only into a kit file the install creates, or a live site restarts on empty folders."""
+    import install_kit
+
+    with site() as s:
+        assert s.install(s.kit("nvflare")).returncode == 0
+        stores = {key: f"/srv/{key.lower()}" for key in install_kit.STORE_KEYS}
+        lines = [line for line in s.kit_file.read_text().splitlines() if not line.startswith(("FLIP_DATA_ROOT=", "# "))]
+        s.kit_file.write_text("\n".join([*lines, *(f"{key}={path}" for key, path in stores.items())]) + "\n")
+        update = s.kit("nvflare", "update", kit__hub_shared={**HUB_SHARED, "FL_BACKEND": "nvflare"})
+        assert s.install(update).returncode == 0
+        after = s.values()
+        assert {key: after.get(key) for key in stores} == stores
+        assert "FLIP_DATA_ROOT" not in after
 
 
 def test_full_kit_over_an_installed_one_replaces_the_keys() -> None:

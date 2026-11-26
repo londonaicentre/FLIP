@@ -131,15 +131,6 @@ def _safe_email(email: str) -> str:
         raise InvalidIdentifierError("Invalid email address format") from exc
 
 
-def _safe_uuid(user_id: str | UUID) -> str:
-    if isinstance(user_id, UUID):
-        return str(user_id)
-    try:
-        return str(UUID(user_id))
-    except (ValueError, AttributeError, TypeError) as exc:
-        raise InvalidIdentifierError("Invalid user ID format") from exc
-
-
 class KeycloakIdentityProvider(IdentityProvider):
     """The users of one Keycloak realm, administered through a service-account client."""
 
@@ -278,7 +269,7 @@ class KeycloakIdentityProvider(IdentityProvider):
                 return users
             first += _PAGE_SIZE
 
-    def get_user(self, *, user_id: UUID | str | None = None, email: str | None = None) -> CognitoUser:
+    def get_user(self, *, user_id: UUID | None = None, email: str | None = None) -> CognitoUser:
         if not email and not user_id:
             raise InvalidIdentifierError("No user email address or ID provided")
         if email:
@@ -286,8 +277,7 @@ class KeycloakIdentityProvider(IdentityProvider):
             if not matches:
                 raise UserNotFoundError(f"User with email: {email} or ID: {user_id} is not registered.")
             return matches[0]
-        assert user_id is not None
-        response = self._request("GET", f"users/{_safe_uuid(user_id)}")
+        response = self._request("GET", f"users/{user_id}")
         if response.status_code == 404:
             raise UserNotFoundError(f"User with email: {email} or ID: {user_id} is not registered.")
         if response.status_code != 200:

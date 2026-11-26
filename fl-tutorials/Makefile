@@ -37,7 +37,10 @@ DATASET_TARGETS := download-xray-data download-weights \
 	download-prostate-data convert-prostate-to-dicom convert-prostate-to-nifti partition-prostate-data \
 	prepare-prostate-local-data upload-prostate-labels \
 	create-prostate-metadata-table fetch-prostate-metadata-table build-prostate-omop-tables \
-	verify-prostate-omop-tables reproduce-prostate-omop build-prostate-canonical package-prostate-dicom
+	verify-prostate-omop-tables reproduce-prostate-omop build-prostate-canonical package-prostate-dicom \
+	create-arkplus-metadata-table fetch-arkplus-metadata-table build-arkplus-omop-tables \
+	verify-arkplus-omop-tables reproduce-arkplus-omop build-arkplus-canonical prepare-arkplus-dicom \
+	package-arkplus-dicom seed-arkplus
 
 .PHONY: $(TUTORIAL_TARGETS) $(DATASET_TARGETS)
 $(TUTORIAL_TARGETS):
@@ -92,7 +95,7 @@ PYTEST ?= uv run --project ../flip-utils --extra nvflare --extra flower --extra 
 # tests/datasets/utils/ is the shared contract and runs ONCE, in the first listed project's
 # environment. Any dataset environment can host it; re-running it per project would just repeat the
 # same assertions, and is not what catches the dependency drift above.
-DATASET_TEST_PROJECTS ?= spleen cxr synthea brain_mri prostate ad_biomarkers
+DATASET_TEST_PROJECTS ?= spleen cxr synthea brain_mri prostate ad_biomarkers arkplus
 DATASET_UTILS_PROJECT ?= $(firstword $(DATASET_TEST_PROJECTS))
 
 .PHONY: pytest pytest-datasets test unit_test

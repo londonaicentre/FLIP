@@ -31,6 +31,9 @@ on:
       - "fl-services/flower/register-supernode-keys.sh"
       - "fl-services/flower/provision/scripts/generate_creds.py"
       - "fl-services/flower/Makefile"
+      # test_fl_kit_upload_dry_run.py runs both backends' upload targets; test_fl_kit_iam.py reads FLARE's.
+      - "fl-services/nvflare/Makefile"
+      - "deploy/fl_backend.mk"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
       # aws-ec2.yml imports and the shared roles they compose.
       - "trust/deploy/ansible/aws-ec2-host.yml"
@@ -59,6 +62,9 @@ on:
       - "fl-services/flower/register-supernode-keys.sh"
       - "fl-services/flower/provision/scripts/generate_creds.py"
       - "fl-services/flower/Makefile"
+      # test_fl_kit_upload_dry_run.py runs both backends' upload targets; test_fl_kit_iam.py reads FLARE's.
+      - "fl-services/nvflare/Makefile"
+      - "deploy/fl_backend.mk"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
       # aws-ec2.yml imports and the shared roles they compose.
       - "trust/deploy/ansible/aws-ec2-host.yml"

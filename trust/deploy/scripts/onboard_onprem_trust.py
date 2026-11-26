@@ -438,7 +438,11 @@ def fl_endpoint(kit_vars: dict[str, str]) -> tuple[str, int, str] | None:
     FLARE dials the ``target`` in its kit slice's ``startup/fed_client.json``, so that wins when the
     slice is on disk; otherwise, and always for Flower (whose compose passes exactly these), the
     kit's ``NLB_SUBDOMAIN`` and ``FL_EDGE_PORT`` (``FL_SERVER_PORT`` for a kit synced before FLIP#1365).
+    The port is the site's ``FL_EDGE_PORT_OVERRIDE``, else ``FL_EDGE_PORT``, when set: fl-client-init
+    writes that port into FLARE's ``fed_client.json`` before the client starts (FLIP#2051).
     """
+    ports = (kit_vars.get("FL_EDGE_PORT_OVERRIDE", ""), kit_vars.get("FL_EDGE_PORT", ""))
+    dial = next((p for p in ports if p.isdigit()), "")
     if kit_vars.get("FL_BACKEND") == "nvflare":
         fed_client = (
             Path(kit_vars.get("FL_KIT_DIR", "") or "/nonexistent")
@@ -452,11 +456,11 @@ def fl_endpoint(kit_vars: dict[str, str]) -> tuple[str, int, str] | None:
             target = json.loads(fed_client.read_text())["servers"][0]["service"]["target"]
             host, _, port = str(target).rpartition(":")
             if host and port.isdigit():
-                return host, int(port), "startup/fed_client.json"
+                return host, int(dial or port), "startup/fed_client.json"
         except (OSError, ValueError, KeyError, IndexError, TypeError):
             pass
     host = kit_vars.get("NLB_SUBDOMAIN", "")
-    port = kit_vars.get("FL_EDGE_PORT", "") or kit_vars.get("FL_SERVER_PORT", "")
+    port = dial or kit_vars.get("FL_SERVER_PORT", "")
     if is_filled(host) and port.isdigit():
         return host, int(port), "the kit's NLB_SUBDOMAIN"
     return None
@@ -472,7 +476,7 @@ def check_fl_endpoint_reachable(kit_vars: dict[str, str], kit_present: bool) -> 
     if failure is None:
         return Check(label, Status.PASS, f"tcp {host}:{port} connects (from {source})")
     hints = [
-        "The FL client connects out to this host:port over mutual TLS; a connection that opens"
+        "The FL client connects out to this host:port over TLS; a connection that opens"
         " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
         f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
     ]
@@ -1045,8 +1049,11 @@ def check_unrotated_passwords(
     if not template.is_file():
         return Check("Trust-local passwords", Status.WARN, "not checked — trust/.env.example is missing")
     template_vars = read_kit_vars(template)
+    # A key set to nothing was not rotated either; one the kit does not carry at all is not this check's.
     unchanged = [
-        key for key in TRUST_LOCAL_PASSWORD_KEYS if kit_vars.get(key) and kit_vars[key] == template_vars.get(key)
+        key
+        for key in TRUST_LOCAL_PASSWORD_KEYS
+        if key in kit_vars and (not kit_vars[key] or kit_vars[key] == template_vars.get(key))
     ]
     if not unchanged:
         return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
@@ -1054,9 +1061,9 @@ def check_unrotated_passwords(
     return Check(
         "Trust-local passwords",
         Status.FAIL if deployed else Status.WARN,
-        f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} still match {template.name} defaults",
+        f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} are empty or still match {template.name} defaults",
         hints=[
-            f"Unchanged: {', '.join(unchanged)}",
+            f"Unchanged or empty: {', '.join(unchanged)}",
             f"Edit {kit_path} → Trust-local credentials section and replace each with a",
             "  random secret (`make new-trust` mints them for a fresh kit).",
         ],
@@ -1076,7 +1083,8 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
     level = (kit_vars.get("TRUST_LOG_LEVEL") or "").strip().upper()
-    if level and level != "DEBUG":
+    # Named, not "anything but DEBUG": NOTSET and a numeric level below 20 log everything too.
+    if level in ("INFO", "WARNING", "ERROR", "CRITICAL"):
         return Check(label, Status.PASS, f"TRUST_LOG_LEVEL={level}")
     if not level:
         # Unset falls back to each service's own default; name it rather than assume.
@@ -1085,20 +1093,14 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     return Check(
         label,
         Status.FAIL if deployed else Status.WARN,
-        "TRUST_LOG_LEVEL=DEBUG logs trust credentials into Loki (FLIP-SR-050)",
+        f"TRUST_LOG_LEVEL={level} logs trust credentials into Loki (FLIP-SR-050)"
+        if level == "DEBUG"
+        else f"TRUST_LOG_LEVEL={level} is not INFO, WARNING, ERROR or CRITICAL, and may log as DEBUG does",
         hints=[
             f"Edit {kit_path} → set TRUST_LOG_LEVEL=INFO, then recreate the trust APIs.",
             "A site that already ran at DEBUG should rotate both trust keys.",
         ],
     )
-
-
-def sample_data_off(kit_vars: dict[str, str]) -> bool:
-    """TRUST_DATA_SEED=false, as trust/Makefile reads it; a refused value is not "off" (check_sample_data fails)."""
-    try:
-        return not trust_kit_lib.trust_data_seed(kit_vars)
-    except ValueError:
-        return False
 
 
 def check_sample_data(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
@@ -1127,7 +1129,7 @@ def check_data_dir(
     repo_root: Path,
     image_uid: int | None = None,
 ) -> Check:
-    """Validate a per-trust data dir (OMOP, Orthanc) — set; exists and non-empty if real data.
+    """Validate a per-trust data dir (OMOP, Orthanc) — set (or under FLIP_DATA_ROOT); exists and non-empty if real data.
 
     `image_uid` is the uid the dir's container runs as when the kit sets no FLIP_UID, where
     the image fixes one (deploy/portable.mk).
@@ -1141,9 +1143,9 @@ def check_data_dir(
     """
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
-    raw = kit_vars.get(var_name, "")
+    raw = kit_vars.get(var_name, "") or (data_dir_default(var_name, kit_vars) if data_root(kit_vars) else "")
     if not raw:
-        return Check(label, Status.FAIL, f"{var_name} unset in kit file")
+        return Check(label, Status.FAIL, f"{var_name} unset in kit file (set it, or FLIP_DATA_ROOT)")
     # Resolve relative paths from trust/. Strip a leading "./" for a clean display.
     if raw.startswith("/"):
         resolved = Path(raw)
@@ -1159,7 +1161,18 @@ def check_data_dir(
             if seeded
             else "Sample data is off (TRUST_DATA_SEED=false): `make -C trust up-trust` loads nothing into it."
         )
-    if not resolved.is_dir():
+    try:
+        is_dir = resolved.is_dir()
+    except PermissionError:  # before Python 3.14; from 3.14 on it answers False
+        is_dir = False
+    if not is_dir and (closed := _untraversable(resolved)) != resolved:
+        return Check(
+            label,
+            Status.FAIL,
+            f"{resolved}: {closed} is not traversable by this user",
+            hints=["Run the checklist as the user that runs the bring-up, or let that user enter the directory."],
+        )
+    if not is_dir:
         return Check(
             label,
             Status.WARN,
@@ -1209,8 +1222,8 @@ def check_data_dir(
 # Every host-side bind-mount source a kit sets, with the deployed default the Makefiles use when it
 # is unset (trust/Makefile IMAGES_BASE and COHORT_SNAPSHOT_DIR_HOST, trust/xnat/Makefile
 # XNAT_DATA_DIR). The OMOP and Orthanc dirs have no deployed default: `check_data_dir` fails them
-# unset. On an on-prem host every one is a plain mkdir as the invoking user; only over a remote
-# DOCKER_CONTEXT is the membership store prepared by a container.
+# unset, unless the kit sets FLIP_DATA_ROOT. On an on-prem host every one is a plain mkdir as the
+# invoking user; only over a remote DOCKER_CONTEXT is the membership store prepared by a container.
 DATA_DIR_DEFAULTS: dict[str, str | None] = {
     "OMOP_DATA_DIR": None,
     "ORTHANC_STORAGE_DIR": None,
@@ -1219,10 +1232,52 @@ DATA_DIR_DEFAULTS: dict[str, str | None] = {
     "XNAT_DATA_DIR": "/opt/flip/xnat-trust{slot}",
 }
 DATA_DIR_VARS: tuple[str, ...] = tuple(DATA_DIR_DEFAULTS)
-# The seeders write their markers beside these two dirs (trust/Makefile OMOP_SEED_MARKER /
-# ORTHANC_SEED_MARKER), as the invoking user, so that parent must be writable even when the dirs
-# themselves belong to a container uid.
-SEED_MARKER_DIR_VARS = ("OMOP_DATA_DIR", "ORTHANC_STORAGE_DIR")
+# Each store's folder under the kit's FLIP_DATA_ROOT, which replaces every default above (FLIP#2113,
+# deploy/data_root.mk).
+DATA_ROOT_FOLDERS: dict[str, str] = {
+    "OMOP_DATA_DIR": "omop",
+    "ORTHANC_STORAGE_DIR": "orthanc",
+    "BASE_IMAGES_DOWNLOAD_DIR": "images",
+    "COHORT_SNAPSHOT_STORAGE_DIR": "cohort-snapshots",
+    "XNAT_DATA_DIR": "xnat",
+}
+
+
+# Where each store lived before its kit had a FLIP_DATA_ROOT: the defaults above, and for OMOP and Orthanc
+# what compose_trust.prod.yml mounts when they are unset.
+PRE_ROOT_DEFAULTS: dict[str, str] = {
+    **DATA_DIR_DEFAULTS,  # type: ignore[dict-item]
+    "OMOP_DATA_DIR": "/opt/flip/omop/db_data",
+    "ORTHANC_STORAGE_DIR": "/opt/flip/orthanc/orthanc-storage",
+}
+
+
+def _raw_data_root(kit_vars: dict[str, str]) -> str:
+    """FLIP_DATA_ROOT as make reads an included kit: an inline comment dropped."""
+    return kit_vars.get("FLIP_DATA_ROOT", "").split("#", 1)[0].strip()
+
+
+def data_root(kit_vars: dict[str, str]) -> str:
+    """The kit's FLIP_DATA_ROOT without a trailing slash; empty when unset."""
+    return _raw_data_root(kit_vars).rstrip("/")
+
+
+def data_root_error(kit_vars: dict[str, str]) -> str:
+    """Why deploy/data_root.mk refuses the kit's FLIP_DATA_ROOT, or empty."""
+    raw = _raw_data_root(kit_vars)
+    if not raw:
+        return ""
+    if not raw.rstrip("/"):
+        return "is / itself"
+    if len(raw.split()) > 1:
+        return f"has spaces ({raw})"
+    return "" if raw.startswith("/") else f"is relative ({raw})"
+
+
+def data_dir_default(var: str, kit_vars: dict[str, str]) -> str | None:
+    """Where a store lives when the kit does not name it: under FLIP_DATA_ROOT, else the Makefiles' default."""
+    root = data_root(kit_vars)
+    return f"{root}/{DATA_ROOT_FOLDERS[var]}" if root else DATA_DIR_DEFAULTS[var]
 
 
 def invoking_ids() -> tuple[int, int]:
@@ -1240,21 +1295,57 @@ def prepare_host_dirs_command(kit: str) -> str:
     return f"{command} {quote_make_assignment('HUB', hub)}" if hub else command
 
 
+def _untraversable(path: Path) -> Path:
+    """The first directory on the way to ``path`` this user cannot enter (``path`` itself when none is)."""
+    return next((p for p in reversed(path.parents) if p.is_dir() and not os.access(p, os.X_OK)), path)
+
+
+def _in_use(path: Path) -> bool:
+    """Whether ``path`` holds something; unreadable counts, as a container owns a store it runs on."""
+    try:
+        return any(path.iterdir())
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except PermissionError:
+        return True
+
+
+def _exists_or_raise(path: Path) -> bool:
+    """Whether ``path`` exists, raising on a parent this user cannot traverse (EACCES).
+
+    Not Path.exists: it re-raises EACCES before Python 3.14 and answers False from 3.14 on.
+    """
+    try:
+        path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return True
+
+
 def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>") -> Check:
     """Every data dir is absolute, and the bring-up can create it as this user (FLIP#1723).
 
     The kit template carries the development paths, which are relative: on a deployed trust they
-    resolve inside this checkout, on whatever disk it sits on. An unset one falls back to its
-    /opt/flip default, which a non-root operator usually cannot create — a site installed before
-    the membership store (FLIP#857) has no COHORT_SNAPSHOT_STORAGE_DIR, so its upgrade meets this.
+    resolve inside this checkout, on whatever disk it sits on. An unset one falls back to its folder
+    under FLIP_DATA_ROOT, else its /opt/flip default, which a non-root operator usually cannot create:
+    a site installed before the membership store (FLIP#857) has no COHORT_SNAPSHOT_STORAGE_DIR, so its
+    upgrade meets this.
     """
     label = "Data dir paths"
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
     slot = kit_vars.get("FL_KIT_SLOT_NUMBER", "").strip() or "<N>"
+    if problem := data_root_error(kit_vars):
+        return Check(
+            label,
+            Status.FAIL,
+            f"FLIP_DATA_ROOT {problem}: make refuses it",
+            hints=[f"Set FLIP_DATA_ROOT in {kit_path} to an absolute path on the data disk."],
+        )
     relative: list[str] = []
     blocked: dict[str, str] = {}
-    for var, default in DATA_DIR_DEFAULTS.items():
+    for var in DATA_DIR_DEFAULTS:
+        default = data_dir_default(var, kit_vars)
         raw = kit_vars.get(var, "").strip()
         if raw and not raw.startswith("/"):
             relative.append(var)
@@ -1264,19 +1355,12 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
         path = Path(raw or default.format(slot=slot))  # type: ignore[union-attr]
         unset = "" if raw else f"unset, so {path}; "
         try:
-            nearest = next(p for p in (path, *path.parents) if p.exists())
-        except OSError as error:  # Path.exists re-raises EACCES: a parent this user cannot traverse
-            blocked[var] = f"{unset}{error.filename} is not traversable: {error.strerror}"
+            nearest = next(p for p in (path, *path.parents) if _exists_or_raise(p))
+        except OSError as error:  # a parent this user cannot traverse
+            blocked[var] = f"{unset}{_untraversable(path)} is not traversable: {error.strerror}"
             continue
         if nearest != path and not os.access(nearest, os.W_OK):
             blocked[var] = f"{unset}{nearest} is not writable"
-        elif (
-            var in SEED_MARKER_DIR_VARS
-            and not sample_data_off(kit_vars)
-            and path.parent.exists()
-            and not os.access(path.parent, os.W_OK)
-        ):
-            blocked[var] = f"{path.parent} is not writable, and the seed marker is written there"
     if kit_vars.get("FLIP_UID", "").strip() == str(invoking_ids()[0]):
         create = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
     else:
@@ -1306,6 +1390,53 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
             ],
         )
     return Check(label, Status.PASS, "absolute")
+
+
+def check_data_root(kit_vars: dict[str, str], kit_present: bool, kit_file: Path, kit_path: str) -> Check:
+    """FLIP_DATA_ROOT moves no data and is one trust's (FLIP#2113).
+
+    FAIL when it would start a store that holds data at its old default on an empty folder under the root
+    (a root added to a running site), or when another kit beside this one names the same root.
+    """
+    label = "Data root"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    root = data_root(kit_vars)
+    if not root:
+        return Check(label, Status.PASS, "unset: each store keeps its own default")
+    if data_root_error(kit_vars):
+        return Check(label, Status.FAIL, "malformed: see Data dir paths")
+    shared = sorted(
+        other.name
+        for other in kit_file.parent.glob(".env.*")
+        if other != kit_file and not other.name.endswith(".example") and data_root(read_kit_vars(other)) == root
+    )
+    if shared:
+        return Check(
+            label,
+            Status.FAIL,
+            f"{root} is also the root of {', '.join(shared)}: the trusts would share their databases and archives",
+            hints=[f"Give {kit_path} its own FLIP_DATA_ROOT, e.g. /opt/flip/<CODE>-<hub>."],
+        )
+    slot = kit_vars.get("FL_KIT_SLOT_NUMBER", "").strip() or "<N>"
+    moved = [
+        f"{var} ({old} → {Path(root) / folder})"
+        for var, folder in DATA_ROOT_FOLDERS.items()
+        if not kit_vars.get(var, "").strip()
+        and _in_use(old := Path(PRE_ROOT_DEFAULTS[var].format(slot=slot)))
+        and not _in_use(Path(root) / folder)
+    ]
+    if moved:
+        return Check(
+            label,
+            Status.FAIL,
+            "would start on empty folders, leaving data behind: " + "; ".join(moved),
+            hints=[
+                f"FLIP_DATA_ROOT moves no data. Set each of these in {kit_path} to where it is now,",
+                "or move the data under the root with the stack stopped, never as part of an upgrade.",
+            ],
+        )
+    return Check(label, Status.PASS, root)
 
 
 IMAGE_USERS = (
@@ -1388,6 +1519,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root, image_uid=999),
         check_data_dir_paths(kit_vars, kit_present, kit_path, kit),
+        check_data_root(kit_vars, kit_present, kit_file, kit_path),
         check_container_uid(kit_vars, kit_present, kit_path, kit),
     ]
 
