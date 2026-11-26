@@ -16,6 +16,9 @@ from ``deploy/env_mode.mk`` like every other Makefile that reads HUB, so a deplo
 ``.stag`` / ``.prod`` rather than a development kit that does not exist.
 """
 
+import base64
+import gzip
+import json
 import os
 import shutil
 import subprocess
@@ -287,3 +290,72 @@ def test_sync_project_studies_never_replaces_the_file_when_it_finds_no_project(t
     calls = _sync_project_studies(tmp_path, snapshot_dir, fails=True)
 
     assert not any("project_studies" in c or "configmap" in c for c in calls), calls
+
+
+# A kubectl that serves one Secret-driver release record from $RECORDS (or none) and logs every call.
+STUB_RELEASE_KUBECTL = """#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["CALLS"], "a") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+args = sys.argv[1:]
+if "get" in args:
+    kind = args[args.index("get") + 1]
+    items = json.load(open(os.environ["RECORDS"])) if kind == "secrets" and os.environ.get("RECORDS") else []
+    print(json.dumps({"items": items}))
+    sys.exit(0)
+sys.exit(3)  # any write
+"""
+
+
+def _migrate_release(tmp_path: Path, records: list | None, *make_args: str) -> tuple[subprocess.CompletedProcess, list]:
+    stub = tmp_path / "bin" / "kubectl"
+    stub.parent.mkdir()
+    stub.write_text(STUB_RELEASE_KUBECTL)
+    stub.chmod(0o755)
+    calls = tmp_path / "calls"
+    calls.touch()
+    env = {**os.environ, "PATH": f"{stub.parent}:{os.environ['PATH']}", "CALLS": str(calls)}
+    if records is not None:
+        items = []
+        for rev, status in records:
+            release = {"version": rev, "info": {"status": status}, "config": {}, "manifest": ""}
+            payload = base64.b64encode(gzip.compress(json.dumps(release).encode())).decode()
+            name = f"sh.helm.release.v1.trust-release.v{rev}"
+            items.append(
+                {
+                    "metadata": {"name": name, "namespace": "flip-trust", "labels": {"owner": "helm"}},
+                    "data": {"release": base64.b64encode(payload.encode()).decode()},
+                }
+            )
+        (tmp_path / "records.json").write_text(json.dumps(items))
+        env["RECORDS"] = str(tmp_path / "records.json")
+    out = subprocess.run(
+        ["make", "-s", "-C", str(CHART_DIR), "migrate-release-driver", *make_args],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    return out, calls.read_text().splitlines()
+
+
+def test_migrate_release_driver_is_a_plan_without_confirm(tmp_path):
+    """FLIP#1997: on a live trust the target only reads unless CONFIRM=1."""
+    out, calls = _migrate_release(tmp_path, [(1, "superseded"), (2, "deployed")], "KUBE_CONTEXT=gstt")
+    assert out.returncode == 0, out.stderr
+    assert "Plan only" in out.stdout
+    assert calls
+    assert all(c.startswith("--context gstt -n flip-trust get ") for c in calls), calls
+
+
+def test_migrate_release_driver_fails_the_make_run_when_it_refuses(tmp_path):
+    out, calls = _migrate_release(tmp_path, [(1, "pending-upgrade")], "CONFIRM=1")
+    assert out.returncode != 0
+    assert "in flight" in out.stderr
+    assert all(" get " in f" {c} " for c in calls), calls
+
+
+def test_migrate_release_driver_with_no_release_fails(tmp_path):
+    out, _ = _migrate_release(tmp_path, None, "CONFIRM=1")
+    assert out.returncode != 0
+    assert "no release named trust-release" in out.stderr

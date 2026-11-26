@@ -208,7 +208,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight apply-trust-secret template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
+.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight apply-trust-secret migrate-release-driver template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -249,6 +249,14 @@ apply-trust-secret: ## (AUTO_UPGRADE) Apply the trust Secret from values-secrets
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) -f $(SECRETS_FILE) \
 		--set secrets.create=true --set autoUpgrade.enabled=false --show-only templates/secrets.yaml \
 		| $(KUBECTL) apply --namespace $(NAMESPACE) -f -
+
+# FLIP#1997: a trust deployed before automatic upgrades has its release recorded in Secrets, which the agent cannot
+# see. This moves the record to ConfigMaps (every revision, with the passwords taken out of the values and the chart's
+# Secret out of the stored manifest) and touches no workload or volume. A plan unless CONFIRM=1; a second run is a
+# no-op. Afterwards the trust deploys with AUTO_UPGRADE=1. Rehearsed by trust/deploy/e2e/upgrade-agent/run.sh migrate.
+migrate-release-driver: ## (AUTO_UPGRADE) Move an existing trust's Helm release record from Secrets to ConfigMaps; CONFIRM=1 applies
+	python3 $(CHART_DIR)/scripts/migrate_release_driver.py --release $(RELEASE_NAME) --namespace $(NAMESPACE) \
+		--kubectl "$(KUBECTL)" --helm "$(HELM)" $(if $(filter 1,$(CONFIRM)),--apply)
 
 kit-secret: ## Put this trust's FL kit in a Secret for flClient.kit.source=secret (managed node pools, e.g. AKS)
 	@[ -n "$(KIT_SRC)" ] || { echo "❌ KIT_SRC=<the slot's kit directory: local/ startup/ … or certificates/ keys/> is required"; exit 1; }

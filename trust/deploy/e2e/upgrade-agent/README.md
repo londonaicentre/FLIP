@@ -26,11 +26,14 @@ cd trust/deploy/e2e/upgrade-agent
 ./run.sh setup      # cluster, registry, images, charts v0.99.0 + v0.99.1, stub hub, release at v0.99.0
 ./run.sh tick       # one tick now
 ./run.sh failure    # broken v0.99.2: expect FAILED, the site left where it is, no retry
+./run.sh migrate    # FLIP#1997: an old Secret-driver trust is migrated, switched to AUTO_UPGRADE, then upgraded
+./run.sh rbac       # the agent's ServiceAccount cannot read Secrets
 ./run.sh down       # remove everything, including the work dir
 ```
 
 `REPO` (default: this checkout) picks the code under test. `WORK` (default `~/.cache/flip-kind-upgrade`) holds the
-generated CA, certificates, packaged charts and the test AES key. Nothing generated is written into the checkout.
+generated CA, certificates, packaged charts, the test AES key and the cluster's kubeconfig (`$WORK/kubeconfig`; the
+script never writes `~/.kube/config`). Nothing generated is written into the checkout.
 
 ## What a pass looks like
 
@@ -44,10 +47,20 @@ generated CA, certificates, packaged charts and the test AES key. Nothing genera
    - trust-api does not answer (its v0.99.2 image exits on start), which is the state an operator is left to restore.
    - The follow-up tick says `SKIP: v0.99.2 failed earlier; an operator must clear it in the portal`.
 
+4. `migrate` (after `setup`; it replaces the release) prints an `ok:` line per check and fails on the first one
+   that does not hold: history identical through both drivers, no pod, PVC or workload recreated, no secret value
+   in any ConfigMap record, the trust Secret marked keep and surviving the AUTO_UPGRADE switch with the same UID,
+   a second run a no-op, then one tick to v0.99.1 and the `rbac` checks.
+
 `setup` restarts the stub hub, which clears its lease, failed release and reports. To start again from v0.99.0, run
 `HELM_DRIVER=configmap helm --kube-context kind-flip-upgrade -n flip-trust uninstall trust-release`, then `setup`.
 
 ## Host quirks it already handles
+
+- **Low inotify limits (not handled; fix the host).** With the default `fs.inotify.max_user_instances=128`, and
+  more so beside a local k3s, kube-proxy dies with `fsnotify watcher init: too many open files`. Service IPs then
+  do not work, the local-path provisioner crash-loops, and every PVC stays Pending until `install --wait` times out.
+  Raise it before `setup`: `sudo sysctl fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288`.
 
 - **ZFS (or similar) docker root.** The kubelet cannot read rootfs stats. `kind.yaml` turns off local-storage
   capacity isolation, so the node advertises no ephemeral storage. That is why the seed hook, which requests some,
