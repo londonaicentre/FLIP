@@ -170,6 +170,24 @@ jobs:
 
           echo "✅ Built FL Server."
 
+      # Gate before the push, not after: an image whose import path the runtime user can rewrite
+      # must never reach the registry. The property is asserted on the built image rather than
+      # read off the Dockerfile, because it depends on the installer (editable or not), on
+      # ownership, and on the interpreter's own path rules — see the script's docstring.
+      # Both uids are covered: the image's own `flip` (1000) and an arbitrary kit FLIP_UID
+      # (FLIP#1731), which owns nothing in the image and is in no group of its files.
+      # The script is mounted under /opt/probe, not at /: without PYTHONSAFEPATH the script's own
+      # directory joins sys.path, and `/` would then be reported instead of what the image does.
+      - name: Verify the import path is read-only (FL Server)
+        run: |
+          for uid in 1000 1234; do
+            echo "── fl-server as uid ${uid} ──"
+            docker run --rm -u "${uid}:${uid}" \
+              -v "$PWD/fl-services/nvflare/scripts/check_import_path_readonly.py:/opt/probe/check.py:ro" \
+              --entrypoint python "$REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}" /opt/probe/check.py
+          done
+          echo "✅ FL Server import path is read-only to the runtime uid."
+
       - name: Push FL Server Image
         env:
           TAGS: ${{ steps.tags.outputs.server_tags }}
@@ -205,6 +223,18 @@ jobs:
             -t $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-client
 
           echo "✅ Built FL Client."
+
+      # Same gate as the FL Server step above, before this image is pushed. The client is where
+      # job code actually runs, so this is the one that matters most.
+      - name: Verify the import path is read-only (FL Client)
+        run: |
+          for uid in 1000 1234; do
+            echo "── fl-client as uid ${uid} ──"
+            docker run --rm -u "${uid}:${uid}" \
+              -v "$PWD/fl-services/nvflare/scripts/check_import_path_readonly.py:/opt/probe/check.py:ro" \
+              --entrypoint python "$REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}" /opt/probe/check.py
+          done
+          echo "✅ FL Client import path is read-only to the runtime uid."
 
       - name: Push FL Client Image
         env:

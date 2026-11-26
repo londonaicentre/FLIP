@@ -13,10 +13,28 @@
 FROM python:3.13-slim-bookworm AS base
 
 ARG LOCAL_DEV=false
-# Set log level
+# PYTHONSAFEPATH stops CPython prepending the "unsafe" path — the script's directory, or the
+# current working directory under `python -m`/`python -c`. Both the server and the client are
+# started as `python3 -u -m nvflare.private.fed.app.*` from inside the FLARE workspace (/app
+# unless FL_WORKSPACE moves it), which is world-writable (the `chmod 1777` below), so without
+# this the workspace is the FIRST entry on sys.path of the long-lived FL process: a file a job
+# leaves in it shadows any module imported later, including by the next job. NVFLARE then hands
+# the parent's sys.path to every job worker it spawns verbatim
+# (nvflare.utils.job_launcher_utils.add_custom_dir_to_path builds the child's PYTHONPATH from
+# os.pathsep.join(sys.path)), so keeping the entry out of the parent is what keeps it out of the
+# workers. PYTHONPATH entries are NOT filtered by PYTHONSAFEPATH, which is why the placeholder
+# below matters: FLARE's own startup/sub_start.sh does `export PYTHONPATH=/local/custom:$PYTHONPATH`,
+# and with PYTHONPATH unset that trailing colon is an EMPTY entry — i.e. the working directory,
+# straight back onto sys.path. A non-empty, root-owned, empty directory makes that expansion
+# harmless. Keep both: neither alone closes the path.
+# PYTHONDONTWRITEBYTECODE additionally stops the runtime writing .pyc files next to the modules
+# it imports (the venv ships its bytecode, --compile-bytecode below).
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONSAFEPATH=1 \
+    PYTHONPATH=/opt/flip/empty-pythonpath \
     PATH="/app/.venv/bin:${PATH}"
+RUN mkdir -p /opt/flip/empty-pythonpath && chmod 555 /opt/flip/empty-pythonpath
 
 # Minimal OS deps including procps for pkill
 RUN apt-get update && \
@@ -54,36 +72,48 @@ ARG UNAME=flip
 RUN groupadd -g ${GID} ${UNAME} && \
     useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
 
-# Sync the project into a new environment, using the frozen lockfile
-# Copy necessary files for building the flip package
-COPY flip-utils/pyproject.toml flip-utils/uv.lock flip-utils/README.md ./
-COPY flip-utils/docs/ ./docs/
-COPY flip-utils/flip/ ./flip/
+# Sync the project into a new environment, using the frozen lockfile.
+# Copy necessary files for building the flip package. They land in /opt/flip-utils, NOT in the
+# world-writable workspace at /app and NOT owned by the runtime user — the same split the Flower
+# fl-base already makes (fl-services/flower/fl-base/Dockerfile). flip-utils is installed from
+# here as an ordinary (non-editable) package below, so this tree is build input only: nothing
+# imports it at run time, and no process can rewrite the flip package every later job imports.
+COPY flip-utils/pyproject.toml flip-utils/uv.lock flip-utils/README.md /opt/flip-utils/
+COPY flip-utils/docs/ /opt/flip-utils/docs/
+COPY flip-utils/flip/ /opt/flip-utils/flip/
 
-# Sync dependencies using uv, then chown the result in the same layer.
+# Sync dependencies using uv into the venv at /app/.venv (UV_PROJECT_ENVIRONMENT; the path is
+# part of this image's contract — the chart's job-pod pruner calls /app/.venv/bin/python).
 # If LOCAL_DEV is set to true, install dev dependencies as well, else --no-dev
 # --frozen ensures exact versions from uv.lock are used
 # Install the nvflare extra (this image's FL backend; FLIP#1047) and the full ML extra
 # --compile-bytecode ships the venv's .pyc files (FLIP#1782). PYTHONDONTWRITEBYTECODE
 # stops runtime writes only, so without them every FL job process compiled torch,
-# MONAI and NVFLARE from source on each start (~7-11 s, 2.6 s with them).
-# Chaining the chown onto this RUN (rather than a separate layer) matters: the
-# venv this creates is ~7GB, and overlayfs copies up every byte a later layer
-# touches. A standalone `chown -R /app` after this step would copy the whole
-# venv into a new layer, roughly doubling the image; doing it here chowns the
-# venv while it's still being written in its own layer, so nothing is copied.
+# MONAI and NVFLARE from source on each start (~7-11 s, 2.6 s with them). It also means the
+# runtime never needs to write anywhere under the venv, so the venv can stay read-only to it.
+# --no-editable installs flip-utils as an ordinary package: the built wheel goes into
+# site-packages, and /opt/flip-utils (the source) does NOT go onto sys.path, which an editable
+# install would have arranged via a .pth file. `import flip` therefore resolves to the venv,
+# nothing else, and there is one copy of it to protect.
 #
-# The two chmods are deliberately NOT recursive, for that same reason and because
-# nothing more is needed (FLIP#1171). The dev composes run this image as the host
-# user's uid with this image's gid, and the only writes that then need group
-# permission are *new entries* in these two directories: FLARE creates /app/pid.fl
-# and a /app/<job-id>/ workspace per run, and torch creates $HOME/.cache when the
-# model persistor builds its model. Creating an entry needs write on the directory,
-# not on its contents — so `chmod -R` would copy the venv up for no benefit, and
-# would additionally make every installed file group-writable, which is a
-# permission grant this does not need and should not make.
-# /app itself is also world-writable, sticky: a kit's FLIP_UID (FLIP#1731) is neither this
-# user nor in its group and still has to create those entries. The files under it are untouched.
-RUN uv sync --frozen --no-cache --compile-bytecode --extra nvflare --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi) && \
-    chown -R ${UNAME}:${UNAME} /app && \
+# NOTHING here is chowned to the runtime user. Everything the FL processes import — the venv and
+# its site-packages — is root-owned and read-only to them, so job code cannot rewrite a module
+# that the client/server process, or the next job, imports. The runtime user never writes inside
+# the venv (bytecode is precompiled above), so it needs no ownership of it.
+#
+# The chmods are deliberately NOT recursive (FLIP#1171): the venv is ~7GB and overlayfs copies up
+# every byte a later layer touches, so chaining them onto this RUN rather than adding a layer is
+# what keeps the image from roughly doubling. The dev composes run this image as the host user's
+# uid with this image's gid, and the only writes that then need permission are *new entries* in
+# two directories: FLARE creates /app/pid.fl and a /app/<job-id>/ workspace per run, and torch
+# creates $HOME/.cache when the model persistor builds its model. Creating an entry needs write
+# on the directory, not on its contents.
+# /app itself is world-writable, sticky: a kit's FLIP_UID (FLIP#1731) is neither this user nor in
+# its group and still has to create those entries. Sticky is what makes that safe now that /app
+# holds the venv: a non-owner cannot unlink or rename root-owned .venv, only add entries beside
+# it — and those entries are not importable, because /app is no longer on sys.path (see
+# PYTHONSAFEPATH above).
+RUN cd /opt/flip-utils && \
+    UV_PROJECT_ENVIRONMENT=/app/.venv uv sync --frozen --no-cache --compile-bytecode --no-editable \
+      --extra nvflare --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi) && \
     chmod 1777 /app && chmod g+rwX /home/${UNAME}

@@ -115,6 +115,40 @@ standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-servic
 unhardened — it runs the same non-root image and kit dirs, so it can be hardened the same way whenever someone
 picks it up.
 
+### The Python import path is read-only to the runtime user
+
+Job code submitted by a researcher runs inside `fl-client` as the same user as the long-lived FL
+client process, and the FLARE workspace it writes is `/app`. So the image is built such that nothing
+Python can import is also writable by that user:
+
+- **flip-utils is installed non-editable.** The source is copied to `/opt/flip-utils` (root-owned,
+  outside the workspace) and `uv sync --no-editable` puts the built package in the venv's
+  site-packages. An editable install would have left the source tree itself on `sys.path`.
+- **The venv is root-owned.** Nothing under `/app/.venv` is chowned to `flip`; bytecode is
+  precompiled (`--compile-bytecode`, FLIP#1782) so the runtime never needs to write there.
+- **The workspace is not on `sys.path`.** `PYTHONSAFEPATH=1` stops CPython prepending the working
+  directory, which is the workspace, when FLARE starts the FL process with `python3 -u -m …`. A kit's
+  `startup/sub_start.sh` does `export PYTHONPATH=/local/custom:$PYTHONPATH`, whose trailing colon is
+  an empty entry — the working directory again — so the image also ships a non-empty placeholder
+  `PYTHONPATH` (`/opt/flip/empty-pythonpath`, root-owned and empty) to absorb it. Both are needed;
+  `PYTHONSAFEPATH` does not filter `PYTHONPATH`.
+- `/app` stays `1777` (a kit's `FLIP_UID`, FLIP#1731, must create entries in it). Sticky is what
+  stops a foreign uid unlinking the root-owned `.venv` beside its own files, and the entries it can
+  create are not importable because the workspace is off `sys.path`.
+
+Per-job directories FLARE creates under the workspace stay writable and are added to the worker's
+path by FLARE itself — that is the job's own code, by design.
+
+[`scripts/check_import_path_readonly.py`](./scripts/check_import_path_readonly.py) asserts all of
+this against a built image, as the uid it will run as (uid 1000 and an arbitrary `FLIP_UID`), and
+runs in `fl-docker-build-nvflare.yml` after the server and client builds, before they are pushed:
+
+```bash
+docker run --rm -u 1000:1000 \
+  -v "$PWD/fl-services/nvflare/scripts/check_import_path_readonly.py:/opt/probe/check.py:ro" \
+  --entrypoint python flare-fl-client:dev /opt/probe/check.py
+```
+
 ## Step-by-step provisioning
 
 ### Project yml file
