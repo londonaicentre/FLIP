@@ -40,10 +40,19 @@ pytestmark = pytest.mark.skipif(
 JOB_RENDER = "apiVersion: batch/v1\nkind: Job\nmetadata:\n  labels:\n    app.kubernetes.io/component: xnat-init\n"
 
 # helm: `template` prints the render, `upgrade` exits HELM_UPGRADE_RC, `status` prints an empty release.
+# `get values` prints the release's values, or fails with HELM_GET_ERR on stderr; `template` logs a
+# line when one of its arguments is a file holding those values.
 HELM_STUB = """#!/bin/sh
 printf 'helm %s\\n' "$*" >> "$CALL_LOG"
 case "$1" in
-  template) cat "$HELM_RENDER" ;;
+  get)
+    [ -z "$HELM_GET_ERR" ] || { echo "$HELM_GET_ERR" >&2; exit 1; }
+    printf 'pacs:\\n  host: site-pacs\\n' ;;
+  template)
+    for a in "$@"; do
+      if grep -qs site-pacs -- "$a"; then echo "template read the release values from $a" >> "$CALL_LOG"; fi
+    done
+    cat "$HELM_RENDER" ;;
   upgrade) exit "${HELM_UPGRADE_RC:-0}" ;;
   status) echo '{}' ;;
 esac
@@ -88,16 +97,18 @@ def _stub(path: Path, body: str) -> Path:
     return path
 
 
-def _make(tmp_path: Path, target: str, **env_overrides: str) -> tuple[subprocess.CompletedProcess, str]:
+def _make(
+    tmp_path: Path, target: str, render_text: str = JOB_RENDER, make_args: tuple[str, ...] = (), **env_overrides: str
+) -> tuple[subprocess.CompletedProcess, str]:
     render = tmp_path / "render.yaml"
-    render.write_text(JOB_RENDER)
+    render.write_text(render_text)
     log = tmp_path / "calls.log"
     log.write_text("")
     env = dict(os.environ, HELM_RENDER=str(render), CALL_LOG=str(log), **env_overrides)
     helm = _stub(tmp_path / "helm", HELM_STUB)
     kubectl = _stub(tmp_path / "kubectl", KUBECTL_STUB)
     result = subprocess.run(
-        ["make", "-o", "preflight", "-C", str(CHART_DIR), target, f"HELM_BIN={helm}", f"KUBECTL={kubectl}"],
+        ["make", "-o", "preflight", "-C", str(CHART_DIR), target, f"HELM_BIN={helm}", f"KUBECTL={kubectl}", *make_args],
         capture_output=True,
         text=True,
         timeout=120,
@@ -160,7 +171,10 @@ def test_a_job_that_completes_later_passes_even_if_the_failed_waiter_errors(tmp_
 
 def test_an_unrenderable_chart_fails_xnat_init_instead_of_reporting_xnat_disabled(tmp_path):
     """`helm template` failing used to leave an empty render, read as "XNAT is disabled", exit 0."""
-    failing_helm = "#!/bin/sh\nprintf 'helm %s\\n' \"$*\" >> \"$CALL_LOG\"\necho 'Error: failed to parse' >&2\nexit 1\n"
+    failing_helm = (
+        '#!/bin/sh\nprintf \'helm %s\\n\' "$*" >> "$CALL_LOG"\n'
+        "[ \"$1\" = template ] || exit 0\necho 'Error: failed to parse' >&2\nexit 1\n"
+    )
     render = tmp_path / "render.yaml"
     render.write_text("")
     log = tmp_path / "calls.log"
@@ -178,3 +192,158 @@ def test_an_unrenderable_chart_fails_xnat_init_instead_of_reporting_xnat_disable
     assert "could not render the chart" in result.stdout
     assert "XNAT is disabled" not in result.stdout
     assert "kubectl" not in log.read_text()
+
+
+# ---------------------------------------------------------------- the values xnat-init renders with (FLIP#2047)
+
+
+def test_a_bare_xnat_init_renders_the_job_from_the_releases_own_values(tmp_path):
+    """The failure hints print `make -C trust/deploy/helm xnat-init` with no values. Rendered from
+    the chart defaults, that Job re-pointed XNAT at the mocked PACS on the default image tag and
+    reported "XNAT init complete"."""
+    result, calls = _make(tmp_path, "xnat-init")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "helm get values trust-release --namespace flip-trust -o yaml" in calls
+    assert "template read the release values" in calls
+    assert calls.index("helm get values") < calls.index("helm template")
+
+
+def test_an_override_file_handed_to_xnat_init_is_what_it_renders_with(tmp_path):
+    """deploy-trust-k8s and upgrade-trust-k8s pass the override they just deployed."""
+    result, calls = _make(tmp_path, "xnat-init", make_args=("OVERRIDES_FILE=k8s-trust-ABC.yaml", "TAG=v1.2.3"))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "helm get values" not in calls
+    assert "template read the release values" not in calls
+
+
+def _template_args(calls: str) -> tuple[list[str], str]:
+    """The `helm template` arguments, and the file among them that holds the release's values."""
+    template = next(line for line in calls.splitlines() if line.startswith("helm template ")).split()
+    release_values = next(line for line in calls.splitlines() if line.startswith("template read")).split()[-1]
+    return template, release_values
+
+
+@pytest.mark.parametrize(
+    ("given", "rendered_after"),
+    [
+        ("KIT=ABC", None),
+        ("TAG=v1.2.3", "global.image.tag=v1.2.3"),
+        ("PLATFORM_VALUES=values-aks.yaml", "values-aks.yaml"),
+        ("VALUES_FILE=site-values.yaml", "site-values.yaml"),
+    ],
+    ids=["kit", "tag", "platform-values", "values-file"],
+)
+def test_without_an_override_file_the_release_is_read_and_what_the_caller_passed_wins(tmp_path, given, rendered_after):
+    """`xnat-init KIT=<CODE> HUB=<env>` names no override file, so it too rendered the Job from the
+    chart defaults. Only an override file stands in for the release's values; anything else the
+    caller passes is applied on top of them."""
+    result, calls = _make(tmp_path, "xnat-init", make_args=(given,))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    template, release_values = _template_args(calls)
+    if rendered_after:
+        assert template.index(release_values) < template.index(rendered_after), template
+
+
+def test_the_charts_default_values_file_is_not_laid_over_the_releases_values(tmp_path):
+    """`-f values.yaml` after the release's values would reset every key to the chart default."""
+    _, calls = _make(tmp_path, "xnat-init")
+
+    template, release_values = _template_args(calls)
+    assert not any(arg.endswith("/values.yaml") for arg in template[template.index(release_values) :])
+
+
+@pytest.mark.parametrize("error", ["Error: release: not found", "Error: Kubernetes cluster unreachable"])
+def test_xnat_init_stops_when_the_release_cannot_be_read(tmp_path, error):
+    """Rendered from the chart defaults, the Job reads a Secret no release created and waits on it
+    until HELM_TIMEOUT; an unreachable cluster is the same wrong Job. Nothing is rendered or applied."""
+    result, calls = _make(tmp_path, "xnat-init", HELM_GET_ERR=error)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "no release trust-release in flip-trust" in result.stdout
+    assert error in result.stderr
+    assert "helm template" not in calls
+    assert "kubectl" not in calls
+
+
+def _dry_run(*args: str) -> str:
+    return subprocess.run(
+        ["make", "-n", "-C", str(CHART_DIR), *args], capture_output=True, text=True, check=True, timeout=120
+    ).stdout
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("deploy",), ("deploy-trust-k8s", "KIT=ABC", "HUB=stag"), ("_upgrade-trust-k8s-apply", "KIT=ABC", "HUB=stag")],
+    ids=["deploy", "deploy-trust-k8s", "upgrade-trust-k8s"],
+)
+def test_the_xnat_init_hint_is_a_command_that_reaches_the_same_release(args):
+    """Printed where xnat-init did not complete. It names the cluster, namespace and release the
+    caller chose, and no values: the target reads those from the release."""
+    hint = "make -C trust/deploy/helm xnat-init KUBE_CONTEXT=kind-x NAMESPACE=ns RELEASE_NAME=rel"
+    assert hint in _dry_run(*args, "KUBE_CONTEXT=kind-x", "NAMESPACE=ns", "RELEASE_NAME=rel")
+
+    bare = _dry_run(*args)
+    assert "make -C trust/deploy/helm xnat-init" in bare
+    assert "xnat-init KUBE_CONTEXT" not in bare
+    assert "xnat-init NAMESPACE" not in bare
+
+
+def test_the_xnat_init_messages_point_at_the_readme_section_not_an_unrelated_issue():
+    """#565 is "Wire dcm2niix Job execution on Kubernetes deployment" and says nothing about a
+    timed-out init job."""
+    text = (CHART_DIR / "Makefile").read_text()
+    assert "did not complete (see #565)" not in text
+    assert text.count("did not complete (see $(XNAT_INIT_HELP))") == 3
+    assert "XNAT_INIT_HELP := trust/deploy/helm/README.md, Running the XNAT init job by hand\n" in text
+    assert "### Running the XNAT init job by hand" in (CHART_DIR / "README.md").read_text()
+
+
+SEED_RENDER = JOB_RENDER.replace("xnat-init", "trust-seed")
+
+
+def _reseed(tmp_path: Path, **env: str) -> tuple[subprocess.CompletedProcess, str]:
+    """`make reseed KIT=` with the trust's override in place (OVERRIDES_FILE names a scratch one)."""
+    override = tmp_path / "k8s-trust-TESTKIT.yaml"
+    override.write_text("trustNumber: 2\n")
+    return _make(tmp_path, "reseed", SEED_RENDER, ("KIT=TESTKIT", f"OVERRIDES_FILE={override}"), **env)
+
+
+def test_reseed_runs_the_seed_job_once_with_reseed_on_and_the_trusts_override(tmp_path):
+    """The hook seeds only an empty store (FLIP#2111), so a pin bump reaches a seeded trust only this way."""
+    result, calls = _reseed(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    template = next(line for line in calls.splitlines() if line.startswith("helm template"))
+    assert f"-f {tmp_path / 'k8s-trust-TESTKIT.yaml'}" in template, "the partition comes from the trust's override"
+    assert "--set trustData.seed.reseed=true" in template, template
+    assert "delete job -n flip-trust --selector app.kubernetes.io/component=trust-seed" in calls, calls
+    assert "wait job --selector app.kubernetes.io/component=trust-seed" in calls, calls
+    assert "Trust re-seed complete" in result.stdout
+
+
+def test_a_failed_reseed_fails_and_names_itself(tmp_path):
+    result, _ = _reseed(tmp_path, KUBECTL_WAIT_RC="1")
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "Trust re-seed failed" in result.stdout
+
+
+def test_reseed_refuses_without_a_kit_or_its_override(tmp_path):
+    """Without the override the Job renders trustNumber 1 and would load slot 1's data into any trust."""
+    no_kit, calls = _make(tmp_path, "reseed", SEED_RENDER)
+    assert no_kit.returncode != 0, no_kit.stdout
+    assert "KIT=<CODE> is required" in no_kit.stdout
+    missing, _ = _make(tmp_path, "reseed", SEED_RENDER, ("KIT=TESTKIT", f"OVERRIDES_FILE={tmp_path}/absent.yaml"))
+    assert missing.returncode != 0, missing.stdout
+    assert "run make sync-kit KIT=TESTKIT first" in missing.stdout
+    assert "kubectl" not in calls
+
+
+def test_reseed_with_seeding_off_does_nothing(tmp_path):
+    override = tmp_path / "k8s-trust-TESTKIT.yaml"
+    override.write_text("trustNumber: 2\n")
+    result, calls = _make(tmp_path, "reseed", JOB_RENDER, ("KIT=TESTKIT", f"OVERRIDES_FILE={override}"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "nothing to re-seed" in result.stdout
+    assert "kubectl" not in calls

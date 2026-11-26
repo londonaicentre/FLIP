@@ -236,7 +236,8 @@ names each directory; the table gives the default the production stack uses when
      - Loki logs and Grafana state.
      - Not needed to run the trust.
 
-``<N>`` is ``FL_KIT_SLOT_NUMBER`` from the kit file. To see the exact host paths a running trust uses, inspect its
+``<N>`` is ``FL_KIT_SLOT_NUMBER`` from the kit file. When the kit sets ``FLIP_DATA_ROOT``, each of these five whose
+own setting is unset is a folder under it: ``omop``, ``orthanc``, ``xnat``, ``cohort-snapshots`` and ``images``. To see the exact host paths a running trust uses, inspect its
 containers on the trust host:
 
 .. code-block:: shell
@@ -285,8 +286,8 @@ wipes XNAT (see the warning under `Restoring a trust node`_).
 #. **Dump the OMOP database** if your site loaded anything beyond the mock data, with PostgreSQL's ``pg_dump`` against
    ``127.0.0.1:<OMOP_DB_PORT>`` and the ``OMOP_*`` credentials from your kit file.
 
-Instead of steps 2 to 5, you can snapshot the whole data volume (``/opt/flip`` by default) with your platform's volume
-or snapshot tooling.
+Instead of steps 2 to 5, you can snapshot the whole data volume (``FLIP_DATA_ROOT``, or ``/opt/flip`` by default)
+with your platform's volume or snapshot tooling.
 
 .. note::
 
@@ -304,7 +305,7 @@ FLIP has no restore command for a trust. When you restore one with your own tool
 
    **Never run a first-install command on a restored site.** ``make up-onprem-trust``, ``make -C trust up-trust``,
    ``make -C trust restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` delete the whole
-   ``XNAT_DATA_DIR`` (archive, database and dumps) and may re-seed OMOP and Orthanc. Starting a stopped site with them
+   ``XNAT_DATA_DIR`` (archive, database and dumps). Starting a stopped site with them
    has the same effect.
 
 - **The upgrade command touches no data.** It recreates the trust containers on their existing directories (see
@@ -397,8 +398,9 @@ Restoring a Kubernetes node
 - **A restored** ``xnat-db`` **keeps its old superuser password.** The ``xnat`` application role's password is
   re-applied at every pod start, but the ``postgres`` superuser's is set only when the database is first created. See
   the :gh:`Helm chart README <trust/deploy/helm/README.md>` for rotating it by hand.
-- **Mock-data seeding runs on every upgrade** while ``trustData.seed.enabled`` is on, replacing the listed mock
-  projects' rows. If your stores hold real data, turn seeding off by setting ``TRUST_DATA_SEED=false`` in the kit file.
+- **Mock-data seeding runs on every upgrade** while ``trustData.seed.enabled`` is on, and loads the mock projects
+  into a store that has no imaging data yet. If your stores hold real data, turn seeding off by setting
+  ``TRUST_DATA_SEED=false`` in the kit file.
 
 ***********************
 Local development stack

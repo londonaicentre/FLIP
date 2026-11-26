@@ -223,3 +223,44 @@ def test_a_reply_without_a_node_id_fails_the_run(one_shot, tmp_path):
     result, _ = one_shot([HOST], TRUST_NAMES="", KEYS_DIR=str(keys))
     assert result.returncode == 1, result.stdout + result.stderr
     assert "All SuperNode keys registered successfully." not in result.stdout
+
+
+# FLIP#2047: the node → trust name mappings live only in the FL API's memory and only this one-shot
+# writes them, so an FL API that did not take them must fail the run instead of passing as a warning.
+# Exit code 3, not 1: every key is registered by then, which add_fl_kits_flower.sh needs to tell apart.
+def _failing_fl_api(tmp_path: Path, case: str) -> None:
+    """The mapping-logging `python` stub, with one case tried first for the call the FL API fails."""
+    stub = STUB_PYTHON_MAPPINGS.replace("    *register_node*)", f"    {case}\n    *register_node*)")
+    (tmp_path / "bin" / "python").write_text(stub.replace("{python}", sys.executable))
+
+
+def test_an_fl_api_that_never_answers_fails_the_run(one_shot, tmp_path):
+    keys = _keys(tmp_path, 1)
+    _failing_fl_api(tmp_path, "*openapi.json*) exit 1 ;;")
+    result, _ = one_shot(
+        [HOST], TRUST_NAMES="", KEYS_DIR=str(keys), FL_API_ADDRESS="http://fl-api:8000", FL_API_READY_ATTEMPTS="1"
+    )
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "All SuperNode keys registered successfully." in result.stdout
+    assert "FL API at http://fl-api:8000 did not become ready" in result.stderr
+
+
+def test_a_mapping_the_fl_api_refuses_fails_the_run_after_the_others_are_tried(one_shot, tmp_path):
+    keys = _keys(tmp_path, 1, 2, 3)
+    mappings = tmp_path / "mappings.log"
+    _failing_fl_api(tmp_path, """*"'name': 'Trust_2'"*) echo "HTTP Error 401: Unauthorized" >&2; exit 1 ;;""")
+    result, _ = one_shot(
+        [HOST], TRUST_NAMES="", KEYS_DIR=str(keys), FL_API_ADDRESS="http://fl-api:8000", MAPPINGS=str(mappings)
+    )
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "All SuperNode keys registered successfully." in result.stdout
+    assert "did not take the mapping for: Trust_2 " in result.stderr
+    assert "HTTP Error 401: Unauthorized" in result.stderr
+    assert [line.split("'")[3] for line in mappings.read_text().splitlines()] == ["Trust_1", "Trust_3"]
+
+
+def test_without_an_fl_api_address_the_mappings_are_skipped(one_shot, tmp_path):
+    keys = _keys(tmp_path, 1)
+    result, _ = one_shot([HOST], TRUST_NAMES="", KEYS_DIR=str(keys))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "FL_API_ADDRESS not set" in result.stdout

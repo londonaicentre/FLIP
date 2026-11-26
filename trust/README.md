@@ -83,6 +83,12 @@ EXPECTED_TRUST_ID=<from kit>
 
 plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> HUB=<env>` handles the rest.
 
+The hub-shared block names the FL endpoint (`NLB_SUBDOMAIN`) and the port the trust dials (`FL_EDGE_PORT`: 443 on
+production, 8003 on staging). A trust that must dial another port, such as `8002` over a site-to-site VPN, sets
+`FL_EDGE_PORT_OVERRIDE` in its kit file; hub tooling never overwrites it. The effective port is
+`FL_EDGE_PORT_OVERRIDE`, else `FL_EDGE_PORT`, else `FL_SERVER_PORT`. On NVFLARE, `fl-client-init` writes it into the
+kit's `startup/fed_client.json` before the client starts.
+
 The kit also carries **XNAT's own AE title** and the **upstream PACS** block (see the commented
 `── Upstream PACS ──` section of `trust/.env.example`, and
 [`xnat/README.md`](xnat/README.md#pacs-configuration) for what each one does):
@@ -264,18 +270,26 @@ make publish-trust-data VERSION=20261001 OMOP_CSV=… DELETE=dicom/spleen_projec
 `DELETE=<path in repo>` removes a file from `main` in the same commit (earlier tags keep it) — how
 `dicom/spleen_project.tar.gz` went when spleen moved to local regeneration.
 
-Bumping `.data_version` is what moves a checkout: the next `up-trust` (its `ensure-seeded` step) re-seeds the trust's projects at
-the new tag — OMOP rows replaced project by project, PACS studies cleared and re-uploaded — and
-every seed/enrichment run reads at the new tag.
+Bumping `.data_version` moves a checkout's seed and enrichment runs to the new tag, but not a trust
+that already holds data: `up-trust` seeds only an empty store (below). Re-seed each sample-data trust
+at the new tag yourself — OMOP rows replaced project by project, PACS studies cleared and re-uploaded:
+
+```sh
+make -C trust seed-trusts PROJECTS="cxr_project" CLEAR=1                       # the dev pair
+make -C trust seed KIT=<CODE> HUB=<env> PROJECTS="…" CLEAR=1                   # any other sample-data trust
+```
+
+`make release-main-check` adds that step to the release checklist whenever a release moves the pin.
 
 ### Seeding at bring-up
 
 `up-trust` starts omop-db and Orthanc on empty, pre-created volumes and then runs
 `ensure-seeded`, which loads `PROJECTS` (default `cxr_project`, see above) from the dataset at
-the pinned version. Each half leaves a marker beside its store — `<omop dir>/../.seeded` and
-`<orthanc parent>/.<storage dir>.seeded` — recording projects, partition and version; a marker
-that matches means nothing to do, so a second `up` fetches and uploads nothing and the seeded
-volumes simply persist on the host. A first bring-up on a fresh host is the one slow step:
+the pinned version into each store that is still empty: OMOP with no `image_occurrence` row,
+Orthanc with no study (FLIP#2111). It asks the stores, so nothing is written on the host and no
+step needs `sudo`; a second `up` finds data and fetches and uploads nothing, and the seeded
+volumes simply persist on the host. A seed that failed part-way leaves a store that is not empty:
+re-run `make -C trust seed`, not `up`. A first bring-up on a fresh host is the one slow step:
 roughly 2 GB of DICOM per trust posted through Orthanc's REST API (a few minutes); the OMOP half
 takes seconds. The DICOM vocabulary is loaded with the rows; the licensed core vocabulary is still
 the separate credentialed `make -C trust/omop-db load-omop-vocab` step.
@@ -283,18 +297,16 @@ the separate credentialed `make -C trust/omop-db load-omop-vocab` step.
 ```sh
 make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project"                   # what up-trust runs; safe to repeat
 make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # add a project, unconditionally
+make -C trust seed KIT=GSTT PROJECTS="cxr_project" CLEAR=1                    # re-seed after a .data_version bump
 ```
 
 A real trust, whose OMOP and PACS hold its own data, sets `TRUST_DATA_SEED=false` in its kit:
-`ensure-seeded` then fetches, loads and marks nothing, and on Kubernetes `sync-kit` turns
+`ensure-seeded` then asks, fetches and loads nothing, and on Kubernetes `sync-kit` turns
 `trustData.seed.enabled` off. The explicit `seed*` / `unseed*` targets refuse that trust unless `FORCE_SEED=1`. If that trust's OMOP lacks the DICOM vocabulary, load it on its own with
 `make -C trust/omop-db load-dicom-vocab` and the kit's `OMOP_*` values.
 
-**Upgrading a host seeded before FLIP#1187:** a PACS marker left *inside* the storage directory
-(`<storage dir>/.seeded`) is no longer read (the marker now sits beside the directory, which Orthanc's uid owns), so the first `up-trust` re-posts every instance
-(Orthanc answers `AlreadyStored`; the DICOM cache under `trust/orthanc/volumes/dicom/` is keyed by
-data version, so nothing is re-downloaded) — a few minutes, once. The stale `.seeded` inside the
-storage directory can then be deleted.
+`.seeded` files left on a host by earlier releases (beside or inside the data directories) are no
+longer read and can be deleted.
 
 Recovering a half-loaded DICOM vocabulary: the loader skips itself when its scaffolding
 concept is present, and that concept is committed before the bulk load, so a run killed in
@@ -319,8 +331,7 @@ Override with `SOURCE_TRUST` when the two differ:
 make -C trust seed KIT=<CODE> SOURCE_TRUST=1        # slot stays as assigned; load partition 1
 ```
 
-`SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
-keyed to its kit slot, which is why it exists as its own variable rather than an override of
+`SOURCE_TRUST` moves only the partition. The trust's volumes and ports stay keyed to its kit slot, which is why it exists as its own variable rather than an override of
 `TRUST_NUM`.
 
 To seed the whole shipped dev roster in one go — `seed KIT=GSTT` then `seed KIT=KCH`, same
@@ -535,18 +546,17 @@ own settings, sending the host's public egress IP to the hub team, and `make onb
    development stack.
 
    On-prem, `up-trust` runs `ensure-seeded` the same way it does in
-   dev: a store with no `.seeded` marker beside it is seeded with the listed mock
+   dev: a store that is still empty is seeded with the listed mock
    projects (anonymous Hugging Face download, no hub credentials) — OMOP via
    `--clean projects`, which replaces only those projects' own rows, and Orthanc by
    posting their studies. A real on-prem operator who points `OMOP_DATA_DIR` /
    `ORTHANC_STORAGE_DIR` at real data must set `TRUST_DATA_SEED=false` in the kit
    before the first bring-up (see [Seeding at bring-up](#seeding-at-bring-up));
-   otherwise the mock projects are loaded alongside the real data.
+   otherwise a store with no imaging yet gets the mock projects.
 
    `up-trust` is the **first-install** verb on every path, on-prem included: its
    XNAT step runs `xnat-reset`, which wipes the XNAT archive and database, and its
-   `ensure-seeded` step re-seeds the listed projects whenever the seed markers
-   differ from the kit (a `.data_version` bump or changed `PROJECTS`). A real
+   `ensure-seeded` step seeds any store that is empty. A real
    on-prem operator runs `up-trust` **once**; every later move to a release goes
    through `upgrade-trust` (below), never `up-trust` or `restart-trust`.
 

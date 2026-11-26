@@ -57,9 +57,10 @@ CHART = $(MAKE) -C $(HELM_DIR) KUBE_CONTEXT=$(AKS_NAME) NAMESPACE=$(K8S_NAMESPAC
 AKS_VALUES ?= values-aks.yaml values-small-node.yaml$(if $(filter 1,$(MOCK_PACS)), ../terraform/azure/aks/values-mock-pacs.yaml)
 KIT_DIR = build/kits/$(notdir $(TARBALL:.tar.gz=))
 # The kit file's name carries the env token (trust/.env.<KIT>.<env>), derived from HUB in one place.
-ifneq ($(filter join,$(MAKECMDGOALS)),)
+ifneq ($(filter join deploy,$(MAKECMDGOALS)),)
 include $(REPO_ROOT)/deploy/env_mode.mk
 endif
+KIT_FILE = $(REPO_ROOT)/trust/.env.$(KIT).$(ENV)
 
 .PHONY: help init plan apply destroy credentials stop start allow-ip join _fl-kit deploy selftest clear-jobs
 
@@ -133,7 +134,7 @@ join: ## Install a hub-registered kit on the cluster and deploy the trust (TARBA
 	$(KUBECTL) create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(MAKE) _fl-kit KIT_DIR="$(KIT_DIR)" SLOT="$$(sed -n 's/^FL_KIT_SLOT=//p' "$(KIT_DIR)/.env.$(KIT).$(ENV)" | head -1)"
 	$(CHART) kit-secret KIT_SRC="$(abspath $(KIT_DIR))/fl-kit-secret"
-	$(MAKE) deploy KIT=$(KIT) HUB=$(HUB)
+	$(deploy_from_kit)
 
 # What goes into the FL kit Secret. NVFLARE: the slot's services/<SLOT>/ as shipped (SLOT is the kit's FL_KIT_SLOT). Flower: only what
 # the SuperNode reads, ca.crt and this slot's credential; the tarball's certificates/ also holds the
@@ -145,9 +146,23 @@ _fl-kit:
 	else mkdir -p -m 700 "$$s/certificates" "$$s/keys" && cp -p "$$k/certificates/ca.crt" "$$s/certificates/" && \
 	  for f in "$$k"/keys/supernode_credentials_*; do case "$$f" in *.pub) ;; *) cp -p "$$f" "$$s/keys/" ;; esac; done; fi
 
-deploy: ## Deploy or upgrade the trust on the cluster from its installed kit (KIT=<CODE> HUB=<env> [MOCK_PACS=1])
+# The overlays come from the kit file's K8S_PLATFORM_VALUES, which join recorded: passing AKS_VALUES
+# here would drop any join was given (MOCK_PACS=1, an operator's own).
+# A kit that records none, read as the chart reads it (its last line), is not deployed: the chart would
+# leave out values-aks.yaml, moving PGDATA and taking the FL kit from the node. An overlay typed to
+# deploy is refused, not ignored.
+define deploy_from_kit
+	@[ -n "$$(sed -n 's/^K8S_PLATFORM_VALUES=//p' "$(KIT_FILE)" 2>/dev/null | tail -1)" ] || { \
+		echo "❌ $(notdir $(KIT_FILE)) records no K8S_PLATFORM_VALUES, so the chart would deploy without the AKS overlays."; \
+		echo "   make join records them; for a kit installed by hand add: K8S_PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"; exit 1; }
+	$(CHART) deploy-trust-k8s KIT=$(KIT) HUB=$(HUB)
+endef
+deploy: ## Deploy or upgrade the trust on the cluster from its installed kit (KIT=<CODE> HUB=<env>)
 	@[ -n "$(KIT)" ] && [ -n "$(HUB)" ] || { echo "❌ KIT=<trust code> HUB=<env> are required."; exit 1; }
-	$(CHART) deploy-trust-k8s KIT=$(KIT) HUB=$(HUB) PLATFORM_VALUES="$(AKS_VALUES)"
+	@[ -z "$(filter-out undefined,$(origin MOCK_PACS))$(filter-out file,$(origin AKS_VALUES))" ] || { \
+		echo "❌ deploy takes its overlays from K8S_PLATFORM_VALUES in the kit file, not from MOCK_PACS or AKS_VALUES."; \
+		echo "   Edit that line in $(notdir $(KIT_FILE)) (make join … MOCK_PACS=1 records the mock PACS overlay)."; exit 1; }
+	$(deploy_from_kit)
 
 selftest: ## Run the trust self-test against the deployed release (report under build/selftest/ at the repo root)
 	$(CHART) selftest

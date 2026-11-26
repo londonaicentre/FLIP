@@ -64,6 +64,8 @@ _VERSION = re.compile(r"^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$")
 # the global block rather than run over the whole file.
 _GLOBAL_BLOCK = re.compile(r"^global:\n(?: {2,}.*\n|\n)*", re.MULTILINE)
 _GLOBAL_TAG = re.compile(r"^( {4}tag: ).*$", re.MULTILINE)
+# The chart's `name:` in Chart.yaml, which `helm package` names the .tgz after -- not its folder's name.
+_CHART_NAME = re.compile(r"^name:[ \t]*([^\s#]+)", re.MULTILINE)
 
 
 class StampError(RuntimeError):
@@ -99,6 +101,14 @@ def _substitute_once(
     if count != 1:
         raise StampError(f"expected exactly one {what} to rewrite, found {count}")
     return new_text
+
+
+def chart_name(chart_yaml: str) -> str:
+    """The chart's own name, from its Chart.yaml: what `helm package` names the .tgz after, and the OCI repository."""
+    names = _CHART_NAME.findall(chart_yaml)
+    if len(names) != 1:
+        raise StampError(f"expected exactly one `name:` in Chart.yaml, found {len(names)}")
+    return names[0]
 
 
 def stamp_values(text: str, tag: str) -> str:
@@ -140,8 +150,9 @@ def publish(
         if not path.is_file():
             raise StampError(f"{path} is missing -- is {chart_dir} a chart directory?")
 
+    name = chart_name(chart_yaml.read_text())
     values_yaml.write_text(stamp_values(values_yaml.read_text(), tag))
-    print(f"stamped {chart_dir.name} global.image.tag {tag}; packaging as {version} (appVersion {tag})")
+    print(f"stamped {name} global.image.tag {tag}; packaging as {version} (appVersion {tag})")
 
     if shutil.which("helm") is None and not dry_run:
         raise StampError("helm is not on PATH")
@@ -163,11 +174,11 @@ def publish(
         dry_run=dry_run,
     )
 
-    package = out_dir / f"{chart_dir.name}-{version}.tgz"
+    package = out_dir / f"{name}-{version}.tgz"
     if push:
         # `helm push` needs a registry login; the workflow does that with the job's GITHUB_TOKEN.
         _run(["helm", "push", str(package), registry], dry_run=dry_run)
-        print(f"published {registry}/{chart_dir.name}:{version}")
+        print(f"published {registry}/{name}:{version}")
     return package
 
 

@@ -127,7 +127,9 @@ Running the simulator requires a GPU.
   The trainer selects a client's data by `flare.get_site_name()`; `app_files/data_utils.py` resolves
   the paths with the precedence `SITE{N}_IMAGES_DIR`/`SITE{N}_DATAFRAME` env → the single-site `DEV_*`
   env. The per-site env vars are set in [`.env.app`](.env.app).
-- **Real deployment (`LOCAL_DEV=false`):** the cohort dataframe comes from
+- **Real deployment (`LOCAL_DEV=false`):** each trust holds its site's cohort as `arkplus_project`
+  (`make -C trust seed KIT=<CODE> PROJECTS=arkplus_project`, see
+  [`datasets/arkplus/README.md`](../../../datasets/arkplus/README.md)); the cohort dataframe comes from
   `FLIP().get_dataframe(project_id, query)` and DICOMs from `FLIP().get_by_accession_number(...)`.
   `project_id` is passed to the trainer as `--project_id`; the cohort `query` is read from the job's
   generated `config_fed_client.json` (see [`query.sql`](query.sql)).

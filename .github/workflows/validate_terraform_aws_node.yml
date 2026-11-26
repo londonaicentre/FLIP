@@ -21,6 +21,11 @@ on:
       - "trust/deploy/terraform/aws/**"
       # Both roots' Makefiles include the HUB table.
       - "deploy/env_mode.mk"
+      # ec2's Makefile test holds its provisioned paths to the roles, the play and the compose defaults.
+      - "trust/deploy/ansible/aws-ec2-host.yml"
+      - "trust/deploy/ansible/roles/flip_trust_seed/**"
+      - "trust/deploy/ansible/roles/flip_fl_kit/defaults/main.yml"
+      - "trust/deploy/compose/compose_trust.prod.yml"
       - ".github/workflows/validate_terraform_aws_node.yml"
   pull_request:
     branches: [main, develop]
@@ -29,6 +34,11 @@ on:
       - "trust/deploy/terraform/aws/**"
       # Both roots' Makefiles include the HUB table.
       - "deploy/env_mode.mk"
+      # ec2's Makefile test holds its provisioned paths to the roles, the play and the compose defaults.
+      - "trust/deploy/ansible/aws-ec2-host.yml"
+      - "trust/deploy/ansible/roles/flip_trust_seed/**"
+      - "trust/deploy/ansible/roles/flip_fl_kit/defaults/main.yml"
+      - "trust/deploy/compose/compose_trust.prod.yml"
       - ".github/workflows/validate_terraform_aws_node.yml"
 
 permissions:
