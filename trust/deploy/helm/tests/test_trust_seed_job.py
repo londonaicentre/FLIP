@@ -67,11 +67,11 @@ def test_a_succeeded_seed_job_is_removed_and_a_failed_one_kept():
 
 
 def test_seed_job_runs_the_shared_script_at_a_pinned_ref():
-    """The Job fetches trust/seed_trust.sh (the one procedure EC2 runs too) at trustData.seed.sourceRef."""
+    """The Job fetches trust/seed_trust.sh (the one procedure EC2 runs too) at the release's ref (FLIP#2118)."""
     text = SEED_JOB.read_text()
     assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/seed_trust.sh" in text
     assert "exec bash /work/seed_trust.sh" in text
-    assert 'required "trustData.seed.sourceRef is required' in text
+    assert "flip-trust.seedSourceRef" in text
     for env in (
         "TRUST_DATA_VERSION",
         "SOURCE_TRUST",
@@ -99,8 +99,11 @@ def test_the_half_loaded_vocabulary_can_be_reloaded_from_the_chart():
 def test_the_shared_script_installs_the_repository_loaders_without_git():
     """trust/seed_trust.sh: omop_db_tools from a source archive (no git in the image), seed_orthanc.py by URL."""
     script = (CHART_DIR.parents[2] / "trust" / "seed_trust.sh").read_text()
-    assert "https://github.com/londonaicentre/FLIP/archive/${FLIP_REF}.tar.gz#subdirectory=trust/omop-db" in script
-    assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/orthanc/seed_orthanc.py" in script
+    assert "https://github.com/londonaicentre/FLIP/archive/${FLIP_REF:?" in script
+    assert ".tar.gz#subdirectory=trust/omop-db" in script
+    assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF:?" in script
+    assert "/trust/orthanc/seed_orthanc.py" in script
+    assert "FLIP_REF:-" not in script, "no moving default ref (FLIP#2118)"
     assert "omop_db_tools.load_dicom_vocab --vocab-dir" in script
     assert "--skip-if-loaded" in script
     assert "--force" in script  # the escape hatch; see test_the_half_loaded_vocabulary_can_be_reloaded_from_the_chart
@@ -131,7 +134,7 @@ def test_seed_values_defaults():
     assert seed["sourceTrust"] == ""
     assert seed["numTrusts"] == 2
     assert seed["reseed"] is False, "an upgrade must leave a seeded trust as it is (FLIP#2111)"
-    assert seed["sourceRef"]
+    assert seed["sourceRef"] == "", "empty = the ref of the image tag the site runs (FLIP#2118)"
     assert "initJob" not in VALUES["omopDb"]
     assert "initJob" not in VALUES["orthanc"]
 

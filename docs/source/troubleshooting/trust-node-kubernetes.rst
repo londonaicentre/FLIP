@@ -982,10 +982,13 @@ The job that loads the mock data is kept when it fails, so its log is readable:
 
 - **No egress.** The job needs ``huggingface.co``, ``github.com`` / ``raw.githubusercontent.com`` and PyPI (see
   :gh:`trust/deploy/helm/NETWORK-POLICY.md`).
-- ``ModuleNotFoundError: No module named 'psycopg'``: ``trustData.seed.sourceRef`` names a FLIP ref whose data
-  loaders predate a database-driver fix. Set it in your values file to a newer ref, ideally the release tag your
-  images were built from (the chart default, ``develop``, is a moving branch tip), and deploy again with
-  ``VALUES_FILE=<your values file>``.
+- **The seed tools do not fit the chart.** ``does not satisfy Python>=3.13`` means a chart from v0.15.0 or earlier
+  (a Python 3.12 hook image) installed ``develop``'s seed tools, which need Python 3.13: those charts default
+  ``trustData.seed.sourceRef`` to ``develop``. ``ModuleNotFoundError: No module named 'psycopg'`` means the ref is
+  older than v0.10.0. The rest of the release has been applied; only the hook failed. Set ``sourceRef`` to the
+  site's release tag (v0.10.0 or later) in your values file and deploy again with
+  ``VALUES_FILE=<your values file>``, or move the site to v0.16.0 or later. Remove the override once the site runs a chart that derives the
+  ref from its release, or it keeps seeding with the old tools.
 
 Re-running the deploy is safe: it replaces only the listed projects' rows.
 

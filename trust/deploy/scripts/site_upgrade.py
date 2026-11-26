@@ -88,7 +88,8 @@ import trust_kit_lib as tkl  # noqa: E402
 
 #: A pullable, immutable image tag: a platform release (`v0.6.0`, pre-releases like
 #: `v0.6.1-rc.1` included) or the CI short-sha tag. Deliberately NOT the floating
-#: `prod` / `stag` / `latest`, and not a bare pyproject version (`0.6.0`).
+#: `prod` / `stag` / `latest`, and not a bare pyproject version (`0.6.0`). The Helm chart's
+#: flip-trust.seedSourceRef (templates/_helpers.tpl) matches the same two shapes.
 _RELEASE_TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:[-.]([0-9A-Za-z.-]+))?$")
 _SHA_TAG = re.compile(r"^sha-[0-9a-f]{7}$")
 

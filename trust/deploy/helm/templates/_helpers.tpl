@@ -32,6 +32,24 @@ Usage: {{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag 
 {{- end }}
 
 {{/*
+The FLIP git ref the trust-seed hook fetches its tools from (FLIP#2118): trustData.seed.sourceRef
+when set, else the ref of the tag trust-api runs, so the tools are the ones that release shipped
+with its hook image and schema. A release tag (the shape of site_upgrade.py's _RELEASE_TAG /
+_SHA_TAG) names its own git tag, sha-<sha> its commit, and a branch-built tag its branch. Any other
+tag, a local :dev build for one, is not mapped, so the render fails rather than guess.
+*/}}
+{{- define "flip-trust.seedSourceRef" -}}
+{{- $tag := include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.trustApi.image.tag) -}}
+{{- $branch := dict "prod" "main" "main" "main" "stag" "develop" "develop" "develop" -}}
+{{- if .Values.trustData.seed.sourceRef -}}{{ .Values.trustData.seed.sourceRef }}
+{{- else if regexMatch "^v[0-9]+\\.[0-9]+\\.[0-9]+([-.][0-9A-Za-z.-]+)?$" $tag -}}{{ $tag }}
+{{- else if regexMatch "^sha-[0-9a-f]{7}$" $tag -}}{{ trimPrefix "sha-" $tag }}
+{{- else if hasKey $branch $tag -}}{{ get $branch $tag }}
+{{- else -}}{{ fail (printf "trustData.seed.sourceRef is required: the image tag %q names no FLIP git ref to fetch the seed tools from" $tag) }}
+{{- end -}}
+{{- end }}
+
+{{/*
 Expand the name of the chart.
 */}}
 {{- define "flip-trust.name" -}}

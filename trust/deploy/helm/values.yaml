@@ -115,9 +115,9 @@ trustData:
     numTrusts: 2
     # The FLIP git ref the seed tools (trust/omop-db's omop_db_tools, trust/orthanc/
     # seed_orthanc.py) are installed from at run time — the chart ships no copy and no
-    # image of them. Use the ref your service images were built from: `main` for :prod
-    # tags, `develop` for :stag, a sha for a pinned deploy.
-    sourceRef: "develop"
+    # image of them. Empty = the ref of the tag trust-api runs (flip-trust.seedSourceRef,
+    # FLIP#2118). Set it to seed with other tools, or when the render asks for it.
+    sourceRef: ""
     # uv's official image (python + uv, Debian slim), from FLIP's GHCR mirror. Upstream carries
     # floating tags only, so the digest is what pins it: with `digest` set the image is
     # `<repository>@<digest>` and `tag` is documentation. The digest is the manifest's

@@ -756,9 +756,9 @@ jobs:
 
       # The trust-seed hook installs its loaders from FLIP at trustData.seed.sourceRef (a GitHub
       # source archive), so the install must point it at the commit under test — the chart
-      # default, `develop`, would seed with whatever loaders develop has, not this PR's. The hook
-      # fetches from londonaicentre/FLIP, where a commit made in a fork does not exist, so a fork
-      # PR and any run inside a fork fall back to develop (FLIP#1681).
+      # default, the ref of the :stag test images, would seed with develop's loaders, not this
+      # PR's. The hook fetches from londonaicentre/FLIP, where a commit made in a fork does not
+      # exist, so a fork PR and any run inside a fork fall back to develop (FLIP#1681).
       - name: Install chart
         env:
           SEED_REF: ${{ (github.repository != 'londonaicentre/FLIP' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork)) && 'develop' || (github.event.pull_request.head.sha || github.sha) }}
