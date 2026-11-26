@@ -1258,6 +1258,18 @@ def prepare_host_dirs_command(kit: str) -> str:
     return f"{command} {quote_make_assignment('HUB', hub)}" if hub else command
 
 
+def _exists_or_raise(path: Path) -> bool:
+    """Whether ``path`` exists, raising on a parent this user cannot traverse (EACCES).
+
+    Not Path.exists: it re-raises EACCES before Python 3.14 and answers False from 3.14 on.
+    """
+    try:
+        path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return True
+
+
 def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>") -> Check:
     """Every data dir is absolute, and the bring-up can create it as this user (FLIP#1723).
 
@@ -1292,8 +1304,8 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
         path = Path(raw or default.format(slot=slot))  # type: ignore[union-attr]
         unset = "" if raw else f"unset, so {path}; "
         try:
-            nearest = next(p for p in (path, *path.parents) if p.exists())
-        except OSError as error:  # Path.exists re-raises EACCES: a parent this user cannot traverse
+            nearest = next(p for p in (path, *path.parents) if _exists_or_raise(p))
+        except OSError as error:  # a parent this user cannot traverse
             blocked[var] = f"{unset}{error.filename} is not traversable: {error.strerror}"
             continue
         if nearest != path and not os.access(nearest, os.W_OK):
