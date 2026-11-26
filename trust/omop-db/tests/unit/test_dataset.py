@@ -252,6 +252,22 @@ class TestBuildCanonical:
         with pytest.raises(FileNotFoundError, match="does not exist"):
             build_canonical([trust_dirs[0], tmp_path / "trsut_2"], tmp_path / "canonical")
 
+    def test_all_digit_accession_ids_keep_their_leading_zeros(self, tmp_path):
+        """An AccessionNumber is text: "017355643737" read as a number no longer matches its DICOM (FLIP#2084)."""
+        trust_dirs = self._write_trust_dirs(tmp_path)
+        image = trust_dirs[0] / "cxr_project" / "image_occurrence.csv"
+        frame = pd.read_csv(image)
+        frame["accession_id"] = ["017355643737", "100000001001"]
+        frame.to_csv(image, index=False)
+        other = trust_dirs[1] / "cxr_project" / "image_occurrence.csv"
+        pd.read_csv(other).assign(accession_id=["000047445493", "999999631315"]).to_csv(other, index=False)
+
+        build_canonical(trust_dirs, tmp_path / "canonical", projects=["cxr_project"])
+
+        merged = (tmp_path / "canonical" / "cxr_project" / "image_occurrence.csv").read_text()
+        assert "017355643737" in merged
+        assert "000047445493" in merged
+
     def test_table_missing_from_one_source_rejected(self, tmp_path):
         trust_dirs = self._write_trust_dirs(tmp_path)
         (trust_dirs[1] / "cxr_project" / "person.csv").unlink()

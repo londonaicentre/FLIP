@@ -200,8 +200,8 @@ the first deploy, and the upgrade was run without it. Before v0.16, every deploy
 wait did not cover the FL client, so the command exited 0.
 
 From v0.16 an FL client that was ready before the upgrade must be ready again before the command exits 0. From
-v0.17 the path has one home, ``FL_KIT_DIR`` in the kit file: ``stage-kit`` copies there, every deploy mounts it,
-and ``KIT_DEST`` and ``FL_CLIENT_KIT_HOST_PATH`` are refused. An upgrade of a release that mounts another path
+v0.17 the path has one home, the kit file (``fl-kit/`` under its ``FLIP_DATA_ROOT``, else its ``FL_KIT_DIR``):
+``stage-kit`` copies there, every deploy mounts it, and ``KIT_DEST`` and ``FL_CLIENT_KIT_HOST_PATH`` are refused. An upgrade of a release that mounts another path
 than its kit file names stops before it changes anything and prints the line to put in the kit file.
 
 **Check.** Compare the path in the previous revision with the current one:
@@ -212,7 +212,8 @@ than its kit file names stops before it changes anything and prints the line to 
    helm get values trust-release -n flip-trust --revision <previous> | grep kitHostPath
    helm get values trust-release -n flip-trust | grep kitHostPath
 
-**Fix.** Set ``FL_KIT_DIR=<path the kit is staged at>`` in the kit file and run the upgrade again. On a checkout
+**Fix.** Set ``FL_KIT_DIR=<path the kit is staged at>`` in the kit file (or ``FLIP_DATA_ROOT`` to its parent, when
+the kit is staged at ``fl-kit/`` under it) and run the upgrade again. On a checkout
 older than v0.17, run it with the path on the command line instead:
 
 .. code-block:: shell
@@ -1021,7 +1022,8 @@ The FL client gets ``Connection refused [Errno 111]`` connecting to the FL serve
 Other pods in the namespace can reach the FL server address.
 
 **Cause.** The egress policy does not open the FL server's port. By default it allows only DNS, HTTP and HTTPS;
-``sync-kit`` adds the kit's FL port (``FL_EDGE_PORT``, else ``FL_SERVER_PORT``) to ``networkPolicies.allowedEgressPorts``.
+``sync-kit`` adds the kit's FL port (``FL_EDGE_PORT_OVERRIDE``, else ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``) to
+``networkPolicies.allowedEgressPorts``.
 
 **Check:**
 
@@ -1047,17 +1049,17 @@ If you manage the values by hand, add the port to ``networkPolicies.allowedEgres
 Job pods on: a project's jobs never start at this trust
 =======================================================
 
-**Symptom.** With ``flClient.nvflare.jobPods.enabled``, a newly approved project's training waits at this trust and
-no job pod appears, while other projects' jobs run.
+**Symptom.** With ``flClient.nvflare.jobPods.enabled``, a project's training fails at the start and the hub's FL server
+log names this site with ``K8sJobLauncher is configured for site … but no job image was specified``, or
+``cannot build the study entry of project …``.
 
-**Cause.** NVFLARE takes a job's image and pod template from the project's entry in the site's study file, which
-the site maintains. A project approved since the file was last synced has no entry, so NVFLARE does not start its jobs.
+**Cause.** NVFLARE takes a job's image and pod template from the project's study entry, which the FL client's
+launcher builds when the job starts, from the kit's default study. A trust older than v0.16 has no entry for a
+project's study at all: it must upgrade before its hub. On v0.16 or later the error means the default study is
+missing from the kit: ``fl-client-init`` did not switch it.
 
-**Fix.** Sync the entries, after each approval and after every upgrade:
-
-.. code-block:: shell
-
-   make -C trust/deploy/helm sync-project-studies KUBE_CONTEXT=<ctx>
+**Fix.** Upgrade the trust. On v0.16 or later, read ``kubectl logs <fl-client pod> -c fl-client-init`` and redeploy
+so it runs again.
 
 .. _ts-k8s-fl-reset:
 
@@ -1069,8 +1071,12 @@ nothing read back once the TLS handshake starts.
 
 **Cause.** An application-aware firewall at the site's perimeter rejecting TLS on a non-default port. Nothing in the
 cluster changes it. Confirm with the ``openssl`` check on :ref:`deploy-trust-node-network`, from a pod or the admin
-host, then ask the network team to allow the ``ssl`` application to the FL endpoint on its port, or use a site-to-site
-VPN (:ref:`site-to-site-vpn`).
+host.
+
+**Fix.** Dial 443, the production default: the kit's hub-shared block must carry ``FL_EDGE_PORT=443`` (ask the FLIP
+team to refresh an older kit) and no ``FL_EDGE_PORT_OVERRIDE``. Then redeploy with
+``make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>``. A trust that must dial another port needs the
+network team to allow the ``ssl`` application to the FL endpoint on it.
 
 **********
 Governance

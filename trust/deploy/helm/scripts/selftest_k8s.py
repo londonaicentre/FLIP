@@ -280,19 +280,24 @@ def check_health(cluster: Cluster, component: str) -> Check:
 
 
 def check_omop_seeded(cluster: Cluster) -> Check:
-    """omop-db holds people: the seed hook loaded this trust's slice of the dataset."""
+    """omop-db holds imaging rows: the seed hook loaded this trust's slice of the dataset.
+
+    Image rows, not persons, as Compose's `make -C trust ensure-seeded` asks (FLIP#2111): Synthea
+    adds persons with no imaging.
+    """
     pod = cluster.pod("omop-db")
     if not pod:
         return Check("omop seeded", False, "no running omop-db pod")
-    ok, out = cluster.exec(pod, 'psql -X -tAc "select count(*) from omop.person" -U "$POSTGRES_USER" -d "$POSTGRES_DB"')
-    count = out.strip()
-    if ok and count.isdigit() and int(count) > 0:
-        return Check("omop seeded", True, f"{count} rows in omop.person")
-    return Check("omop seeded", False, f"omop.person is empty or unreadable ({count[:120]})")
+    ok, out = cluster.exec(
+        pod, 'psql -X -tAc "SELECT 1 FROM omop.image_occurrence LIMIT 1" -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+    )
+    if ok and out.strip() == "1":
+        return Check("omop seeded", True, "omop.image_occurrence holds rows")
+    return Check("omop seeded", False, f"no imaging row in omop.image_occurrence ({out.strip()[:120]})")
 
 
 def check_orthanc(cluster: Cluster) -> tuple[Check, Check]:
-    """Orthanc holds studies, and refuses a request without credentials.
+    """Orthanc holds studies (CountStudies, as ensure-seeded asks), and refuses a request without credentials.
 
     Both asked from the xnat-web pod, which the chart's NetworkPolicies already let reach Orthanc
     (it is the C-STORE receiver smoke-cstore drives from there).
@@ -311,13 +316,13 @@ def check_orthanc(cluster: Cluster) -> tuple[Check, Check]:
             pod, f'read -r creds; exec curl -fsS --max-time 30 -u "$creds" {ORTHANC_URL}/statistics', stdin=creds
         )
         try:
-            instances = int(json.loads(out).get("CountInstances", 0)) if ok else 0
+            studies = int(json.loads(out).get("CountStudies", 0)) if ok else 0
         except (json.JSONDecodeError, AttributeError, ValueError):
-            instances = 0
+            studies = 0
         seeded = (
-            Check("orthanc seeded", True, f"{instances} instances")
-            if instances > 0
-            else Check("orthanc seeded", False, f"Orthanc holds no instances ({out[:120]})")
+            Check("orthanc seeded", True, f"{studies} studies")
+            if studies > 0
+            else Check("orthanc seeded", False, f"Orthanc holds no study ({out[:120]})")
         )
 
     _, code = cluster.exec(pod, f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 10 {ORTHANC_URL}/")

@@ -131,15 +131,6 @@ def _safe_email(email: str) -> str:
         raise InvalidIdentifierError("Invalid email address format") from exc
 
 
-def _safe_uuid(user_id: str | UUID) -> str:
-    if isinstance(user_id, UUID):
-        return str(user_id)
-    try:
-        return str(UUID(user_id))
-    except (ValueError, AttributeError, TypeError) as exc:
-        raise InvalidIdentifierError("Invalid user ID format") from exc
-
-
 class KeycloakIdentityProvider(IdentityProvider):
     """The users of one Keycloak realm, administered through a service-account client."""
 
@@ -278,7 +269,7 @@ class KeycloakIdentityProvider(IdentityProvider):
                 return users
             first += _PAGE_SIZE
 
-    def get_user(self, *, user_id: UUID | str | None = None, email: str | None = None) -> CognitoUser:
+    def get_user(self, *, user_id: UUID | None = None, email: str | None = None) -> CognitoUser:
         if not email and not user_id:
             raise InvalidIdentifierError("No user email address or ID provided")
         if email:
@@ -286,8 +277,7 @@ class KeycloakIdentityProvider(IdentityProvider):
             if not matches:
                 raise UserNotFoundError(f"User with email: {email} or ID: {user_id} is not registered.")
             return matches[0]
-        assert user_id is not None
-        response = self._request("GET", f"users/{_safe_uuid(user_id)}")
+        response = self._request("GET", f"users/{user_id}")
         if response.status_code == 404:
             raise UserNotFoundError(f"User with email: {email} or ID: {user_id} is not registered.")
         if response.status_code != 200:
@@ -336,8 +326,23 @@ class KeycloakIdentityProvider(IdentityProvider):
             raise IdentityProviderError("User created but could not get user ID")
         logger.info("User has been created successfully")
         if not suppress_invite:
-            self._invite(user_id, email)
+            try:
+                self._invite(user_id, email)
+            except IdentityProviderError:
+                # The caller is told the registration failed and records no profile, so remove the
+                # account: left behind, it would turn the retry into "already exists".
+                self._discard_created_user(user_id)
+                raise
         return UUID(user_id)
+
+    def _discard_created_user(self, user_id: str) -> None:
+        """Delete an account this call has just created; a failure here is logged, not raised."""
+        try:
+            deleted = self._request("DELETE", f"users/{user_id}").status_code < 400
+        except IdentityProviderError:
+            deleted = False
+        if not deleted:
+            logger.error(f"Could not remove Keycloak user {user_id} after its invitation failed; delete it by hand")
 
     def _invite(self, user_id: str, email: str) -> None:
         """Ask Keycloak to email a set-password link; in dev, stand in for the missing SMTP."""

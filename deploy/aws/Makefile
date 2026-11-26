@@ -724,6 +724,8 @@ deploy-demo: ## Build the public demo from the working tree and publish it to it
 # trust/Makefile mounts), not duplicated here. DEFERRED (`=`, not `:=`) so a reference made
 # after `register-trusts` in the same make process sees the slot it just wrote.
 FL_KIT_SLOT = $(shell sed -n 's/^FL_KIT_SLOT=//p' $(KIT_FILE) 2>/dev/null)
+# The slot's number: on Flower it names the trust's own credential, supernode_credentials_<n>.
+FL_KIT_SLOT_NUMBER = $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' $(KIT_FILE) 2>/dev/null)
 
 
 .PHONY: provision-local-trust
@@ -763,7 +765,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 	@echo "📦 Downloading the FL participant kit for the on-prem trust from S3..."
 ifeq ($(FL_BACKEND),nvflare)
 	@[ -n "$(FL_KIT_SLOT)" ] || (echo ""; echo "❌  FL_KIT_SLOT not found — is $(KIT_FILE_LABEL) present with FL_KIT_SLOT set?"; echo ""; exit 1)
-	@TRUST_KIT_DIR=/tmp/$(FL_KIT_SLOT)_kit && \
+	@umask 077 && TRUST_KIT_DIR=/tmp/$(FL_KIT_SLOT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR && \
 	  $(_AWS_ENV) aws s3 sync \
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(FL_KIT_SLOT)/ \
@@ -779,11 +781,17 @@ ifeq ($(FL_BACKEND),nvflare)
 	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)" && \
 	  echo "✅ $(FL_KIT_SLOT) FLARE kit staged"
 else
-	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
-	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR/net-1 && \
+	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo ""; echo "❌  FL_KIT_SLOT_NUMBER not found — is $(KIT_FILE_LABEL) present with FL_KIT_SLOT_NUMBER set?"; echo ""; exit 1)
+	@# The trust's own two files, in a directory of its own that only this user can read: the
+	@# prefix also holds the SuperLink's TLS key and every other slot's credential.
+	@umask 077 && TRUST_KIT_DIR=$$(mktemp -d "$${TMPDIR:-/tmp}/$(KIT)_kit.XXXXXX") && \
 	  $(_AWS_ENV) aws s3 sync \
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FL_KIT_DATE)/net-1/ \
-	    $$TRUST_KIT_DIR/net-1/ && \
+	    $$TRUST_KIT_DIR/net-1/ \
+	    --exclude "*" --include "certificates/ca.crt" --include "keys/supernode_credentials_$(FL_KIT_SLOT_NUMBER)" && \
+	  [ -s $$TRUST_KIT_DIR/net-1/certificates/ca.crt ] && \
+	  [ -s $$TRUST_KIT_DIR/net-1/keys/supernode_credentials_$(FL_KIT_SLOT_NUMBER) ] || \
+	  { echo "❌  No Flower kit for slot $(FL_KIT_SLOT_NUMBER) under fl-flower-participant-kits/$(FL_KIT_DATE)/net-1/ — check FLOWER_KIT_DATE."; exit 1; }; \
 	  echo "" && \
 	  echo "  # Deploy the Flower participant kit (staged at $$TRUST_KIT_DIR):" && \
 	  echo "  # \$$FL_KIT_DIR is the kit root from $(KIT_FILE_LABEL) (default /opt/flip/fl-kit);" && \
@@ -872,7 +880,7 @@ rotate-trust-keys: ## Reissue one trust's api + internal-service keys in place (
 	## containers come back on the new kit. Writes the fresh credentials back into
 	## trust/.env.<CODE>.<env>. Deliver it with `make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>` on
 	## EC2, or `package-onprem-trust-kit` for an on-prem site (copy the kit to trust/.env.<slot> first).
-	## NEVER that root's `deploy`: it is a first-install verb and re-seeds the site's data.
+	## NEVER that root's `deploy`: it is a first-install verb and resets XNAT.
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=KCL)"; exit 1; }
 	@KIT=$(KIT) ENV_CLASS=$(ENV_CLASS) MAIN_ENV_FILE=$(abspath $(MAIN_ENV_FILE)) ROTATE_KEYS=1 REVOKE_OLD=$(REVOKE_OLD) KIT_FILES="$(KIT_FILE)" bash scripts/register-trusts.sh
 

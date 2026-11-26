@@ -42,4 +42,57 @@ Both Make targets call one script, `download_arkplus_dataset.py`, with different
 
 Only the TRAIN download passes `--write-marker`. Before skipping a re-download, `make reproduce-overhead` in `arkplus_fine_tuning` checks for that marker, not just for the directory.
 
-This directory has no uv project of its own. The script's only dependency is `huggingface_hub`, so the Make targets run it with `uv run --no-project --with huggingface_hub`.
+The download script's only dependency is `huggingface_hub`, so the Make targets run it with `uv run --no-project --with huggingface_hub`. The uv project here (`pyproject.toml`) is for the trust-data chain below.
+
+## On a trust: `arkplus_project`
+
+On the platform the tutorials read the cohorts from a trust's OMOP database and PACS, not from these
+folders. The same data is published to `aicentreflip/trust-data` as `arkplus_project`, so a trust loads
+it like any other project:
+
+```bash
+make -C trust seed KIT=<CODE> PROJECTS=arkplus_project
+```
+
+`source_trust` is the dataset's own site: `site1` and its holdout go to partition 1, `site2` and its
+holdout to partition 2. Each site is one synthetic cohort from a different generator (the preprint's
+UK and Thai cohorts), so unlike `cxr_project`'s alternating split the two partitions are deliberately
+not from the same distribution. The split decides `procedure_source_value`: `Chest X-ray` for the
+training rows that `arkplus_fine_tuning`'s query selects, `Chest X-ray (holdout)` for the rows both
+evaluation queries select.
+
+The chain that builds and publishes it, run from the repository root after both downloads:
+
+```bash
+make -C fl-tutorials create-arkplus-metadata-table  # site folders -> data/arkplus/source/dicom_metadata.csv
+make -C fl-tutorials build-arkplus-omop-tables      # -> data/arkplus/omop/<trust>/arkplus_project/*.csv
+make -C fl-tutorials build-arkplus-canonical        # the source_trust form that gets published
+make -C fl-tutorials prepare-arkplus-dicom          # the DICOMs with the platform's required tags filled
+make -C fl-tutorials package-arkplus-dicom          # verified against the tables, -> dist/dicom/arkplus_project.tar.gz
+make -C fl-tutorials seed-arkplus KIT=<CODE>        # optional: prove the local tree on a running trust first
+```
+
+Then `make -C trust publish-trust-data VERSION=<tag> OMOP_CSV=… DICOM=…` and a bump of
+`trust/.data_version`. To check the published tables reproduce from the published metadata table
+alone: `make -C fl-tutorials reproduce-arkplus-omop`.
+
+| Script | Does |
+|--------|------|
+| `create_arkplus_metadata_table.py` | One row per accession: DICOM identifiers, folder, split, `source_trust`, the seven labels, and a sex and birth year derived from the AccessionNumber (the DICOMs carry neither) |
+| `omop_convert_arkplus.py` | Metadata table -> OMOP tables: person, visit, procedure and image occurrence per accession, and one `image_feature` -> `observation` pair per label (Yes/No). Ids from the project's 6,000,000 block |
+| `prepare_arkplus_dicom.py` | Fills `StudyDescription`, `ReferringPhysicianName` and `PatientSex` where empty: imaging-api drops a study without the first two and requires the third |
+
+Trusts loaded before FLIP#2084 hold the same cohorts from an unmerged loader script, with other ids.
+Seeding on top of them would load every study twice, so remove those rows first:
+
+```bash
+make -C trust remove-stray-studies KIT=<CODE> PROJECTS=arkplus_project DRY_RUN=1  # counts only
+make -C trust remove-stray-studies KIT=<CODE> PROJECTS=arkplus_project
+make -C trust seed KIT=<CODE> PROJECTS=arkplus_project
+```
+
+It matches the project's accession numbers, so it finds exactly those rows (on AICP: 2,340 persons,
+one image and seven label observations each). `unseed-omop` would not: it deletes by the published
+person ids, which those rows do not carry. The PACS keeps its studies, which are the same instances
+the seed uploads. A trust whose slot gets the other site than the one it was loaded with also removes
+the old site's studies: `make -C trust unseed-orthanc KIT=<CODE> SOURCE_TRUST=<old site> PROJECTS=arkplus_project`.

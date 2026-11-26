@@ -77,38 +77,33 @@ def can_access_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
         logger.debug(f"User: {user_id} has the {PermissionRef.CAN_MANAGE_PROJECTS} permission and is granted access.")
         return True
 
-    try:
-        # Check if user is project owner or has explicit access
-        query = (
-            select(Projects.id)
-            # The outerjoin is load-bearing, not cosmetic. Without it SQLAlchemy puts
-            # project_user_access in the FROM clause unjoined — `FROM projects, project_user_access`
-            # — and the cartesian product means any access row belonging to the caller satisfies
-            # the OR for any project. Same shape as can_access_model and can_access_cohort_query
-            # below; the ON clause is inferred from ProjectUserAccess.project_id's foreign key.
-            .outerjoin(ProjectUserAccess)
-            .where((Projects.owner_id == user_id) | (ProjectUserAccess.user_id == user_id))
-            .where(Projects.id == project_id)
-            # The owner predicate is true for every joined access row, so without this the driver
-            # buffers one row per project member where only the first is ever read.
-            .limit(1)
-        )
-        result = db.exec(query)
-        count = result.first()
+    # Check if user is project owner or has explicit access
+    query = (
+        select(Projects.id)
+        # The outerjoin is load-bearing, not cosmetic. Without it SQLAlchemy puts
+        # project_user_access in the FROM clause unjoined — `FROM projects, project_user_access`
+        # — and the cartesian product means any access row belonging to the caller satisfies
+        # the OR for any project. Same shape as can_access_model and can_access_cohort_query
+        # below; the ON clause is inferred from ProjectUserAccess.project_id's foreign key.
+        .outerjoin(ProjectUserAccess)
+        .where((Projects.owner_id == user_id) | (ProjectUserAccess.user_id == user_id))
+        .where(Projects.id == project_id)
+        # The owner predicate is true for every joined access row, so without this the driver
+        # buffers one row per project member where only the first is ever read.
+        .limit(1)
+    )
+    result = db.exec(query)
+    count = result.first()
 
-        if not count:
-            if is_trust_admin_where_staged(user_id, project_id, db):
-                logger.debug(f"User: {user_id} administers a trust project {project_id} is staged at; read access.")
-                return True
-            logger.debug(f"User: {user_id} is neither the project owner or an approved user and is not granted access.")
-            return False
-
-        logger.debug(f"User: {user_id} is either the project owner or an approved user and is granted access.")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error checking project access for user {user_id}, project {project_id}: {str(e)}")
+    if not count:
+        if is_trust_admin_where_staged(user_id, project_id, db):
+            logger.debug(f"User: {user_id} administers a trust project {project_id} is staged at; read access.")
+            return True
+        logger.debug(f"User: {user_id} is neither the project owner or an approved user and is not granted access.")
         return False
+
+    logger.debug(f"User: {user_id} is either the project owner or an approved user and is granted access.")
+    return True
 
 
 def can_modify_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
@@ -138,12 +133,9 @@ def can_modify_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
     if has_permissions(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], db):
         return True
 
-    try:
-        project = db.exec(select(Projects).where(Projects.id == project_id)).first()
-        if project and project.owner_id == user_id:
-            return True
-    except Exception as e:
-        logger.error(f"Error checking project modify access for user {user_id}, project {project_id}: {str(e)}")
+    project = db.exec(select(Projects).where(Projects.id == project_id)).first()
+    if project and project.owner_id == user_id:
+        return True
 
     return False
 
@@ -176,25 +168,21 @@ def can_contribute_to_project(user_id: UUID, project_id: UUID, db: Session) -> b
     if has_permissions(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], db):
         return True
 
-    try:
-        project = db.exec(select(Projects).where(Projects.id == project_id)).first()
-        if not project:
-            return False
-        if project.owner_id == user_id:
-            return True
-
-        if not has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], db):
-            return False
-
-        membership = db.exec(
-            select(ProjectUserAccess.id)
-            .where(ProjectUserAccess.project_id == project_id)
-            .where(ProjectUserAccess.user_id == user_id)
-        ).first()
-        return membership is not None
-    except Exception as e:
-        logger.error(f"Error checking project contribute access for user {user_id}, project {project_id}: {str(e)}")
+    project = db.exec(select(Projects).where(Projects.id == project_id)).first()
+    if not project:
         return False
+    if project.owner_id == user_id:
+        return True
+
+    if not has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], db):
+        return False
+
+    membership = db.exec(
+        select(ProjectUserAccess.id)
+        .where(ProjectUserAccess.project_id == project_id)
+        .where(ProjectUserAccess.user_id == user_id)
+    ).first()
+    return membership is not None
 
 
 def can_modify_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
@@ -221,21 +209,17 @@ def can_modify_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
     if has_permissions(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], db):
         return True
 
-    try:
-        model = db.exec(select(Model).where(Model.id == model_id)).first()
-        if not model or not model.project_id:
-            return False
-
-        if can_modify_project(user_id, model.project_id, db):
-            return True
-
-        if model.owner_id != user_id:
-            return False
-
-        return can_contribute_to_project(user_id, model.project_id, db)
-    except Exception as e:
-        logger.error(f"Error checking model modify access for user {user_id}, model {model_id}: {str(e)}")
+    model = db.exec(select(Model).where(Model.id == model_id)).first()
+    if not model or not model.project_id:
         return False
+
+    if can_modify_project(user_id, model.project_id, db):
+        return True
+
+    if model.owner_id != user_id:
+        return False
+
+    return can_contribute_to_project(user_id, model.project_id, db)
 
 
 def can_access_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
@@ -249,9 +233,6 @@ def can_access_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
 
     Returns:
         bool: True if the user has access to the model, False otherwise
-
-    Raises:
-        HTTPException: If there is an error during the access check
     """
     logger.debug(f"Checking if user: {user_id} can access model: {model_id}")
 
@@ -260,31 +241,26 @@ def can_access_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
         logger.debug(f"User: {user_id} has the {PermissionRef.CAN_MANAGE_PROJECTS} permission and is granted access.")
         return True
 
-    try:
-        # Check if user is project owner or has explicit access
-        query = (
-            select(Projects.id)
-            .join(Model)
-            .outerjoin(ProjectUserAccess)
-            .where((Projects.owner_id == user_id) | (ProjectUserAccess.user_id == user_id))
-            .where((Model.id == model_id) & (Model.project_id == Projects.id))
-        )
-        result = db.exec(query)
-        results = result.all()
-        logger.debug(f"Query result for user {user_id} and model {model_id}: {results}")
-        first_result = results[0] if results else None
-        logger.debug(f"Results first: {first_result}")
+    # Check if user is project owner or has explicit access
+    query = (
+        select(Projects.id)
+        .join(Model)
+        .outerjoin(ProjectUserAccess)
+        .where((Projects.owner_id == user_id) | (ProjectUserAccess.user_id == user_id))
+        .where((Model.id == model_id) & (Model.project_id == Projects.id))
+    )
+    result = db.exec(query)
+    results = result.all()
+    logger.debug(f"Query result for user {user_id} and model {model_id}: {results}")
+    first_result = results[0] if results else None
+    logger.debug(f"Results first: {first_result}")
 
-        if not first_result:
-            logger.debug(f"User: {user_id} is neither the project owner or an approved user and is not granted access.")
-            return False
-
-        logger.debug(f"User: {user_id} is either the project owner or an approved user and is granted access.")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error checking model access for user {user_id}, model {model_id}: {str(e)}")
+    if not first_result:
+        logger.debug(f"User: {user_id} is neither the project owner or an approved user and is not granted access.")
         return False
+
+    logger.debug(f"User: {user_id} is either the project owner or an approved user and is granted access.")
+    return True
 
 
 def can_access_cohort_query(user_id: UUID, query_id: UUID, db: Session) -> bool:
@@ -298,9 +274,6 @@ def can_access_cohort_query(user_id: UUID, query_id: UUID, db: Session) -> bool:
 
     Returns:
         bool: True if the user has access to the cohort query, False otherwise
-
-    Raises:
-        HTTPException: If there is an error during the access check
     """
     logger.debug(f"Checking if user: {user_id} can access cohort query: {query_id}")
 
@@ -309,31 +282,26 @@ def can_access_cohort_query(user_id: UUID, query_id: UUID, db: Session) -> bool:
         logger.debug(f"User: {user_id} has the {PermissionRef.CAN_MANAGE_PROJECTS} permission and is granted access.")
         return True
 
-    try:
-        query = (
-            select(Projects.id)
-            .join(Queries)
-            .outerjoin(ProjectUserAccess)
-            .where((Projects.owner_id == user_id) | (ProjectUserAccess.user_id == user_id))
-            .where((Queries.id == query_id) & (Queries.project_id == Projects.id))
-        )
-        result = db.exec(query)
-        count = result.first()
+    query = (
+        select(Projects.id)
+        .join(Queries)
+        .outerjoin(ProjectUserAccess)
+        .where((Projects.owner_id == user_id) | (ProjectUserAccess.user_id == user_id))
+        .where((Queries.id == query_id) & (Queries.project_id == Projects.id))
+    )
+    result = db.exec(query)
+    count = result.first()
 
-        if not count:
-            project_id = db.exec(select(Queries.project_id).where(Queries.id == query_id)).first()
-            if project_id is not None and is_trust_admin_where_staged(user_id, project_id, db):
-                logger.debug(f"User: {user_id} administers a trust query {query_id}'s project is staged at; read.")
-                return True
-            logger.debug(f"User: {user_id} is neither the project owner or an approved user and is not granted access.")
-            return False
-
-        logger.debug(f"User: {user_id} is either the project owner or an approved user and is granted access.")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error checking cohort query access for user {user_id}, query {query_id}: {str(e)}")
+    if not count:
+        project_id = db.exec(select(Queries.project_id).where(Queries.id == query_id)).first()
+        if project_id is not None and is_trust_admin_where_staged(user_id, project_id, db):
+            logger.debug(f"User: {user_id} administers a trust query {query_id}'s project is staged at; read.")
+            return True
+        logger.debug(f"User: {user_id} is neither the project owner or an approved user and is not granted access.")
         return False
+
+    logger.debug(f"User: {user_id} is either the project owner or an approved user and is granted access.")
+    return True
 
 
 API_KEY_HEADER_NAME = get_settings().TRUST_API_KEY_HEADER

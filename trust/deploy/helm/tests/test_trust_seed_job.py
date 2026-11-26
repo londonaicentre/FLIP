@@ -79,6 +79,7 @@ def test_seed_job_runs_the_shared_script_at_a_pinned_ref():
         "PROJECTS",
         "SEED_OMOP",
         "SEED_ORTHANC",
+        "RESEED",
         "ORTHANC_URL",
         "WORK_DIR",
     ):
@@ -92,9 +93,7 @@ def test_the_half_loaded_vocabulary_can_be_reloaded_from_the_chart():
     assert "- name: FORCE_DICOM_VOCAB\n" in SEED_JOB.read_text()
     assert VALUES["trustData"]["seed"]["forceDicomVocab"] is False
     script = (CHART_DIR.parents[2] / "trust" / "seed_trust.sh").read_text()
-    assert (
-        'if [ "${FORCE_DICOM_VOCAB:-}" = "1" ]; then VOCAB_MODE=--force; else VOCAB_MODE=--skip-if-loaded; fi'
-    ) in script
+    assert '[ "${FORCE_DICOM_VOCAB:-}" = "1" ] && mode=--force' in script
 
 
 def test_the_shared_script_installs_the_repository_loaders_without_git():
@@ -131,6 +130,7 @@ def test_seed_values_defaults():
     assert seed["projects"] == "cxr_project"
     assert seed["sourceTrust"] == ""
     assert seed["numTrusts"] == 2
+    assert seed["reseed"] is False, "an upgrade must leave a seeded trust as it is (FLIP#2111)"
     assert seed["sourceRef"]
     assert "initJob" not in VALUES["omopDb"]
     assert "initJob" not in VALUES["orthanc"]

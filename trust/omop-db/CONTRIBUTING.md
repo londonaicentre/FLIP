@@ -88,8 +88,8 @@ pgdata volume. Two rotation paths:
   matches.
 - **Fresh volumes**: set the new value in the trust kit file, remove the trust's
   OMOP data dir (`OMOP_DATA_DIR`, default `trust/omop-db/volumes/Trust_<N>/db_data`)
-  **and** the `.seeded` marker beside it, and bring the trust up again: first init
-  reads the kit and `ensure-seeded` re-seeds. The standalone build stack
+  and bring the trust up again: first init reads the kit and `ensure-seeded`
+  seeds the empty database. The standalone build stack
   (`compose.yml`) reads `.env.build` instead.
 
 ### Accession ID encryption

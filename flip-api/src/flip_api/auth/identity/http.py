@@ -77,11 +77,11 @@ class HttpIdentityProvider(IdentityProvider):
         with _as_http():
             return self.inner.list_users()
 
-    def get_user(self, *, user_id: UUID | str | None = None, email: str | None = None) -> CognitoUser:
+    def get_user(self, *, user_id: UUID | None = None, email: str | None = None) -> CognitoUser:
         with _as_http():
             return self.inner.get_user(user_id=user_id, email=email)
 
-    def get_username(self, user_id: UUID | str) -> str:
+    def get_username(self, user_id: UUID) -> str:
         with _as_http():
             return self.inner.get_username(user_id)
 

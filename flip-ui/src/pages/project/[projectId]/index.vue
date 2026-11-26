@@ -180,6 +180,7 @@
             :has-imaging="hasImaging"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
+            :owner-email="project.ownerEmail"
             @close="editDrawerOpen = false"
             @save="updateProjectEvent"
         />
@@ -314,8 +315,13 @@ const isOwnerOrHasAccess = () => {
     return projectOwner === currentUserId || project?.value?.users?.map(u => u.id).includes(currentUserId as string);
 };
 
-// Owner counts as +1 on top of the shared users.
-const totalUserCount = computed(() => (project?.value?.users?.length ?? 0) + 1);
+// The owner plus every other member: the rows the Project Users list shows. The hub already
+// includes the owner in `users`, so count them once whether or not they are there.
+const totalUserCount = computed(() => {
+    const ownerId = project?.value?.ownerId;
+
+    return (project?.value?.users ?? []).filter(u => u.id !== ownerId).length + 1;
+});
 
 const getUserCountMessage = () => {
     return `${totalUserCount.value} ${totalUserCount.value === 1 ? "User" : "Users"}`;

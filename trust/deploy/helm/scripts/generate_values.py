@@ -42,10 +42,7 @@ ENV_VAR_MAP = {
     "ENV": ("environment", False),
     "FL_BACKEND": ("flBackend", False),
     "UPLOADED_FEDERATED_DATA_BUCKET": ("uploadedFederatedDataBucket", False),
-    # No S3 kit fetch: the chart mounts an already-provisioned kit from the node
-    # (flClient.kitHostPath). A trust holds no FLIP AWS credentials. Falls back to
-    # DEFAULT_KIT_HOST_PATH when the kit omits it — see build_values.
-    "FL_KIT_DIR": ("flClient.kitHostPath", False),
+    # FL_KIT_DIR is not mapped: build_values always renders flClient.kitHostPath (kit_host_path).
     "OMOP_VOCAB_DIR": ("omopDb.vocabLoad.hostPath", False),
     "TRUST_DATA_VERSION": ("trustData.version", False),
     # The release this site runs (FLIP#1204): the kit's Hub-shared DOCKER_TAG is the one
@@ -73,12 +70,23 @@ def fl_client_pin(env: dict) -> str:
     return tag if IMMUTABLE_IMAGE_TAG.match(tag) else ""
 
 
-# Where the operator placed this trust's kit ON THE NODE when the kit file does not say.
-# The canonical FLIP kit path: every shipped kit sets FL_KIT_DIR to it, the Ansible
-# EC2/on-prem plays stage to it, and the chart Makefile's stage-kit falls back to it.
-# Same fallback as sync_k8s_kit.render_override, so both generators of a Helm override
-# agree on what a kit file without FL_KIT_DIR means.
+# The canonical FLIP kit path on the node: every shipped kit sets FL_KIT_DIR to it, the Ansible
+# EC2/on-prem plays stage to it, and the chart Makefile's stage-kit falls back to it for a kit that sets
+# neither FLIP_DATA_ROOT nor FL_KIT_DIR.
 DEFAULT_KIT_HOST_PATH = "/opt/flip/fl-kit"
+
+
+def kit_host_path(env: dict[str, str]) -> str:
+    """flClient.kitHostPath for this kit, where the chart Makefile's stage-kit puts the kit and its deploys mount it.
+
+    fl-kit/ under the kit's FLIP_DATA_ROOT (FLIP#2113), over FL_KIT_DIR, which every kit made from
+    trust/.env.example sets. Without a root, FL_KIT_DIR, else DEFAULT_KIT_HOST_PATH. The Makefile's KIT_PATH reads
+    the kit the same way (FLIP#2042), and both generators of a Helm override (this script and
+    sync_k8s_kit.render_override) call this, so all three agree.
+    """
+    root = env.get("FLIP_DATA_ROOT", "").strip().rstrip("/")
+    return f"{root}/fl-kit" if root else (env.get("FL_KIT_DIR", "").strip() or DEFAULT_KIT_HOST_PATH)
+
 
 # The chart's credential slots, as (env var name, Secret key name) pairs. Both
 # sides are identifiers; no value appears here, which is why the entries
@@ -154,12 +162,8 @@ def build_values(env: dict[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
             val = val.lower().replace(" ", "")
         deep_set(overrides, yaml_path, val)
 
-    # flClient.kitHostPath is `required` by the chart, so dropping it like any other
-    # absent value would only move the failure to render time. A kit missing or
-    # blanking FL_KIT_DIR still renders the canonical path — the one the default
-    # `make stage-kit` actually wrote to — exactly as sync_k8s_kit.render_override does.
-    if not env.get("FL_KIT_DIR", "").strip():
-        deep_set(overrides, "flClient.kitHostPath", DEFAULT_KIT_HOST_PATH)
+    # flClient.kitHostPath is `required` by the chart, so it is always rendered, never dropped like an absent value.
+    deep_set(overrides, "flClient.kitHostPath", kit_host_path(env))
     if fl_client_pin(env):
         deep_set(overrides, "flClient.image.pin", fl_client_pin(env))
 

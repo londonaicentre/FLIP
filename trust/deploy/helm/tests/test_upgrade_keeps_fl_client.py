@@ -190,6 +190,22 @@ def test_a_render_with_no_kit_gets_the_default_path(tmp_path):
 
 
 @needs_make
+def test_a_data_root_added_to_a_live_releases_kit_is_refused_until_moved(tmp_path):
+    """FLIP#2113 + FLIP#2042: a root added to a live trust's kit moves its kit path, so the deploy stops first."""
+    kit_file = tmp_path / ".env.ABC.prod"
+    kit_file.write_text("FLIP_DATA_ROOT=/data/R\n")
+    live = '{"flClient": {"kitHostPath": "/opt/flip/fl-kit"}}'
+    result, upgrade = _deploy(tmp_path, "KIT=ABC", f"KIT_FILE={kit_file}", fl_ready_before=False, HELM_VALUES=live)
+    assert result.returncode != 0
+    assert "mounts the FL kit from /opt/flip/fl-kit, but this deploy would mount /data/R/fl-kit" in result.stderr
+    result, upgrade = _deploy(
+        tmp_path, "KIT=ABC", f"KIT_FILE={kit_file}", "KIT_MOVED=1", fl_ready_before=False, HELM_VALUES=live
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--set flClient.kitHostPath=/data/R/fl-kit" in upgrade
+
+
+@needs_make
 @pytest.mark.parametrize("arg", ["KIT_DEST=/srv/kit", "FL_CLIENT_KIT_HOST_PATH=/srv/kit"])
 def test_the_retired_path_arguments_are_refused_naming_the_kit_file(tmp_path, arg):
     result = subprocess.run(

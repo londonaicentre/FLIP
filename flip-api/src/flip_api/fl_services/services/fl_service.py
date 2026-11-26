@@ -1609,6 +1609,25 @@ def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session, resources:
     logger.info(f"FL job {job.id} added for model ID: {model_id}")
 
 
+def has_active_fl_job(model_id: UUID, session: Session) -> bool:
+    """
+    Whether a model already has an FL job queued or running.
+
+    Args:
+        model_id (UUID): The ID of the model.
+        session (Session): The database session.
+
+    Returns:
+        bool: True if a QUEUED or IN_PROGRESS job exists for the model.
+    """
+    statement = (
+        select(FLJob.id)
+        .where(FLJob.model_id == model_id, col(FLJob.status).in_((JobStatus.QUEUED, JobStatus.IN_PROGRESS)))
+        .limit(1)
+    )
+    return session.exec(statement).first() is not None
+
+
 def keep_fl_api_session_alive() -> None:
     """
     A periodic function to keep the FL API session alive by making a simple request.

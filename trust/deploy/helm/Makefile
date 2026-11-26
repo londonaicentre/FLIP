@@ -10,6 +10,28 @@
 # limitations under the License.
 
 NAMESPACE ?= flip-trust
+CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
+# REPO_ROOT is where trust/deploy/scripts/site_upgrade.py and the shared make fragments live.
+REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
+# Kit-file env token (ENV) from HUB, derived once for every Makefile that reads HUB.
+include $(REPO_ROOT)/deploy/env_mode.mk
+# The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or an old
+# name resolved by env_mode.mk's kit_file), handed to every script that reads it.
+ifeq ($(origin KIT_FILE),undefined)
+KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
+endif
+$(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
+# The kit's FLIP_DATA_ROOT (FLIP#2113), read here because the kit path and VOCAB_DEST default under it.
+# The chart's stores are PVCs, placed by the StorageClass (on k3s, under its --data-dir); the root
+# only holds the two folders staged straight onto the node.
+# It is the kit's, never the shell's: an exported root from another trust's kit must not leak in.
+ifneq ($(origin FLIP_DATA_ROOT),command line)
+ifneq ($(and $(KIT),$(filter stage-kit stage-vocab,$(MAKECMDGOALS)),$(if $(wildcard $(KIT_FILE)),,missing)),)
+$(error ❌  KIT=$(KIT) names no kit file ($(KIT_FILE)): pass HUB=<stag|prod> for a hub kit)
+endif
+FLIP_DATA_ROOT := $(if $(KIT),$(shell sed -n 's/^FLIP_DATA_ROOT=\([^$(_HASH)]*\).*/\1/p' '$(KIT_FILE)' 2>/dev/null | tail -1))
+endif
+include $(REPO_ROOT)/deploy/data_root.mk
 
 # The uid that must own the FL participant kit on the node (where it lives: KIT_PATH below).
 # KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
@@ -53,9 +75,10 @@ endif
 endif
 KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
 # The OMOP core vocabulary (FLIP#923): VOCAB_DIR is a folder of Athena CSVs (CONCEPT.csv, ...) and
-# VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR).
+# VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR):
+# omop-vocab/ under the kit's FLIP_DATA_ROOT, else /opt/flip/omop-vocab.
 # stage-vocab empties VOCAB_DEST first, as stage-kit does the kit path and with the same guards.
-VOCAB_DEST ?= /opt/flip/omop-vocab
+VOCAB_DEST ?= $(call data_root_or,omop-vocab,/opt/flip/omop-vocab)
 VOCAB_BUNDLE ?= vocab_aicentre_core_20240916
 ifneq ($(filter stage-vocab,$(MAKECMDGOALS)),)
 ifeq ($(strip $(VOCAB_DEST)),)
@@ -79,21 +102,9 @@ KUBECTL := kubectl$(if $(KUBE_CONTEXT), --context $(KUBE_CONTEXT))
 HELM := $(HELM_BIN)$(if $(KUBE_CONTEXT), --kube-context $(KUBE_CONTEXT))
 KUBE_CONTEXT_ARG := $(if $(KUBE_CONTEXT),--kube-context $(KUBE_CONTEXT))
 RELEASE_NAME ?= trust-release
-CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
-
-# REPO_ROOT is where trust/deploy/scripts/site_upgrade.py and the shared make fragments live.
-REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
-# Kit-file env token (ENV) from HUB, derived once for every Makefile that reads HUB.
-include $(REPO_ROOT)/deploy/env_mode.mk
 SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
-# The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or an old
-# name resolved by env_mode.mk's kit_file), handed to every script that reads it.
-ifeq ($(origin KIT_FILE),undefined)
-KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
-endif
-$(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 
 # One budget governs every wait this Makefile performs on the XNAT init job, because
 # there is only one job and two ways of waiting for it: `deploy` waits on it as a
@@ -140,23 +151,18 @@ ifeq ($(KIT_TRUST_DATA_SEED),false)
 	VALUES_OPTS := $(VALUES_OPTS) --set trustData.seed.enabled=false
 endif
 
-# Where the FL participant kit lives ON THE NODE: the kit file's FL_KIT_DIR, the one place it is set
-# (FLIP#2042). `make sync-kit` renders it as flClient.kitHostPath and stage-kit copies to it, so the
-# two cannot disagree. Without KIT= (a dev kind cluster, a bare render), and for a kit that leaves it
-# blank, it is the canonical path every shipped kit carries (generate_values.DEFAULT_KIT_HOST_PATH).
-# Read as sync_k8s_kit.read_env_vars reads it (last line wins, quotes dropped): tests/test_stage_kit.py.
+# Where the FL participant kit lives ON THE NODE, read from the kit file alone (FLIP#2042): fl-kit/ under
+# its FLIP_DATA_ROOT (FLIP#2113), else its FL_KIT_DIR. `make sync-kit` renders the same path as
+# flClient.kitHostPath (generate_values.kit_host_path) and stage-kit copies to it, so the two cannot
+# disagree. Without KIT= (a dev kind cluster, a bare render), and for a kit that sets neither, it is the
+# canonical path every shipped kit carries (generate_values.DEFAULT_KIT_HOST_PATH).
+# FL_KIT_DIR is read as sync_k8s_kit.read_env_vars reads it (last line wins, quotes dropped): tests/test_stage_kit.py.
 DEFAULT_KIT_PATH := /opt/flip/fl-kit
-KIT_PATH := $(or $(if $(KIT),$(strip $(shell sed -n 's/^FL_KIT_DIR=//p' '$(KIT_FILE)' 2>/dev/null | tail -1 | tr -d "\"'"))),$(DEFAULT_KIT_PATH))
+KIT_PATH := $(if $(FLIP_DATA_ROOT),$(FLIP_DATA_ROOT)/fl-kit,$(or $(if $(KIT),$(strip $(shell sed -n 's/^FL_KIT_DIR=//p' '$(KIT_FILE)' 2>/dev/null | tail -1 | tr -d "\"'"))),$(DEFAULT_KIT_PATH)))
 ifneq ($(filter command environment override,$(origin KIT_DEST) $(origin FL_CLIENT_KIT_HOST_PATH)),)
-$(error ❌  KIT_DEST and FL_CLIENT_KIT_HOST_PATH are gone (FLIP#2042): the kit's path on the node is FL_KIT_DIR in the kit file. Set it there and pass KIT=<CODE>)
+$(error ❌  KIT_DEST and FL_CLIENT_KIT_HOST_PATH are gone (FLIP#2042): the kit's path on the node is FL_KIT_DIR in the kit file (or fl-kit/ under its FLIP_DATA_ROOT). Set it there and pass KIT=<CODE>)
 endif
 ifneq ($(filter stage-kit,$(MAKECMDGOALS)),)
-# Without the kit file the path would fall back to the default and stage-kit would wipe that.
-ifneq ($(KIT),)
-ifeq ($(wildcard $(KIT_FILE)),)
-$(error ❌  $(KIT_FILE) not found: pass HUB=<env> for a stag or prod kit)
-endif
-endif
 # stage-kit empties the path before copying, so it must be a directory of its own: a relative one
 # would be wiped under the node's working directory, and / is the node's root filesystem.
 ifeq ($(filter-out /,$(filter /%,$(KIT_PATH))),)
@@ -178,6 +184,19 @@ CHECK_KIT_PATH = $(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o 
 else
 CHECK_KIT_PATH = true
 endif
+# A re-stage must reach the path a live release mounts, or the FL client keeps the old credentials
+# with nothing failing (e.g. a FLIP_DATA_ROOT added to its kit, FLIP#2113). stage-kit empties its
+# target, so it never takes that path from the cluster: when the two differ it stops, and the operator
+# either makes the kit file say the mounted path or passes KIT_MOVED=1 here and at the next deploy.
+ifneq ($(and $(filter stage-kit,$(MAKECMDGOALS)),$(KUBE_CONTEXT)),)
+ifeq ($(KIT_MOVED),)
+RELEASE_KIT_PATH := $(shell $(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
+	| python3 $(CHART_DIR)/scripts/check_kit_path.py --print-mounted)
+ifneq ($(if $(RELEASE_KIT_PATH),$(filter-out $(KIT_PATH),$(RELEASE_KIT_PATH))),)
+$(error ❌  release $(RELEASE_NAME) mounts its kit at $(RELEASE_KIT_PATH), and the kit file puts it at $(KIT_PATH) (fl-kit/ under FLIP_DATA_ROOT, else FL_KIT_DIR): make $(KIT_FILE) say $(RELEASE_KIT_PATH) to re-stage it in place, or pass KIT_MOVED=1 here and at the next deploy to move it)
+endif
+endif
+endif
 
 # The release pin (FLIP#1204): TAG=vX.Y.Z sets global.image.tag, which every FLIP-built
 # image follows (templates/_helpers.tpl flip-trust.imageTag). Last so it wins over the
@@ -187,7 +206,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
+.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init reseed _reseed-job kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -230,8 +249,9 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	##
 	##   make stage-kit KIT=<CODE> HUB=<env> KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
 	##
-	## The destination is the kit file's FL_KIT_DIR (pass KIT=<CODE>), which `make sync-kit`
-	## renders as flClient.kitHostPath; without KIT it is /opt/flip/fl-kit.
+	## The destination is the kit file's path for it (pass KIT=<CODE>): fl-kit/ under its
+	## FLIP_DATA_ROOT, else its FL_KIT_DIR, which `make sync-kit` renders as flClient.kitHostPath;
+	## without KIT it is /opt/flip/fl-kit.
 	## KIT_SRC contents are the slot's own kit: for FLARE local/ startup/ transfer/,
 	## for Flower certificates/ and keys/ holding THIS slot's credential only. That
 	## shape is also how the owning uid is chosen (KIT_UID above) — no FL_BACKEND
@@ -481,7 +501,7 @@ selftest: ## Run the trust self-test against the deployed release and write a re
 FL_NET ?= net-1
 FL_STUDIES_POD = $(KUBECTL) get pod -n $(NAMESPACE) --field-selector=status.phase=Running -o name \
 	-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component
-sync-project-studies: ## Give each approved project its NVFLARE study entry for job pods; PROJECTS="<id> ..." names them
+sync-project-studies: ## Not needed since v0.16 (job pods build each project's study entry at launch): write the operator's study file
 	@set -e; \
 	client=$$($(FL_STUDIES_POD)=fl-client,flip/network=$(FL_NET) | head -1); \
 	[ -n "$$client" ] || { echo "❌ no running fl-client for $(FL_NET) in $(NAMESPACE)"; exit 1; }; \
@@ -557,35 +577,38 @@ template-egress-variants: ## Render the egress NetworkPolicy in default / harden
 clean: ## Clean up rendered output
 	@rm -f $(CHART_DIR)/*.rendered.yaml
 
-xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=false)
-	@# One shell for the whole target: the "nothing to do" case must skip the wait too, and a
-	@# bare `exit 0` in one recipe line would only end that line.
-	@# Render first and look, because with `xnat.enabled=false` the chart renders no init Job at
-	@# all (templates/xnat-init-job.yaml is guarded on both). `kubectl apply --selector` is then
-	@# handed zero objects and fails with "no objects passed to apply", which turned a deploy of a
-	@# trust that has no XNAT to configure into exit 3.
-	@# The wait ends on Complete or Failed, whichever comes first: a Job past its backoffLimit never
-	@# completes. Only a Failed condition fails it; a Failed-waiter that errors is dropped.
-	@echo "▶  Rendering XNAT init job from chart templates..."
+# Run one of the chart's hook Jobs on its own, outside a helm upgrade: render the chart with the
+# extra --set $(2), and when it renders a Job labelled app.kubernetes.io/component=$(1), replace any
+# earlier run of it and wait. $(3) names it in the output; $(4) is what to say when the chart renders
+# none (the Job's own guard is off), which is not an error.
+# One shell for the whole recipe: the "nothing to do" case must skip the wait too, and a bare
+# `exit 0` in one recipe line would only end that line.
+# Render first and look, because a guarded-off Job is not rendered at all: `kubectl apply --selector`
+# is then handed zero objects and fails with "no objects passed to apply", which turned a deploy of
+# a trust that has no XNAT to configure into exit 3.
+# The wait ends on Complete or Failed, whichever comes first: a Job past its backoffLimit never
+# completes. Only a Failed condition fails it; a Failed-waiter that errors is dropped.
+define run_chart_job
+	@echo "▶  Rendering the $(3) job from chart templates..."
 	@tmp=$$(mktemp); \
 	trap 'rm -f "$$tmp"' EXIT; \
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		$(VALUES_OPTS) \
-		--set xnat.initJob.enabled=true > $$tmp \
-		|| { echo "❌  could not render the chart — xnat-init not run."; exit 1; }; \
-	if ! grep -q 'app.kubernetes.io/component: xnat-init' $$tmp; then \
-		echo "⏭  XNAT is disabled (xnat.enabled=false) — nothing to initialise."; \
+		--set $(2) > $$tmp \
+		|| { echo "❌  could not render the chart — $(3) not run."; exit 1; }; \
+	if ! grep -q 'app.kubernetes.io/component: $(1)' $$tmp; then \
+		echo "⏭  $(4)"; \
 		exit 0; \
 	fi; \
-	$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
+	$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=$(1) \
 		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT) || exit 1; \
 	$(KUBECTL) apply -n $(NAMESPACE) -f $$tmp \
-		--selector app.kubernetes.io/component=xnat-init || exit 1; \
-	echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."; \
-	init="--selector app.kubernetes.io/component=xnat-init --namespace $(NAMESPACE) --timeout=$(HELM_TIMEOUT)"; \
-	$(KUBECTL) wait job $$init --for=condition=complete > /dev/null & complete=$$!; \
-	$(KUBECTL) wait job $$init --for=condition=failed > /dev/null 2>&1 & failed=$$!; \
+		--selector app.kubernetes.io/component=$(1) || exit 1; \
+	echo "⏳  Waiting for the $(3) job to complete (timeout $(HELM_TIMEOUT))..."; \
+	job="--selector app.kubernetes.io/component=$(1) --namespace $(NAMESPACE) --timeout=$(HELM_TIMEOUT)"; \
+	$(KUBECTL) wait job $$job --for=condition=complete > /dev/null & complete=$$!; \
+	$(KUBECTL) wait job $$job --for=condition=failed > /dev/null 2>&1 & failed=$$!; \
 	job_failed=; \
 	while kill -0 $$complete 2>/dev/null; do \
 		if [ -n "$$failed" ] && ! kill -0 $$failed 2>/dev/null; then \
@@ -596,14 +619,33 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	done; \
 	if [ -z "$$job_failed" ] && wait $$complete; then \
 		[ -z "$$failed" ] || kill $$failed 2>/dev/null; \
-		echo "✅  XNAT init complete."; \
+		echo "✅  $(3) complete."; \
 	else \
 		kill $$complete $$failed 2>/dev/null; \
 		if [ -n "$$job_failed" ]; then reason="the Job failed"; else reason="it did not complete in $(HELM_TIMEOUT)"; fi; \
-		echo "❌  XNAT init failed ($$reason) — check logs:"; \
-		$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
+		echo "❌  $(3) failed ($$reason) — check logs:"; \
+		$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=$(1) --tail=40; \
 		exit 1; \
 	fi
+endef
+
+xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=false)
+	$(call run_chart_job,xnat-init,xnat.initJob.enabled=true,XNAT init,XNAT is disabled (xnat.enabled=false) — nothing to initialise.)
+
+# The trust-seed hook seeds only an empty store (FLIP#2111), so neither an upgrade nor a
+# trustData.version bump reaches a seeded trust. This runs it once with trustData.seed.reseed=true:
+# OMOP's listed projects reloaded, Orthanc's cleared and re-uploaded, at the release's version.
+# KIT is required, and its k8s-trust-<KIT>.yaml with it (OVERRIDES_FILE= names another): the
+# partition (trustNumber, trustData.seed.sourceTrust) comes from that override, and without it the
+# Job would load slot 1's data into any trust.
+reseed: ## Re-seed a seeded trust's sample data at its trustData.version (after a pin bump); needs KIT
+	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> is required: the re-seed loads that trust's partition, from its override"; exit 1; }
+	@[ -f "$(RESEED_OVERRIDES)" ] || { echo "❌ $(RESEED_OVERRIDES) not found — run make sync-kit KIT=$(KIT) first"; exit 1; }
+	@$(SUBMAKE) --no-print-directory _reseed-job KIT=$(KIT) HUB=$(HUB) OVERRIDES_FILE=$(RESEED_OVERRIDES)
+RESEED_OVERRIDES = $(or $(OVERRIDES_FILE),$(CHART_DIR)/k8s-trust-$(KIT).yaml)
+
+_reseed-job:
+	$(call run_chart_job,trust-seed,trustData.seed.reseed=true,Trust re-seed,Seeding is off for this release (trustData.seed) — nothing to re-seed.)
 
 sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s HUB=stag"; exit 1)

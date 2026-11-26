@@ -11,7 +11,7 @@
 #
 
 name: Task
-description: Raise a non-code task
+description: Raise work that is neither a bug nor a feature
 title: "[Task]: "
 type: Task
 projects: ["londonaicentre/10"]

@@ -84,7 +84,7 @@ def insert_status(
         xnat_project_id=xnat_project_id,
         project_id=project_id,
         retrieve_image_status=status,
-        query_at_creation=query_id if isinstance(query_id, UUID) else UUID(query_id) if query_id else None,
+        query_at_creation=query_id,
     )
 
     db.add(new_status)

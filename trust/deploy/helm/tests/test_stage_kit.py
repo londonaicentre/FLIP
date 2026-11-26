@@ -21,6 +21,7 @@ cluster, and an unrecognisable kit fails before the recipe is reached. These tes
 drive exactly that.
 """
 
+import json
 import os
 import re
 import subprocess
@@ -184,7 +185,7 @@ def test_a_kit_whose_file_is_missing_is_refused(tmp_path, nvflare_kit):
     """Without it the path would be the default, and stage-kit would wipe and fill that instead."""
     result = make_n_stage_kit(nvflare_kit, "KIT=SITE", f"KIT_FILE={tmp_path / '.env.SITE.development'}")
     assert result.returncode != 0
-    assert "pass HUB=<env>" in result.stderr
+    assert "names no kit file" in result.stderr
     assert "stage-to-node.sh" not in result.stdout
 
 
@@ -254,3 +255,92 @@ def test_the_shape_check_is_scoped_to_stage_kit():
     env = {k: v for k, v in os.environ.items() if k not in ("FL_BACKEND", "KIT_UID", "KIT_SRC")}
     result = subprocess.run(["make", "-n", "help"], cwd=CHART_DIR, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def _root_kit_file(tmp_path, *lines):
+    kit_file = tmp_path / ".env.ABC.prod"
+    kit_file.write_text("\n".join(("FL_BACKEND=nvflare", *lines)) + "\n")
+    return kit_file
+
+
+def test_the_kit_goes_under_the_kits_data_root(nvflare_kit, tmp_path):
+    """A kit with FLIP_DATA_ROOT (FLIP#2113) stages to fl-kit/ under it, where a deploy with that KIT mounts."""
+    kit_file = _root_kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod/")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
+    assert result.returncode == 0, result.stderr
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in result.stdout
+
+
+def test_the_data_root_beats_fl_kit_dir(nvflare_kit, tmp_path):
+    """As generate_values.kit_host_path: every kit from trust/.env.example sets FL_KIT_DIR, so the root wins."""
+    kit_file = _root_kit_file(tmp_path, "FL_KIT_DIR=/opt/flip/fl-kit", "FLIP_DATA_ROOT=/data/flip/ABC-prod")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
+    assert result.returncode == 0, result.stderr
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in result.stdout
+
+
+def test_a_relative_data_root_is_refused(nvflare_kit, tmp_path):
+    kit_file = _root_kit_file(tmp_path, "FLIP_DATA_ROOT=data/flip")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
+    assert result.returncode != 0
+    assert "FLIP_DATA_ROOT must be an absolute path" in result.stderr
+
+
+def test_an_inline_comment_on_the_data_root_is_dropped(nvflare_kit, tmp_path):
+    """As make reads an included kit: the comment must not end up in the path."""
+    kit_file = _root_kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod  # data disk")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
+    assert result.returncode == 0, result.stderr
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("line", "error"),
+    [("FLIP_DATA_ROOT=/", "not / itself"), ("FLIP_DATA_ROOT=/mnt/Data Disk/flip", "one path with no spaces")],
+)
+def test_a_malformed_data_root_is_refused(nvflare_kit, tmp_path, line, error):
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={_root_kit_file(tmp_path, line)}")
+    assert result.returncode != 0
+    assert error in result.stderr
+
+
+def test_a_kit_that_names_no_kit_file_is_refused(nvflare_kit, tmp_path):
+    """Staging to /opt/flip while the deploy with that KIT mounts the root's fl-kit/ leaves the pod Pending."""
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={tmp_path / '.env.ABC.prod'}")
+    assert result.returncode != 0
+    assert "names no kit file" in result.stderr
+
+
+def test_an_exported_data_root_is_not_the_kits(nvflare_kit, tmp_path, monkeypatch):
+    monkeypatch.setenv("FLIP_DATA_ROOT", "/data/other-trust")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={_root_kit_file(tmp_path)}")
+    assert result.returncode == 0, result.stderr
+    assert '--dest "/opt/flip/fl-kit"' in result.stdout
+
+
+def _helm_with_release(tmp_path, kit_host_path):
+    """A helm that answers `get values` for a deployed release mounting the kit at ``kit_host_path``."""
+    helm = tmp_path / "helm"
+    values = json.dumps({"flClient": {"kitHostPath": kit_host_path}})
+    helm.write_text(f"#!/bin/sh\n[ \"$3\" = get ] && echo '{values}'\nexit 0\n")
+    helm.chmod(0o755)
+    return f"HELM_BIN={helm}"
+
+
+def test_a_restage_elsewhere_than_the_live_release_mounts_is_refused(nvflare_kit, tmp_path):
+    """FLIP#2113: a root added to a live trust's kit must not send the new kit where the FL client never looks.
+
+    Refused rather than followed: stage-kit empties its target, so it never takes that path from the cluster.
+    """
+    kit_file = _root_kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod")
+    helm = _helm_with_release(tmp_path, "/opt/flip/fl-kit")
+    refused = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm)
+    assert refused.returncode != 0
+    expected = "mounts its kit at /opt/flip/fl-kit, and the kit file puts it at /data/flip/ABC-prod/fl-kit"
+    assert expected in refused.stderr
+    moved = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", helm, "KIT_MOVED=1")
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in moved.stdout, moved.stderr
+    same = make_n_stage_kit(
+        nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", _helm_with_release(tmp_path, "/data/flip/ABC-prod/fl-kit")
+    )
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in same.stdout, "the release's own path needs no KIT_MOVED"

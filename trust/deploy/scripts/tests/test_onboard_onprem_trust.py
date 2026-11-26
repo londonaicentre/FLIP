@@ -695,8 +695,10 @@ def test_32_hub_reachable_reports_the_release_or_the_failure() -> None:
 
 
 def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
-    """FLARE: the kit slice's fed_client.json target when on disk, else the kit's NLB_SUBDOMAIN;
-    Flower: the kit's NLB_SUBDOMAIN with FL_EDGE_PORT over FL_SERVER_PORT. Probed by a plain TCP connect."""
+    """FLARE: the kit slice's fed_client.json host when on disk, else the kit's NLB_SUBDOMAIN;
+    Flower: the kit's NLB_SUBDOMAIN. The port is FL_EDGE_PORT_OVERRIDE, else FL_EDGE_PORT (fl-client-init
+    writes it into FLARE's fed_client.json, FLIP#2051), else the slice's or FL_SERVER_PORT. Probed by a
+    plain TCP connect."""
     print("\n[33] FL endpoint reachable: source per backend, TCP probe, TLS-inspection hint on FAIL")
     with tempfile.TemporaryDirectory() as tmp:
         kit_dir = Path(tmp)
@@ -715,9 +717,17 @@ def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
         }
         from_slice = mod.fl_endpoint(flare)
         _assert(
-            from_slice == ("fl.hub.example", 8002, "startup/fed_client.json"),
-            "FLARE with the slice on disk dials fed_client.json's target",
+            from_slice == ("fl.hub.example", 8012, "startup/fed_client.json"),
+            "FLARE with the slice on disk dials fed_client.json's host on the kit's FL_EDGE_PORT",
             str(from_slice),
+        )
+        no_edge = {k: v for k, v in flare.items() if k != "FL_EDGE_PORT"}
+        _assert(mod.fl_endpoint(no_edge)[1] == 8002, "FLARE without FL_EDGE_PORT keeps the slice's port")
+        pinned = mod.fl_endpoint({**flare, "FL_EDGE_PORT_OVERRIDE": "8002"})
+        _assert(pinned[1] == 8002, "the site's FL_EDGE_PORT_OVERRIDE beats the hub's port", str(pinned))
+        _assert(
+            mod.fl_endpoint({**flare, "FL_BACKEND": "flower", "FL_EDGE_PORT_OVERRIDE": "443"})[1] == 443,
+            "Flower honours the override too",
         )
         no_slice = mod.fl_endpoint({**flare, "FL_KIT_SLOT": "Trust_6"})
         _assert(
@@ -736,14 +746,14 @@ def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
         with mock.patch.object(mod, "probe_tcp", return_value=None) as probe:
             ok = mod.check_fl_endpoint_reachable(flare, True)
         _assert(ok.status == mod.Status.PASS, "connects -> PASS", str(ok))
-        _assert(probe.call_args.args == ("fl.hub.example", 8002), "probed the dialled host:port", str(probe.call_args))
+        _assert(probe.call_args.args == ("fl.hub.example", 8012), "probed the dialled host:port", str(probe.call_args))
         with (
             mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"),
             mock.patch.object(mod, "lookup_egress_ip", return_value="203.0.113.7"),
         ):
             bad = mod.check_fl_endpoint_reachable(flare, True)
         _assert(bad.status == mod.Status.FAIL, "cannot connect -> FAIL", str(bad))
-        _assert("fl.hub.example:8002" in bad.detail, "FAIL names host:port", bad.detail)
+        _assert("fl.hub.example:8012" in bad.detail, "FAIL names host:port", bad.detail)
         _assert(any("TLS-inspection" in h for h in bad.hints), "hint covers the TLS-inspection proxy case")
         _assert("leaves from: 203.0.113.7." in bad.hints[-1], "timeout hint names this host's egress address")
         pending = mod.check_fl_endpoint_reachable({"FL_BACKEND": "flower"}, True)
@@ -824,10 +834,10 @@ def test_37_uncreatable_data_dir_fails() -> None:
     with tempfile.TemporaryDirectory() as td:
         locked = Path(td) / "locked"
         locked.mkdir()
-        (locked / "pacs").mkdir()  # exists, but its parent (where the seed marker goes) is not writable
+        (locked / "pacs").mkdir()  # exists, under a parent this user cannot write: nothing is created there
         writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
         with mock.patch.object(mod.os, "access", side_effect=writable):
-            marker = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs")
+            existing = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs")
             check = _paths(
                 OMOP_DATA_DIR=f"{locked}/omop",
                 ORTHANC_STORAGE_DIR=f"{td}/orthanc",
@@ -839,7 +849,8 @@ def test_37_uncreatable_data_dir_fails() -> None:
     _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
     _assert(f"OMOP_DATA_DIR ({locked} is not writable)" in check.detail, "names the var and parent", check.detail)
     _assert(f"COHORT_SNAPSHOT_STORAGE_DIR ({locked} is not writable)" in check.detail, "store counted", check.detail)
-    _assert(marker.status == mod.Status.FAIL and "seed marker" in marker.detail, "marker parent checked", str(marker))
+    # Nothing is written beside a data dir any more (FLIP#2111): an existing dir under a root-owned parent is fine.
+    _assert(existing.status == mod.Status.PASS, "an existing dir's parent is not checked", str(existing))
     _assert(unset.status == mod.Status.PASS, "unset dirs judged at their /opt/flip defaults", str(unset))
 
 
@@ -1035,18 +1046,6 @@ def test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded() -> None:
             _assert(not any("seeds it" in h for h in result.hints), "and does not say up-trust seeds it", str(result))
 
 
-def test_48_sample_data_off_needs_no_seed_marker_dir() -> None:
-    """TRUST_DATA_SEED=false writes no seed marker, so a data dir's unwritable parent is no FAIL (FLIP#1687)."""
-    print("▶ existing data dir under an unwritable parent, sample data off -> PASS")
-    with tempfile.TemporaryDirectory() as td:
-        locked = Path(td) / "locked"
-        (locked / "pacs").mkdir(parents=True)
-        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
-        with mock.patch.object(mod.os, "access", side_effect=writable):
-            check = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs", TRUST_DATA_SEED="false")
-    _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
-
-
 def test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist() -> None:
     """TRUST_DATA_SEED other than true/false/unset: up-trust refuses it, so the gate fails first (FLIP#1687)."""
     print("\n[49] TRUST_DATA_SEED=no -> Sample data FAIL, and no data-dir hint promises a seed")
@@ -1122,6 +1121,33 @@ def test_53_log_level_info_passes_and_unset_warns() -> None:
     _assert(ok.status == mod.Status.PASS, "INFO passes (case-insensitive)", ok.detail)
     unset = mod.check_log_level({}, True, "trust/.env.SITE.prod")
     _assert(unset.status == mod.Status.WARN, "unset level is a WARN", unset.detail)
+
+
+def test_60_log_level_passes_only_a_level_quieter_than_debug() -> None:
+    """NOTSET and a numeric level log everything, as DEBUG does, so only the named quiet levels pass."""
+    print("\n[60] TRUST_LOG_LEVEL: only INFO / WARNING / ERROR / CRITICAL pass")
+    for level in ("INFO", "warning", "ERROR", "CRITICAL"):
+        result = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
+        _assert(result.status == mod.Status.PASS, f"{level} passes", result.detail)
+    for level in ("NOTSET", "0", "5", "TRACE"):
+        deployed = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
+        _assert(deployed.status == mod.Status.FAIL, f"{level} on a deployed kit is a FAIL", deployed.detail)
+        dev = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.development")
+        _assert(dev.status == mod.Status.WARN, f"{level} on a development kit is a WARN", dev.detail)
+
+
+def test_61_an_empty_trust_local_password_is_not_a_rotated_one() -> None:
+    """A password set to nothing was not rotated; a key the kit does not carry at all is left to the other checks."""
+    print("\n[61] Trust-local passwords: an empty value is unrotated")
+    repo_root = SCRIPTS_DIR.parents[2]
+    rotated = {key: "rotated-secret" for key in mod.TRUST_LOCAL_PASSWORD_KEYS}  # pragma: allowlist secret
+    emptied = {**rotated, "GRAFANA_ADMIN_PASSWORD": ""}
+    check = mod.check_unrotated_passwords(emptied, True, repo_root, "SITE", "trust/.env.SITE.prod")
+    _assert(check.status == mod.Status.FAIL, "an empty password fails a deployed kit", str(check))
+    _assert(any("GRAFANA_ADMIN_PASSWORD" in hint for hint in check.hints), "the hint names the empty key", str(check))
+    absent = {key: value for key, value in rotated.items() if key != "GRAFANA_ADMIN_PASSWORD"}
+    check = mod.check_unrotated_passwords(absent, True, repo_root, "SITE", "trust/.env.SITE.prod")
+    _assert(check.status == mod.Status.PASS, "a key the kit does not carry is not counted", str(check))
 
 
 def test_54_hub_shared_allows_the_other_backends_kit_date_empty() -> None:
@@ -1265,6 +1291,74 @@ def test_58_a_site_without_the_membership_store_dir_is_told_the_exact_root_step(
     _assert(command in uid_row.detail or os.getuid() == 0, "the container uid row too", uid_row.detail)
 
 
+def test_62_flip_data_root_holds_every_store_the_kit_does_not_name() -> None:
+    """One kit line moves every store (FLIP#2113): the checklist judges the folders deploy/data_root.mk resolves."""
+    print("▶ FLIP_DATA_ROOT -> unset stores judged under it, a store's own key still wins, relative refused")
+    with tempfile.TemporaryDirectory() as td:
+        root = f"{td}/locked/aicp-prod"
+        (Path(td) / "locked").mkdir()
+        writable = lambda path, mode: Path(path) != Path(td) / "locked"  # noqa: E731 — root ignores mode bits
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            blocked = _paths(FLIP_DATA_ROOT=root, XNAT_DATA_DIR=f"{td}/xnat")
+        omop = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", {"FLIP_DATA_ROOT": root + "/"}, True, Path(td))
+        relative = _paths(FLIP_DATA_ROOT="data/aicp-prod")
+    _assert(blocked.status == mod.Status.FAIL, "FAIL", f"{blocked.status}: {blocked.detail}")
+    for var, folder in mod.DATA_ROOT_FOLDERS.items():
+        if var != "XNAT_DATA_DIR":
+            _assert(f"{var} (unset, so {root}/{folder};" in blocked.detail, f"{var} under the root", blocked.detail)
+    _assert("XNAT_DATA_DIR" not in blocked.detail, "a store's own key beats the root", blocked.detail)
+    _assert(f"{root}/omop" in omop.detail, "OMOP unset is not a FAIL under a root", f"{omop.status}: {omop.detail}")
+    _assert(relative.status == mod.Status.FAIL and "relative" in relative.detail, "relative root", str(relative))
+
+
+def test_63_a_data_root_never_strands_a_store_or_is_shared() -> None:
+    """FLIP_DATA_ROOT moves no data (FLIP#2113): a store in use must not restart on an empty folder."""
+    print("▶ Data root -> FAIL on a store left behind, FAIL on a root another kit has, inline comment dropped")
+    with tempfile.TemporaryDirectory() as td:
+        kit_file = Path(td) / ".env.SITE.prod"
+        kit_file.write_text("")
+        old = Path(td) / "old-xnat"
+        (old / "archive").mkdir(parents=True)
+        root = f"{td}/root"
+        kit = {"FLIP_DATA_ROOT": f"{root}  # data disk", "FL_KIT_SLOT_NUMBER": "1"}
+        defaults = {**mod.PRE_ROOT_DEFAULTS, "XNAT_DATA_DIR": str(old)}
+        with mock.patch.object(mod, "PRE_ROOT_DEFAULTS", defaults):
+            stranded = mod.check_data_root(kit, True, kit_file, "trust/.env.SITE.prod")
+            kept = mod.check_data_root({**kit, "XNAT_DATA_DIR": str(old)}, True, kit_file, "trust/.env.SITE.prod")
+            (Path(root) / "xnat" / "archive").mkdir(parents=True)
+            moved = mod.check_data_root(kit, True, kit_file, "trust/.env.SITE.prod")
+        (Path(td) / ".env.OTHER.prod").write_text(f"FLIP_DATA_ROOT={root}/\n")
+        (Path(td) / ".env.example").write_text(f"FLIP_DATA_ROOT={root}\n")
+        shared = mod.check_data_root(kit, True, kit_file, "trust/.env.SITE.prod")
+    _assert(stranded.status == mod.Status.FAIL, "a store left behind FAILs", str(stranded))
+    _assert(f"XNAT_DATA_DIR ({old} → {root}/xnat)" in stranded.detail, "it names both paths", stranded.detail)
+    _assert(kept.status == mod.Status.PASS, "the store's own key keeps it where it is", str(kept))
+    _assert(moved.status == mod.Status.PASS, "data moved under the root passes", str(moved))
+    _assert(shared.status == mod.Status.FAIL and ".env.OTHER.prod" in shared.detail, "a shared root", str(shared))
+    _assert(".env.example" not in shared.detail, "a template is not a trust", shared.detail)
+    _assert(mod.data_root_error({"FLIP_DATA_ROOT": "/"}) == "is / itself", "/ is refused", "")
+    _assert("spaces" in mod.data_root_error({"FLIP_DATA_ROOT": "/mnt/Data Disk"}), "spaces are refused", "")
+
+
+def test_64_a_data_dir_below_a_closed_directory_names_it() -> None:
+    """Python 3.13 raised from is_dir and 3.14 answers False ("does not exist yet"): both must name the closed dir."""
+    print("▶ OMOP data dir below a directory this user cannot enter -> FAIL naming that directory")
+    if os.geteuid() == 0:
+        print("  (skipped as root: root enters every directory)")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        closed = Path(td) / "closed"
+        closed.mkdir()
+        closed.chmod(0)
+        try:
+            kit = {"OMOP_DATA_DIR": f"{closed}/omop"}
+            check = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit, True, Path(td))
+        finally:
+            closed.chmod(0o700)
+    _assert(check.status == mod.Status.FAIL, "FAIL, not a traceback or a WARN", str(check))
+    _assert(f"{closed} is not traversable" in check.detail, "names the closed directory", check.detail)
+
+
 def test_59_standalone_ready_also_names_the_upgrade() -> None:
     """The checklist is the first step of a site upgrade too, where up-onprem-trust would reset XNAT."""
     print("▶ READY footer, standalone: names upgrade-onprem-trust beside the first install")
@@ -1335,7 +1429,6 @@ def main() -> None:
     test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root()
     test_46_swarm_worker_fails_naming_the_manager()
     test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded()
-    test_48_sample_data_off_needs_no_seed_marker_dir()
     test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist()
     test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list()
     test_51_log_level_debug_fails_a_deployed_kit()
@@ -1347,42 +1440,15 @@ def main() -> None:
     test_57_fl_kit_contents_a_closed_folder_above_the_slot_is_named_not_crashed_on()
     test_58_a_site_without_the_membership_store_dir_is_told_the_exact_root_step()
     test_59_standalone_ready_also_names_the_upgrade()
-    test_60_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked()
+    test_60_log_level_passes_only_a_level_quieter_than_debug()
+    test_61_an_empty_trust_local_password_is_not_a_rotated_one()
+    test_62_flip_data_root_holds_every_store_the_kit_does_not_name()
+    test_63_a_data_root_never_strands_a_store_or_is_shared()
+    test_64_a_data_dir_below_a_closed_directory_names_it()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)
-
-
-def test_60_an_upgrade_writes_no_seed_marker_so_its_parent_is_not_checked() -> None:
-    """A site root installed: the folder above its data dirs is root's. Only a first install seeds (FLIP#1985)."""
-    print("\n[60] existing data dirs under a root-owned parent: first install FAIL, upgrade PASS")
-    with tempfile.TemporaryDirectory() as td:
-        locked = Path(td) / "locked"
-        (locked / "omop").mkdir(parents=True)
-        (locked / "pacs").mkdir()
-        kit = {"OMOP_DATA_DIR": f"{locked}/omop", "ORTHANC_STORAGE_DIR": f"{locked}/pacs"}
-        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
-        with mock.patch.object(mod.os, "access", side_effect=writable):
-            first = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod")
-            upgrade = mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod", upgrade=True)
-            missing = mod.check_data_dir_paths(
-                {**kit, "COHORT_SNAPSHOT_STORAGE_DIR": f"{locked}/snapshots"}, True, "k", upgrade=True
-            )
-    _assert(first.status == mod.Status.FAIL and "seed marker" in first.detail, "first install: FAIL", str(first))
-    _assert(upgrade.status == mod.Status.PASS, "upgrade: PASS", f"{upgrade.status}: {upgrade.detail}")
-    _assert(
-        missing.status == mod.Status.FAIL and "COHORT_SNAPSHOT_STORAGE_DIR" in missing.detail,
-        "upgrade: a dir it would still create is checked",
-        str(missing),
-    )
-    with mock.patch.object(sys, "argv", ["prog", "SITE", "--gate", "--upgrade"]):
-        with mock.patch.object(mod, "run_checks", side_effect=SystemExit) as run:
-            try:
-                mod.main()
-            except SystemExit:
-                pass
-    _assert(run.call_args.args[3] is True, "--upgrade reaches the row", str(run.call_args))
 
 
 if __name__ == "__main__":

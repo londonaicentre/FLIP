@@ -166,9 +166,8 @@ The trust offers the FL scheduler only the GPUs it is configured with. A trust l
 the trust as "waiting for resources". To lend a cluster's GPUs one per job instead of holding one around the clock,
 use NVFLARE job pods (``flClient.nvflare.jobPods``, with ``maxGpus`` set to the GPUs FLIP may use); see the chart
 README's "NVFLARE job pods" section.
-With job pods, run ``make -C trust/deploy/helm sync-project-studies KUBE_CONTEXT=<ctx>`` after the first deploy,
-after each project is approved at this trust, and after every upgrade: until a project has its NVFLARE study entry,
-NVFLARE does not start its jobs here.
+With job pods, each project's job gets its NVFLARE study entry (its job image, and the mount of its own studies) when
+it starts at this trust: there is nothing to run after an approval or an upgrade.
 
 Extra network egress
 ====================
@@ -204,6 +203,9 @@ for development only. *Who: the node's administrator, with root for the install 
 
 - ``--data-dir``: where container images and every PersistentVolume go (the default ``local-path`` StorageClass
   writes under ``<data-dir>/storage``). Pick a disk with room for the volumes above plus about 30 GB of images.
+  This is the Kubernetes counterpart of a Compose trust's ``FLIP_DATA_ROOT``: the chart's stores are volumes, so
+  k3s places them, not the kit. Set ``FLIP_DATA_ROOT`` in the kit too, on the same disk, and the two folders staged
+  straight onto the node go under it: the FL kit (Step 3) and the vocabulary (`Load the OMOP core vocabulary`_).
 - ``--disable traefik``: the chart brings no Ingress, and nothing on the node needs to listen on 80 or 443.
 - The kubeconfig is cluster-admin, and with ``hostPath`` pods that is root on the node, so keep it ``600`` and copy
   it only to the operator. Its context is ``default`` (``KUBE_CONTEXT=default``).
@@ -330,13 +332,15 @@ the FL client starts.
   Flower ``certificates/`` and ``keys/`` with this slot's credential only. The target reads the backend from that
   shape and refuses a folder with neither shape or both (``FL_BACKEND=nvflare|flower`` overrides).
 - ``KUBE_CONTEXT`` is required, so the kit never lands in whichever cluster ``kubectl`` happens to point at.
-- The kit goes to the path ``FL_KIT_DIR`` names in the kit file (``/opt/flip/fl-kit`` in every kit as shipped),
-  and every deploy and upgrade of that kit mounts the same path. Any previous kit there is removed first. To use
-  another path, set ``FL_KIT_DIR`` in the kit file before you stage. To move a deployed trust's kit, change
-  ``FL_KIT_DIR``, stage again, and pass ``KIT_MOVED=1`` to the next deploy or upgrade: without it, a deploy that
-  would change the path a release mounts stops before it changes anything. Once the FL client is running from the
-  new path, delete the old folder on the node yourself: ``stage-kit`` clears only the folder it copies to, and the
-  old one still holds the kit's private key.
+- The kit goes to the path the kit file names: ``fl-kit/`` under its ``FLIP_DATA_ROOT``, else its ``FL_KIT_DIR``
+  (``/opt/flip/fl-kit`` in every kit as shipped). Every deploy and upgrade of that kit mounts the same path, so pass
+  the same ``KIT`` and ``HUB`` here and at the deploy; a ``KIT`` that names no kit file is refused. Any previous kit
+  there is removed first. To use another path, set it in the kit file before you stage. To move a deployed trust's
+  kit (a ``FLIP_DATA_ROOT`` added to its kit file moves it too), change the kit file, then pass ``KIT_MOVED=1`` to
+  ``stage-kit`` and to the next deploy or upgrade: without it, ``stage-kit`` refuses to stage anywhere else than the
+  release mounts, and a deploy that would change that path stops before it changes anything. Once the FL client is
+  running from the new path, delete the old folder on the node yourself: ``stage-kit`` clears only the folder it
+  copies to, and the old one still holds the kit's private key.
 - ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
   to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
@@ -488,9 +492,9 @@ shares, the same one as the VM node self-test, against the deployed release:
    * - trust-api / imaging-api / data-access-api health
      - Each answers its own ``/health`` with ``"status":"ok"``.
    * - omop seeded
-     - ``omop.person`` has rows.
+     - ``omop.image_occurrence`` has rows (persons alone may be Synthea's).
    * - orthanc seeded
-     - Orthanc holds instances.
+     - Orthanc holds studies.
    * - orthanc requires auth
      - Orthanc answers 401 without credentials.
    * - xnat c-store
@@ -534,12 +538,13 @@ onto the node; it fetches nothing and needs no cloud credentials, so this works 
 1. Get the vocabulary as a folder of Athena CSVs. With access to the AI Centre bucket, run
    ``make -C trust/deploy/helm download-vocab`` on your own machine (it uses your AWS CLI profile). Otherwise export
    it from OHDSI Athena as step 7 of :doc:`onboarding-a-trust` describes, and unzip the export into a folder.
-2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<kube-context>``.
-   It lands at ``/opt/flip/omop-vocab``, the same way ``stage-kit`` reaches the node (Step 3). With more than
+2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<folder>
+   KUBE_CONTEXT=<kube-context>``. It lands at ``omop-vocab/`` under the kit's ``FLIP_DATA_ROOT``, else
+   ``/opt/flip/omop-vocab``, the same way ``stage-kit`` reaches the node (Step 3). With more than
    one node, name it with ``NODE=<name>`` and pin the load job to it with ``omopDb.vocabLoad.nodeSelector`` (for
    example ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
    vocabulary, later upgrades skip it, so you may remove it.
-3. Set ``OMOP_VOCAB_DIR=/opt/flip/omop-vocab`` in the kit and re-run Step 4. ``sync-kit`` writes it into
+3. Set ``OMOP_VOCAB_DIR`` in the kit to the path ``stage-vocab`` printed and re-run Step 4. ``sync-kit`` writes it into
    ``omopDb.vocabLoad.hostPath`` and a load job runs after each install or upgrade, loading only what is missing.
 
 .. warning::
@@ -587,10 +592,10 @@ overlay win for the keys they set. Do not pass settings with
      - Default
      - What it does
    * - ``flClient.kitHostPath``
-     - ``/opt/flip/fl-kit``
+     - ``fl-kit/`` under the kit's ``FLIP_DATA_ROOT``, else its ``FL_KIT_DIR``, else ``/opt/flip/fl-kit`` (set by the Makefile deploys)
      - Path **on the node** holding the FL kit. Required whenever the FL client is enabled with the default
        ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). A deploy that names a
-       kit takes it from the kit file's ``FL_KIT_DIR`` (see Step 3).
+       kit takes it from the kit file: ``fl-kit/`` under ``FLIP_DATA_ROOT``, else ``FL_KIT_DIR`` (see Step 3).
    * - ``flBackend``
      - from the kit
      - ``nvflare`` or ``flower``.
@@ -604,8 +609,10 @@ overlay win for the keys they set. Do not pass settings with
        device plugin.
    * - ``trustData.seed.enabled``
      - ``true``
-     - Loads the **mock** projects into OMOP (and Orthanc) on install and every upgrade. A site whose stores hold
-       real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit (see Step 1).
+     - Loads the **mock** projects into an empty OMOP (and Orthanc), on install or any later upgrade that finds it
+       empty; a store that holds data is left alone. ``make -C trust/deploy/helm reseed`` moves a seeded trust to a
+       new ``trustData.version``. A site whose stores hold real data turns it off with ``TRUST_DATA_SEED=false`` in
+       the kit (see Step 1).
    * - ``trustData.seed.orthanc``
      - ``false``
      - Also load the mock DICOM studies into Orthanc (about 2 GB per trust). A test trust taking part in imaging
@@ -679,9 +686,28 @@ When the admin refreshes your kit's hub-shared settings, see "Later — rotate h
 
 .. warning::
 
-   While ``trustData.seed.enabled`` is on, every upgrade re-applies the mock projects. A site whose stores hold real
-   data must set ``TRUST_DATA_SEED=false`` in the kit (see `Step 1 — Check out the release and copy in the kit`_);
-   the upgrade carries it into the release.
+   While ``trustData.seed.enabled`` is on, every upgrade loads the mock projects into a store that has no imaging
+   data yet. A site whose stores hold real data must set ``TRUST_DATA_SEED=false`` in the kit (see
+   `Step 1 — Check out the release and copy in the kit`_); the upgrade carries it into the release.
+
+   An upgrade never re-seeds a store that holds data (FLIP#2111). After a release that moves ``trustData.version``,
+   move a sample-data trust to it with:
+
+   .. code-block:: shell
+
+      make -C trust/deploy/helm reseed KIT=<CODE> HUB=<env>
+
+.. note::
+
+   Every platform release also publishes this chart to GHCR as a versioned OCI artifact (FLIP#1646), whose chart
+   version, ``appVersion`` and ``global.image.tag`` all carry the release:
+
+   .. code-block:: shell
+
+      helm pull oci://ghcr.io/londonaicentre/charts/flip-trust --version X.Y.Z
+
+   The in-tree chart is deliberately unversioned (``0.0.0-dev``, floating image tag), so the Make targets above
+   deploy what the checkout holds. The chart README's "The published chart" section has the details.
 
 .. seealso::
 
@@ -730,7 +756,7 @@ Troubleshooting
      - The API server does not listen on 443 and ``networkPolicies.apiServer`` is not set:
        :ref:`ts-k8s-api-server-egress`.
    * - Job pods on: a project's jobs never start at this trust
-     - The project has no NVFLARE study entry yet: run ``sync-project-studies`` (:ref:`ts-k8s-job-pods-no-study`).
+     - The trust cannot build the project's NVFLARE study entry (:ref:`ts-k8s-job-pods-no-study`).
    * - Flower SuperNode logs ``Permission denied`` on ``/certs`` or ``/keys``
      - The kit was staged for the wrong backend. Re-stage from the slot's own kit directory, or pass
        ``FL_BACKEND=flower``.

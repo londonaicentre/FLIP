@@ -12,7 +12,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
@@ -22,7 +22,7 @@ from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.users import IUser
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import IPagedData, get_paging_details, get_total_pages
+from flip_api.utils.paging_utils import IPagedData, PagingInfo, get_total_pages, paging_params
 from flip_api.utils.user_roles import get_user_role_data
 
 router = APIRouter(prefix="/users", tags=["user_services"])
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/users", tags=["user_services"])
     status_code=status.HTTP_200_OK,
 )
 def get_users(
-    request: Request,
+    paging_info: PagingInfo = Depends(paging_params),
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
     idp: IdentityProvider = Depends(get_identity_provider),
@@ -48,7 +48,7 @@ def get_users(
     Requires CAN_MANAGE_USERS permission
 
     Args:
-        request (Request): FastAPI request object
+        paging_info (PagingInfo): The page requested
         db (Session): Database session
         token_id (UUID): ID of the authenticated user
         idp (IdentityProvider): The configured identity provider
@@ -66,8 +66,6 @@ def get_users(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {token_id} was unable to manage users"
             )
-
-        paging_info = get_paging_details(dict(request.query_params))
 
         users = idp.list_users()
 

@@ -17,8 +17,9 @@
 # and the seeder loads this trust's `source_trust` slice of each project through them. The
 # loaders come from THIS checkout (copied over, like the vocabulary loader), so the host runs
 # what the operator deploys. No snapshot, no S3: the data is fetched anonymously from Hugging
-# Face at the pinned tag. Idempotent — a .data_version bump re-runs it and replaces only the
-# listed projects' rows and studies.
+# Face at the pinned tag. Each store is seeded only while it is empty (FLIP#2111), so a re-run on a
+# seeded host loads nothing; after a .data_version bump, `make seed RESEED=1` replaces the listed
+# projects' rows and studies.
 ---
 # The throwaway omop-db below starts a postmaster on {{ omop_dir }}/db_data, and Postgres will
 # not refuse if the running stack's omop-db already has it open: that postmaster's PID in
@@ -169,6 +170,7 @@
         -e SEED_OMOP=true
         -e SEED_ORTHANC={{ 'true' if seed_orthanc_enabled | bool else 'false' }}
         -e FORCE_DICOM_VOCAB={{ '1' if seed_force_dicom_vocab | bool else '' }}
+        -e RESEED={{ 'true' if seed_reseed_enabled | bool else 'false' }}
         -e OMOP_DB_HOST=127.0.0.1
         -e OMOP_DB_PORT={{ seed_omop_port }}
         -e OMOP_POSTGRES_USER={{ seed_omop_user }}

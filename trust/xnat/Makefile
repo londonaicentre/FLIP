@@ -64,6 +64,7 @@ ifeq ($(origin KIT_FILE),undefined)
 KIT_FILE := $(call kit_file,../,$(KIT))
 endif
 -include $(KIT_FILE)
+include ../../deploy/data_root.mk
 # Kit-file values must reach the shell env, not just Make vars. docker stack
 # deploy (unlike docker compose) has no --env-file flag; it substitutes
 # ${XNAT_ADMIN_USER}, ${PACS_UI_PORT}, ${DOCKER_REGISTRY}, etc. in the
@@ -137,8 +138,9 @@ XNAT_AETITLE_EFFECTIVE := $(if $(filter undefined,$(origin XNAT_AETITLE)),FLIP_X
 PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 
 # Host path that backs this trust's XNAT bind mounts (parent of xnat-data/
-# and xnat-db-data/). Sourced from the kit file's Host-local profile;
-# falls back to a per-trust default when the kit omits it:
+# and xnat-db-data/). Sourced from the kit file's Host-local profile, else
+# xnat/ under the kit's FLIP_DATA_ROOT (FLIP#2113); falls back to a per-trust
+# default when the kit sets neither:
 #   stag/prod → /opt/flip/xnat-trust$(TRUST_NUM)   (per-slot dir; isolates
 #               xnat1 / xnat2 when multiple trusts share one EC2 host)
 #   dev       → ./xnat-data-trust$(TRUST_NUM)   (per-stack local dir; isolates
@@ -150,7 +152,7 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 # bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
 # this recipe and the compose stacks read the same exported var so the
 # dirs Make creates and the dirs compose mounts stay in lockstep.
-XNAT_DATA_DIR ?= $(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))
+XNAT_DATA_DIR ?= $(call data_root_or,xnat,$(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM)))
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
 
@@ -554,6 +556,8 @@ upgrade-xnat: xnat-check-ports create-xnat-network
 # labels, like xnat-web (FLIP#1210). The container runs as xnat-web's uid, the owner of the rest of
 # the tree, so the backups stay deletable by the operator under FLIP_UID and a later xnat-reset
 # still finds a tree it owns (FLIP#1731); xnat-backup-writable checks it can, before anything is dumped.
+# The dump holds every XNAT password hash and token secret, so backups/ and the dump are the owner's
+# alone (umask 077, and chmod for a backups/ an earlier upgrade left open).
 xnat-backup: SHELL := /bin/bash
 xnat-backup: xnat-backup-writable
 	$(require_kit)
@@ -567,8 +571,8 @@ xnat-backup: xnat-backup-writable
 	dump="backups/xnat-db-$$(date +%Y%m%d-%H%M%S).sql.gz"; \
 	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/$$dump ..."; \
 	if docker exec "$$db" sh -c 'set -o pipefail; pg_dumpall -U postgres | gzip -c' \
-	     | docker run --rm -i --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" $(HOST_TOOLS_IMAGE) sh -c "set -o pipefail; \
-	         mkdir -p /x/backups && cat > /x/$$dump \
+	     | docker run --rm -i --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" $(HOST_TOOLS_IMAGE) sh -c "set -o pipefail; umask 077; \
+	         mkdir -p /x/backups && chmod 700 /x/backups && cat > /x/$$dump \
 	         && gzip -dc /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
 	         && ls -l /x/$$dump"; then \
 	  exit 0; \

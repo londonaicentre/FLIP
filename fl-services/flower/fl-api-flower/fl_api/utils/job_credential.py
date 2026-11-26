@@ -25,6 +25,8 @@ from pathlib import Path
 
 from fastapi import HTTPException, status
 
+from fl_api.utils.validation import safe_join
+
 JOB_CREDENTIAL_DIR_ENV = "JOB_CREDENTIAL_DIR"
 
 
@@ -37,7 +39,7 @@ def deliver_job_credential(model_id: str, credential: str | None) -> None:
 
     Raises:
         HTTPException: 500 when a credential was sent and ``JOB_CREDENTIAL_DIR`` is not set, since the hub
-            would refuse everything the job reported.
+            would refuse everything the job reported; 400 when ``model_id`` would name a path outside it.
     """
     if credential is None:
         return
@@ -48,8 +50,10 @@ def deliver_job_credential(model_id: str, credential: str | None) -> None:
             detail=f"{JOB_CREDENTIAL_DIR_ENV} is not set: the job could not report to the hub.",
         )
     directory = Path(root)
+    # Checked before anything is touched, so a refused name leaves the earlier credential in place.
+    target = safe_join(directory, model_id)
     directory.mkdir(parents=True, exist_ok=True)
     # A net runs one job at a time, so any other credential here belongs to a job that has ended.
     for other in directory.iterdir():
         other.unlink()
-    (directory / model_id).write_text(credential)
+    target.write_text(credential)
