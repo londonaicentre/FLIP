@@ -107,6 +107,13 @@ locals {
   # disable MFA for stag-only testing (per TROUBLESHOOTING.md §4.3).
   enforce_mfa_env = var.ENFORCE_MFA == "" ? {} : { ENFORCE_MFA = var.ENFORCE_MFA }
 
+  # AUTO_UPGRADE_TARGET_RELEASE (FLIP#1644): the release opted-in trusts are moved to. Omitted when
+  # unset, so flip-api falls back to the release it runs itself. Staging sets it, because its hub
+  # runs sha- builds and would otherwise name no release at all.
+  auto_upgrade_target_env = var.AUTO_UPGRADE_TARGET_RELEASE == "" ? {} : {
+    AUTO_UPGRADE_TARGET_RELEASE = var.AUTO_UPGRADE_TARGET_RELEASE
+  }
+
   # Env vars per service — the CANONICAL definition of production container
   # config (#936; the compose.prod*.yml files mirror a subset as the
   # local prod-image harness). fl_server/fl_api are the FLARE maps
@@ -123,7 +130,7 @@ locals {
   s3_regional_endpoint_host = "s3.${var.AWS_REGION}.amazonaws.com"
 
   ecs_task_env = {
-    flip_api = merge(local.enforce_mfa_env, {
+    flip_api = merge(local.enforce_mfa_env, local.auto_upgrade_target_env, {
       ENV        = "production"
       AWS_REGION = var.AWS_REGION
       # Pin boto3 to the regional S3 endpoint: the legacy global endpoint's

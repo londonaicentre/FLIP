@@ -16,13 +16,14 @@ from typing import cast
 from uuid import UUID
 
 import httpx
-from sqlalchemy import Column, update
+from sqlalchemy import Column, exists, or_, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import (
     FLJob,
+    FLJobTrust,
     FLKitSlot,
     FLLogs,
     FLNets,
@@ -42,6 +43,7 @@ from flip_api.domain.schemas.status import (
     ModelStatus,
     NetStatus,
 )
+from flip_api.domain.schemas.trusts import UpgradeReportState
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
     ResearcherFacingError,
@@ -702,6 +704,12 @@ def _retire_job_with_unapproved_trusts(job: FLJob, scheduler_id: UUID, session: 
     revert_scheduler_pickup(scheduler_id, session)
 
 
+def _held_by_upgrade(trust: Trust, now: datetime) -> bool:
+    """Whether an upgrade keeps jobs off ``trust``: a live lease, or a FAILED attempt no operator has cleared."""
+    leased = trust.upgrade_lease_expires_at is not None and trust.upgrade_lease_expires_at > now
+    return leased or trust.last_upgrade_state == UpgradeReportState.FAILED
+
+
 def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse | None:
     """
     Checks for any queued jobs for a given scheduler.
@@ -725,9 +733,25 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         # Find the earliest queued job. The id tiebreak on identical created
         # timestamps keeps the pickup order in exact agreement with the ranks
         # shown by log_queue_positions / queued_positions_by_model.
+        # A trust that holds an upgrade lease (trust auto-upgrade) is being recreated, and one whose last upgrade
+        # FAILED is left half-upgraded on purpose (nothing is rolled back): no job that involves either is assigned
+        # until the lease is released or expires, or an operator restores the site and clears the failure in the
+        # portal. The job stays QUEUED and the jobs behind it still run.
+        held_trust = (
+            select(FLJobTrust.fl_job_id)
+            .join(Trust, col(Trust.id) == col(FLJobTrust.trust_id))
+            .where(col(FLJobTrust.fl_job_id) == col(FLJob.id))
+            .where(
+                or_(
+                    col(Trust.upgrade_lease_expires_at) > datetime.utcnow(),
+                    col(Trust.last_upgrade_state) == UpgradeReportState.FAILED,
+                )
+            )
+        )
         job_stmt = (
             select(FLJob)
             .where(FLJob.status == JobStatus.QUEUED)
+            .where(~exists(held_trust))
             .order_by(cast(Column, FLJob.created).asc(), cast(Column, FLJob.id).asc())
             .limit(1)
             .with_for_update(skip_locked=True)
@@ -740,11 +764,31 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
             revert_scheduler_pickup(scheduler_id, session)
             return None
 
+        job_trust_ids = [t.id for t in job.trusts]
+        # Take the trusts' row locks, the ones an upgrade claim takes, and look again: a claim that committed
+        # after the query above is seen here, and one that has not yet committed makes this wait for it. Either
+        # way a job is never assigned to a trust that has just been claimed (the claim re-checks for a running
+        # job under the same lock). populate_existing is what makes the re-read actually re-read: `job.trusts`
+        # above put these rows in the session, and a FOR UPDATE select returns those cached attributes unless
+        # it is told to refresh them, which would let a lease committed in between go unseen.
+        if job_trust_ids:
+            locked = session.exec(
+                select(Trust)
+                .where(col(Trust.id).in_(job_trust_ids))
+                .order_by(col(Trust.id))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).all()
+            now = datetime.utcnow()
+            if any(_held_by_upgrade(t, now) for t in locked):
+                logger.info("A trust of the next queued job is being upgraded or its upgrade failed, leaving it queued")
+                revert_scheduler_pickup(scheduler_id, session)
+                return None
+
         # Update job status and start time
         job.status = JobStatus.IN_PROGRESS
         job.started = datetime.utcnow()
 
-        job_trust_ids = [t.id for t in job.trusts]
         # Validate trusts. A job that references trusts not approved for its model can never run,
         # so retire it here rather than raising: the raise left the job QUEUED (the status write
         # above rolls back with the transaction), and because this query always picks the

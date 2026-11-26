@@ -97,7 +97,7 @@ SNOWFLAKE_OMOP = (
 
 # shape -> reason -> keys. Keep the reason to a few words.
 COMPOSE_BOTH = {
-    "Helm only": "OMOP_VOCAB_DIR K8S_PLATFORM_VALUES",
+    "Helm only": "OMOP_VOCAB_DIR K8S_PLATFORM_VALUES K8S_AUTO_UPGRADE",
     "Snowflake only: the hub's external access integration": "HUB_EGRESS",
     "no effect off SPCS yet, as trust/.env.example says": SNOWFLAKE_OMOP,
     "the hub's kit prefix; only an EC2 node's S3 kit fetch reads it": "FLOWER_KIT_DATE FLARE_KIT_DATE",
@@ -157,7 +157,7 @@ NOT_APPLICABLE = {
         "SPCS injects it into every container": "SNOWFLAKE_ACCOUNT SNOWFLAKE_HOST",
         "no Grafana on SPCS; logs go to the event table": "GRAFANA_ADMIN_PASSWORD",
         "MONAI Label is not deployed on SPCS": MONAI_LABEL,
-        "Helm only": "K8S_PLATFORM_VALUES",
+        "Helm only": "K8S_PLATFORM_VALUES K8S_AUTO_UPGRADE",
         "kit uploaded by make sync-kit, not fetched by date": "FLOWER_KIT_DATE FLARE_KIT_DATE",
         "Compose first start only; SPCS sets the admin one": "XNAT_ADMIN_INITIAL_PASSWORD",  # pragma: allowlist secret
         "not wired (#2047 N2)": "FL_SITE_PRIVACY_POLICY FL_SITE_PRIVACY_PERCENTILE FL_SITE_PRIVACY_GAMMA",

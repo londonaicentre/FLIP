@@ -267,6 +267,15 @@
                                     </template>
                                     <span class="flex-1" />
                                     <span
+                                        v-if="isAdmin && upgradeFor(t.id)"
+                                        data-test="trust-upgrade-mobile"
+                                        class="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0"
+                                        :class="upgradeClass(upgradeFor(t.id)!)"
+                                        :title="upgradeTitle(upgradeFor(t.id)!)"
+                                    >
+                                        {{ upgradeLabel(upgradeFor(t.id)!) }}
+                                    </span>
+                                    <span
                                         data-test="trust-services-mobile"
                                         class="inline-flex items-center gap-[5px] shrink-0"
                                     >
@@ -406,6 +415,17 @@
                                                 :class="SERVICE_DOT_CLASSES[svc.status]"
                                             />
                                         </div>
+                                    </td>
+                                    <td v-if="isAdmin" class="px-4 py-4 align-middle" data-test="trust-upgrade">
+                                        <span
+                                            v-if="upgradeFor(t.id)"
+                                            class="inline-block px-2 py-0.5 rounded text-[11px] font-medium whitespace-nowrap"
+                                            :class="upgradeClass(upgradeFor(t.id)!)"
+                                            :title="upgradeTitle(upgradeFor(t.id)!)"
+                                        >
+                                            {{ upgradeLabel(upgradeFor(t.id)!) }}
+                                        </span>
+                                        <span v-else class="text-gray-400 dark:text-gray-300">—</span>
                                     </td>
                                     <td
                                         v-if="isAdmin"
@@ -773,6 +793,7 @@
 
 <script setup lang="ts">
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
+import useSWRV from "swrv";
 import { computed, nextTick, ref, watch } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
@@ -784,7 +805,13 @@ import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
 import TrustKitSection from "@/partials/connection/TrustKitSection.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
-import { ITrustResponse, ServiceStatus } from "@/services/trust-service";
+import { AutoUpgradeBlocker,
+    AutoUpgradeState,
+    getAutoUpgradeFleet,
+    IAutoUpgrade,
+    IAutoUpgradeFleetRow,
+    ITrustResponse,
+    ServiceStatus } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 import { deriveTrust,
     deriveTrustState,
@@ -807,6 +834,86 @@ const hoverTrustId = ref<string | null>(null);
 const { data: trusts, mutate: refresh } = useTrustStatuses();
 // What the header shows and what the drawer flags trust versions against.
 const hubVersion = useHubVersion();
+
+// The fleet's upgrade state (one admin-only call, not one per row). A Trust Admin has no fleet to see —
+// the API refuses them — so ask only when the page is showing the fleet column to an admin, and treat
+// an empty answer as "no column data" rather than an error worth a toast.
+const { data: upgradeFleet } = useSWRV<IAutoUpgradeFleetRow[]>(
+    "auto-upgrade-fleet",
+    () => (isAdmin.value ? getAutoUpgradeFleet() : Promise.resolve([])),
+    {
+        dedupingInterval: 15_000,
+        shouldRetryOnError: false,
+        refreshInterval: 60_000
+    }
+);
+
+const upgradeById = computed<Record<string, IAutoUpgrade>>(() => {
+    const byId: Record<string, IAutoUpgrade> = {};
+    for (const row of upgradeFleet.value ?? []) {
+        byId[row.trust_id] = row.view;
+    }
+
+    return byId;
+});
+
+const upgradeFor = (trustId: string): IAutoUpgrade | null => upgradeById.value[trustId] ?? null;
+
+const UPGRADE_LABELS: Record<AutoUpgradeState, string> = {
+    UP_TO_DATE: "Up to date",
+    PENDING: "Pending",
+    IN_PROGRESS: "Upgrading",
+    SUCCEEDED: "Upgraded",
+    FAILED: "Failed"
+};
+
+// Whole literals so the JIT emits them: a failed upgrade is the one an admin has to act on.
+const UPGRADE_CLASSES: Record<AutoUpgradeState, string> = {
+    UP_TO_DATE: "bg-gray-100 text-gray-600 dark:bg-dark-surface dark:text-gray-300",
+    PENDING: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+    IN_PROGRESS: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
+    SUCCEEDED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+    FAILED: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+};
+
+// PENDING only says "behind the hub's release". With the switch off nothing will move the trust (every Compose
+// trust after every release), so that case gets its own label: the agent will do it vs a person has to.
+const isManual = (view: IAutoUpgrade): boolean => view.state === "PENDING" && !view.enabled;
+const MANUAL_CLASSES = "bg-gray-100 text-amber-700 dark:bg-dark-surface dark:text-amber-300";
+const upgradeLabel = (view: IAutoUpgrade): string => (isManual(view) ? "Behind (manual)" : UPGRADE_LABELS[view.state]);
+const upgradeClass = (view: IAutoUpgrade): string => (isManual(view) ? MANUAL_CLASSES : UPGRADE_CLASSES[view.state]);
+
+const BLOCKER_SHORT: Record<AutoUpgradeBlocker, string> = {
+    JOBS_RUNNING: "a training job is running",
+    OUTSIDE_WINDOW: "outside the maintenance window",
+    SITE_UNHEALTHY: "the site is not healthy",
+    AGENT_OFFLINE: "the agent has not checked in"
+};
+
+// What the pill cannot say in two words: which release, what holds it back, and for a failure, what went wrong.
+const upgradeTitle = (view: IAutoUpgrade): string => {
+    if (view.state === "PENDING") {
+        if (!view.enabled) {
+            const behind = view.targetRelease ? `Behind the hub's ${view.targetRelease}` : "Behind the hub's release";
+
+            return `${behind}; automatic upgrades are off, so it is upgraded by hand`;
+        }
+        const waiting = view.targetRelease ? `Waiting to move to ${view.targetRelease}` : "Waiting to move";
+        const blockers = (view.blockers ?? []).map(b => BLOCKER_SHORT[b] ?? b);
+
+        return blockers.length ? `${waiting}: ${blockers.join("; ")}` : waiting;
+    }
+    if (view.state === "FAILED") {
+        return view.lastAttempt?.detail
+            ? `Failed to move to ${view.lastAttempt.release}: ${view.lastAttempt.detail}`
+            : `Failed to move to ${view.lastAttempt?.release ?? view.targetRelease ?? "the next release"}`;
+    }
+    if (view.state === "IN_PROGRESS") {
+        return view.targetRelease ? `Upgrading to ${view.targetRelease}` : "Upgrading";
+    }
+
+    return view.currentRelease ? `On ${view.currentRelease}` : "";
+};
 
 // Labels + pill classes are shared with the drawer via connection-health.ts.
 const stateLabel = (s: TrustState): string => STATE_LABELS[s];
@@ -860,7 +967,7 @@ interface IColumn {
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
 // Keys correspond to entries in `SORT_COMPARATORS`; columns without a key
-// (Services dots, Jobs, drawer chevron) render as inert headers.
+// (Services dots, Upgrade, Jobs, drawer chevron) render as inert headers.
 const BASE_COLUMNS: IColumn[] = [
     {
         key: "severity",
@@ -893,6 +1000,12 @@ const BASE_COLUMNS: IColumn[] = [
         width: "w-px"
     },
     {
+        // Only an admin's fleet call fills this in, so like Jobs it is shown to admins only; a Trust Admin
+        // sees the same status for their own trust on My Trust.
+        label: "Upgrade",
+        width: "w-px"
+    },
+    {
         label: "Jobs",
         width: "w-px"
     },
@@ -913,7 +1026,11 @@ const columns = computed<IColumn[]>(() => (showKitColumn.value
     : BASE_COLUMNS));
 
 // The Jobs counts span every project, so the hub sends them to hub admins only (FLIP#1739).
-const visibleColumns = computed(() => columns.value.filter(col => col.label !== "Jobs" || isAdmin.value));
+// The fleet's upgrade state likewise comes from an admin-only call.
+const ADMIN_ONLY_COLUMNS = ["Jobs", "Upgrade"];
+const visibleColumns = computed(() => columns.value.filter(
+    col => isAdmin.value || !ADMIN_ONLY_COLUMNS.includes(col.label)
+));
 
 // Severity-first is the default (design 1b): failing trusts surface on load;
 // admins can re-sort via the column headers when triaging.

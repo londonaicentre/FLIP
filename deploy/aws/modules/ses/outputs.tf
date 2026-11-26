@@ -42,5 +42,7 @@ output "template_arns" {
     aws_ses_template.flip_access_request.arn,
     aws_ses_template.flip_xnat_invite.arn,
     aws_ses_template.flip_xnat_added_to_project.arn,
+    aws_ses_template.flip_trust_upgrade_started.arn,
+    aws_ses_template.flip_trust_upgrade_finished.arn,
   ]
 }

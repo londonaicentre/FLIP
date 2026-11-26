@@ -809,6 +809,11 @@ make -C trust/deploy/helm smoke-cstore
 # file's K8S_PLATFORM_VALUES, which every deploy and upgrade of that KIT then applies)
 make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
 
+# Automatic upgrades (FLIP#1644): ConfigMap release records, the trust Secret applied outside the
+# release (apply-trust-secret, run by deploy-release), the agent on. Or K8S_AUTO_UPGRADE=true in the
+# kit. Refused while the release is still recorded in Secrets (release_driver.py --deploy-driver).
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1
+
 # The trust self-test against the deployed release (FLIP#1390): release ready, FL kit, API
 # health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion, FL client
 # steady; writes a JSON + markdown report under build/selftest/ and needs no hub
