@@ -614,6 +614,8 @@ not on `main` fails the build, pre-release `v<X.Y.Z>-rc.N` tags pass (the releas
 CONTRIBUTING "Testing a release candidate"). Who may create `v*` tags is left to write access by
 decision (no tag ruleset — GitHub cannot exempt the built-in Actions app from one).
 
+A branch ruleset restricting creation of `stag`, `prod`, `latest`, `dev`, `sha-*` and `v[0-9]*` is the control that stops a dispatched branch build publishing a tag a deploy resolves; `release-pypi.yml` publishes only when `github.ref` is `refs/heads/main`.
+
 Branch pushes do NOT build images. If you pin a branch-named tag in a compose file for prod testing,
 trigger the build manually (`workflow_dispatch` bypasses the test gate) and wait for green before
 redeploying:
