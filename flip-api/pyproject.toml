@@ -45,6 +45,7 @@ dependencies = [
     "urllib3>=2.7.0",
     "picklescan>=1.0.5",
     "bandit>=1.7.10",
+    "anthropic[bedrock]>=2.7.0",
 ]
 
 [project.scripts]

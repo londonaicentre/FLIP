@@ -29,6 +29,8 @@ on:
       # test_trust_kit.py installs a kit it built with the trust host's installer (FLIP#1852).
       - "trust/deploy/scripts/*.py"
       - "trust/.env.example"
+      # The cohort-drafting schema copy is checked against the trust's OMOP DDL (FLIP#1556).
+      - "trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql"
   pull_request:
     branches: [main, develop]
 
@@ -60,6 +62,7 @@ jobs:
         deploy/instance.mk
         trust/deploy/scripts/*.py
         trust/.env.example
+        trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql
 
   flip-api:
     needs: changes

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
@@ -22,6 +22,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction, TrustAuditAction
 from flip_api.domain.schemas.file import FileUploadStatus
 from flip_api.domain.schemas.status import (
+    CohortDraftStatus,
     DecisionMaker,
     JobStatus,
     ModelStatus,
@@ -470,3 +471,70 @@ class CohortSnapshotStatus(SQLModel, table=True):
     query_hash: str | None = Field(default=None)
     snapshot_at: datetime = Field()
     created_at: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
+
+
+class CohortDraftAllowance(SQLModel, table=True):
+    """One row per user per UTC month for cohort SQL drafting (FLIP#1556).
+
+    It holds no counter: its row lock serialises a user's reservations across replicas, so two
+    concurrent requests cannot both take the last draft of the month. The count is read from
+    ``cohort_draft_request``.
+    """
+
+    __tablename__ = "cohort_draft_allowance"  # type: ignore
+    user_id: UUID = Field(primary_key=True)
+    period_start: date = Field(primary_key=True)
+
+
+class CohortDraftRequest(SQLModel, table=True):
+    """One cohort SQL drafting request (FLIP#1556): its place in the monthly allowance.
+
+    Metadata only. The description and the model's output are never stored. The idempotency key is
+    unique per user, so a retried request is not charged twice. Times are naive UTC.
+    """
+
+    __tablename__ = "cohort_draft_request"  # type: ignore
+    __table_args__ = (UniqueConstraint("user_id", "idempotency_key", name="uq_cohort_draft_request_user_key"),)
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(index=True)
+    project_id: UUID = Field(foreign_key="projects.id")
+    idempotency_key: str = Field(max_length=128)
+    period_start: date = Field()
+    status: CohortDraftStatus = Field(default=CohortDraftStatus.RESERVED)
+    # Model calls the request made, retries included (counted against COHORT_DRAFT_MONTHLY_REQUEST_CAP).
+    model_calls: int = Field(default=0)
+    created_at: datetime = Field()
+    updated_at: datetime = Field()
+
+
+class CohortDraftOverride(SQLModel, table=True):
+    """An admin's override of one user's cohort drafting limits (FLIP#1556), until it expires or is cleared.
+
+    ``monthly_request_cap`` None keeps the configured cap. Times are naive UTC; ``expires_at`` None never expires.
+    """
+
+    __tablename__ = "cohort_draft_override"  # type: ignore
+    user_id: UUID = Field(primary_key=True)
+    monthly_allowance: int = Field()
+    monthly_request_cap: int | None = Field(default=None)
+    expires_at: datetime | None = Field(default=None)
+    updated_by: UUID = Field()
+    updated_at: datetime = Field()
+
+
+class CohortDraftOverrideAudit(SQLModel, table=True):
+    """One change to a cohort drafting override: who, for whom, from what to what, and why. Append-only."""
+
+    __tablename__ = "cohort_draft_override_audit"  # type: ignore
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    actor_user_id: UUID = Field()
+    target_user_id: UUID = Field(index=True)
+    action: str = Field(max_length=16)  # "set" or "clear"
+    old_monthly_allowance: int | None = Field(default=None)
+    new_monthly_allowance: int | None = Field(default=None)
+    old_monthly_request_cap: int | None = Field(default=None)
+    new_monthly_request_cap: int | None = Field(default=None)
+    old_expires_at: datetime | None = Field(default=None)
+    new_expires_at: datetime | None = Field(default=None)
+    reason: str = Field(max_length=500)
+    timestamp: datetime = Field()

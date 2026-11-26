@@ -20,6 +20,7 @@
 | `efs.tf` | EFS file system, mount targets, and access points (FL workspace) |
 | `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (FLARE kit or Flower creds, by `fl_backend`) |
 | `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
+| `bedrock_cohort_draft.tf` | Cohort SQL drafting (Beta, FLIP#1556), opt-in via `cohort_draft_enabled` (default false, a plain variable like `ecs_exec_enabled`; off = no resources, no task-env change): the Bedrock Guardrail + published version, the flip-api task role's scoped `bedrock` grant (InvokeModel on the model or profile, ApplyGuardrail on the guardrail), the `COHORT_DRAFT_*` task env. The `bedrock-runtime` VPC endpoint is the networking account's (output `CohortDraftNetworkPrerequisite`), and the bootstrap module's `bedrock` apply prefix must be applied first |
 | `ecs_sg.tf` | ECS security groups |
 | `ecr.tf` | Repository creation template + lifecycle policy for the ECR pull-through cache repositories (FLIP#1796; the cache rules themselves are created out of band) |
 | `certificate.tf` | ACM certificate for the web listener where this account keeps the zone (`MANAGE_DNS=true`); on LZA the TLS web listener uses the one `aicentre-lza-iac` issues into the account (FLIP#1797) |

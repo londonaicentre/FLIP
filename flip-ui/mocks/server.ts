@@ -21,7 +21,7 @@ import { v4 } from "uuid";
 
 import { FileUploadStatus } from "@/interfaces/model/types";
 import { projectHasImaging } from "@/partials/projects/projectType";
-import { IGenericResponse, IPaginatedResponse } from "@/services/api";
+import { IPaginatedResponse } from "@/services/api";
 import { IModel } from "@/services/model-service";
 import { IProject } from "@/services/project-service";
 import { IUser } from "@/services/user-service";
@@ -57,6 +57,15 @@ const detailsModel: ModelDefinition<ISiteDetails> = Model.extend({});
 // registers neither, so both are genuinely empty. `ban-types` was removed in
 // typescript-eslint v8 and split into `no-empty-object-type` (FLIP#1041 — the
 // old disable named a rule that no longer exists, so it suppressed nothing).
+// The ids the seeded projects' queries name (mocks/projects/seed-data.ts) and omop-results.json carries.
+const mockTrusts = [{
+    name: "KCH",
+    id: "00000000-0000-0000-0000-000000000001"
+}, {
+    name: "GSTT",
+    id: "00000000-0000-0000-0000-000000000002"
+}];
+
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export type AppRegistry = Registry<{}, {}>;
 
@@ -83,7 +92,9 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
         },
 
         routes() {
-            const baseUrl = process.env.CENTRAL_HUB_API_URL;
+            // The axios client's own base (src/services/api.ts). process.env carries only VITE_* keys,
+            // so CENTRAL_HUB_API_URL was undefined here and no route matched.
+            const baseUrl = window.AWS_BASE_URL;
 
             // #region Project Routes
 
@@ -166,21 +177,35 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
             // #endregion
             // #region Cohort Query Routes
 
-            this.post(`${baseUrl}/step/cohort`, () => {
-                const response: IGenericResponse = {
-                    body: JSON.stringify({
-                        queryId: v4(),
-                        trust: [{
-                            name: "KCH",
-                            statusCode: 200
-                        }, {
-                            name: "UCLH",
-                            statusCode: 200
-                        }]
-                    })
-                };
+            // Returns what flip-api returns (ICohortQueryResponse) and puts the query on the project,
+            // so the page reloads into its results as it does against a hub.
+            this.post(`${baseUrl}/step/cohort`, (schema, request) => {
+                const body = JSON.parse(request.requestBody);
+                const queryId = v4();
+                const trustIds = mockTrusts.map((t) => t.id);
 
-                return new Response(200, undefined, response);
+                schema.db.projects.update(body.projectId, {
+                    query: {
+                        id: queryId,
+                        name: body.name,
+                        query: body.query,
+                        totalCohort: OMOPResults.recordCount,
+                        queriedTrustIds: trustIds,
+                        erroredTrustIds: [],
+                        emptyTrustIds: [],
+                        respondedTrustIds: trustIds,
+                        pendingTrustIds: [],
+                        cancelledTrustIds: []
+                    }
+                });
+
+                return new Response(200, undefined, {
+                    queryId,
+                    trust: mockTrusts.map((t) => ({
+                        name: t.name,
+                        statusCode: 200
+                    }))
+                });
             });
 
             this.get(`${baseUrl}/cohort/:queryId`, () => {
@@ -320,13 +345,7 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
             });
 
             this.get(baseUrl + "/trust", () => {
-                return new Response(200, undefined, [{
-                    name: "KCH",
-                    id: "2001"
-                }, {
-                    name: "UCLH",
-                    id: "2002"
-                }]);
+                return new Response(200, undefined, mockTrusts);
             });
 
             // Let cognito through
