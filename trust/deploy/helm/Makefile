@@ -237,7 +237,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init reseed _reseed-job kit-secret stage-kit download-vocab stage-vocab preflight apply-trust-secret template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
+.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init reseed _reseed-job kit-secret stage-kit download-vocab stage-vocab preflight apply-trust-secret template-egress-variants smoke-cstore selftest xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -478,7 +478,6 @@ upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upg
 # Secret from the same kit, then a plain `helm upgrade` at that tag.
 _upgrade-trust-k8s-apply:
 	$(MAKE) sync-kit KIT=$(KIT) NO_NEXT_STEP=1
-	$(MAKE) xnat-db-migrate-dump
 	$(MAKE) deploy-release OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
 	  || { $(MAKE) xnat-db-drop-unused-dump AFTER_FAILED_DEPLOY=1; exit 1; }
 	$(MAKE) xnat-db-drop-unused-dump
@@ -486,30 +485,13 @@ _upgrade-trust-k8s-apply:
 	  || { echo "⚠️  the release is live and rolled out, but xnat-init did not complete (see $(XNAT_INIT_HELP)). Re-run: $(XNAT_INIT_RERUN)"; exit 1; }
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
 
-# The PostgreSQL major the xnat-db image runs, and the release's XNAT pods (FLIP#1812).
-XNAT_DB_PG_MAJOR := $(shell sed -n 's/^PG_VERSION=\([0-9]*\).*/\1/p' $(REPO_ROOT)/trust/xnat/.env)
+# The release's XNAT pods (FLIP#1812).
 XNAT_POD = -n $(NAMESPACE) -l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component
 
-# Before a helm upgrade that moves xnat-db to a newer PostgreSQL major: stop xnat-web, then dump the
-# xnat database beside the running cluster on its volume, where the new image restores it on first
-# start. The helm upgrade brings xnat-web back. The old cluster stays for a rollback until
-# xnat-db-remove-old-cluster. A no-op without an xnat-db pod or once it is on that major.
-xnat-db-migrate-dump:
-	@set -e; \
-	pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db --field-selector=status.phase=Running -o name | head -1); \
-	[ -n "$$pod" ] || exit 0; \
-	current=$$($(KUBECTL) exec -n $(NAMESPACE) "$$pod" -c postgres -- sh -c 'cat "$$PGDATA/PG_VERSION"'); \
-	case "$$current:$(XNAT_DB_PG_MAJOR)" in *[!0-9:]*|:*|*:) \
-	  echo "❌ Cannot compare xnat-db's PostgreSQL major ('$$current') with the image's ('$(XNAT_DB_PG_MAJOR)', from PG_VERSION in trust/xnat/.env). Nothing was changed."; exit 1 ;; esac; \
-	[ "$$current" -lt $(XNAT_DB_PG_MAJOR) ] || exit 0; \
-	echo "⬆️  xnat-db moves from PostgreSQL $$current to $(XNAT_DB_PG_MAJOR): stopping xnat-web and dumping the xnat database for the new server to restore."; \
-	$(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=0; \
-	$(KUBECTL) wait pod $(XNAT_POD)=xnat-web --for=delete --timeout=$(HELM_TIMEOUT) \
-	  || ! $(KUBECTL) get pod $(XNAT_POD)=xnat-web -o name | grep -q .; \
-	$(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s $(XNAT_DB_PG_MAJOR) \
-	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_migrate_dump.sh || { \
-	  echo "❌ The dump failed, so nothing was upgraded. Starting xnat-web again on PostgreSQL $$current."; \
-	  $(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=1; exit 1; }
+# The dump that has to precede a move to a newer PostgreSQL major is NOT a step here: the chart
+# takes it itself, in a pre-upgrade hook, so a plain `helm upgrade` and the auto-upgrade agent get
+# it too (xnat.db.migrateDump, templates/xnat-db-migrate-job.yaml, FLIP#2071). Compose keeps its
+# own `xnat-db-migrate-dump` in trust/xnat/Makefile, which has no hooks to run it from.
 
 # After the helm upgrade: remove a dump the deploy did not use, because xnat-db stayed on the old
 # major (xnat.image.pin or the kit's XNAT_TAG holds an older release). helm upgrade does not wait
