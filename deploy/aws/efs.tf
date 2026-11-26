@@ -163,6 +163,96 @@ resource "aws_efs_access_point" "flip_fl" {
 }
 
 ############################
+# File system policy
+############################
+#
+# Without a file system policy EFS applies its default, which grants every
+# client that can reach a mount target full access — including root — whoever
+# they are. The security group already limits that to the fl-api and fl-server
+# task SGs, but nothing in the file system itself says so. This policy is the
+# second layer (FLIP-SR-075, #1743):
+#
+#   1. non-TLS NFS connections are denied outright, and
+#   2. mounting is allowed only to the hub's own three FL task roles, and only
+#      through one of the access points declared above.
+#
+# Every mount of this file system already sets `transit_encryption = "ENABLED"`
+# and `authorization_config { iam = "ENABLED" }` (fl-api-net-1 and
+# fl-server-net-1 in ecs_tasks.tf, efs-provision-certs in
+# ecs_efs_provision.tf, flower-register-supernode-keys in ecs_flower.tf), so
+# every mount presents its task role as the NFS client identity and satisfies
+# both statements unchanged — no task definition changes, no re-registration,
+# no quiesce.
+#
+# Shape notes, both load-bearing:
+#
+#   * The Allow names `Principal = { AWS = "*" }` and scopes with the
+#     `aws:PrincipalArn` condition rather than listing the role ARNs as
+#     principals. A resource-based policy that grants to a *role ARN* principal
+#     is still subject to an implicit deny in that role's permissions boundary,
+#     and these roles carry the platform boundary
+#     (`var.iam_permissions_boundary_name`, AGENTS.md "Terraform CI"), whose
+#     contents this repository does not own. Granting through
+#     `aws:PrincipalArn` with a wildcard principal is not limited by a
+#     boundary's implicit deny, so the live mounts cannot be broken by a
+#     boundary that happens to omit `elasticfilesystem:*`.
+#   * `elasticfilesystem:ClientRootAccess` is granted to nobody: the access
+#     points pin every client to uid/gid 1001, so no mount needs root. It is
+#     left as an implicit deny (not an explicit one) so that a break-glass
+#     identity policy remains possible without first editing this file.
+#
+# The task roles need no identity-policy grant of their own: within one account
+# an Allow in the file system policy is sufficient (ecs-fl-server-task-role in
+# particular still grants ECS Exec and nothing else).
+
+resource "aws_efs_file_system_policy" "flip_fl" {
+  count          = var.enable_efs ? 1 : 0
+  file_system_id = aws_efs_file_system.flip_fl[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = { AWS = "*" }
+        Action = [
+          "elasticfilesystem:ClientMount",
+          "elasticfilesystem:ClientWrite",
+          "elasticfilesystem:ClientRootAccess",
+        ]
+        Resource = aws_efs_file_system.flip_fl[0].arn
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      },
+      {
+        Sid       = "AllowHubFlTaskRolesThroughAccessPoints"
+        Effect    = "Allow"
+        Principal = { AWS = "*" }
+        Action = [
+          "elasticfilesystem:ClientMount",
+          "elasticfilesystem:ClientWrite",
+        ]
+        Resource = aws_efs_file_system.flip_fl[0].arn
+        Condition = {
+          StringEquals = {
+            "aws:PrincipalArn" = [
+              aws_iam_role.ecs_fl_api_task.arn,
+              aws_iam_role.ecs_fl_server_task.arn,
+              aws_iam_role.ecs_fl_kit_provision_task.arn,
+            ]
+            "elasticfilesystem:AccessPointArn" = [for ap in aws_efs_access_point.flip_fl : ap.arn]
+          }
+        }
+      },
+    ]
+  })
+}
+
+############################
 # SG ingress: NFS from ECS tasks
 ############################
 
