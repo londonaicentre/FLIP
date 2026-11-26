@@ -131,7 +131,7 @@ by_hand() {
 
 pod="flip-stage-$(date +%s)-$$"
 echo "📦 $src → node $node:$dest (pod $namespace/$pod, kubectl cp)"
-# An account limited to the namespace cannot read it; the pod's apply below then names what is wrong.
+# An account limited to the namespace can read it but not create it; the pod's apply below then names what is wrong.
 "${kubectl[@]}" get namespace "$namespace" > /dev/null 2>&1 \
   || "${kubectl[@]}" create namespace "$namespace" > /dev/null 2>&1 || true
 # sleep runs as PID 1, which has no SIGTERM handler, so the default 30 s grace period would only leave it Terminating.

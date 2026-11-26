@@ -746,10 +746,6 @@ def render_override(
         "# Contains no secrets — the per-trust keys live in the Kubernetes Secret,",
         "# patched into the cluster by the same sync-kit run. Regenerate by re-running",
         "#   make -C trust/deploy/helm sync-kit KIT=" + code + " HUB=<env>",
-        "#",
-        "# TRUST_API_KEY_HEADER is intentionally NOT set here: the chart default",
-        "# (values.yaml) is 'Authorization', which is the platform default the hub",
-        "# validates against. Override it only for a hub configured with a custom header.",
         "",
         f"trustName: {trust_name}",
     ]
@@ -798,8 +794,17 @@ def render_override(
         "trustApi:",
         "  env:",
         f"    CENTRAL_HUB_API_URL: {hub_url}",
-        "",
     ]
+    # The hub's key header, as the Compose trust-api gets it. Unset (a dev kit) or still a
+    # placeholder, the chart's value stands.
+    header = kit.get("TRUST_API_KEY_HEADER", "")
+    if not _is_placeholder(header):
+        lines.append(f"    TRUST_API_KEY_HEADER: {yaml_quote(header.strip())}")
+    # The wrong-host self-check, passed on as is: trust-api warns on a placeholder, as on every shape.
+    expected_trust_id = kit.get("EXPECTED_TRUST_ID", "").strip()
+    if expected_trust_id:
+        lines.append(f"    EXPECTED_TRUST_ID: {yaml_quote(expected_trust_id)}")
+    lines.append("")
 
     # OMOP core vocabulary (FLIP#842/843): the licensed bundle cannot be mirrored
     # publicly, so the chart runs its vocab-load hook only when a staged bundle is
@@ -948,6 +953,8 @@ def main(
     release_name: str | None = None,
     kit_file: Path | None = None,
     vocab_load: bool = True,
+    kube_context: str = "",
+    next_step: bool = True,
 ) -> None:
     release_name = release_name or derive_release_name(secret_name)
     repo_root = REPO_ROOT
@@ -1042,14 +1049,24 @@ def main(
         override_path.write_text(override)
         print(f"  ✓ Wrote values override: {override_path}")
         print()
+        if next_step:
+            # The cluster, namespace and release this run was pointed at, so the line works as printed.
+            selectors = "".join(
+                f" {name}={value}"
+                for name, value, default in (
+                    ("KUBE_CONTEXT", kube_context, ""),
+                    ("NAMESPACE", namespace, "flip-trust"),
+                    ("RELEASE_NAME", release_name, "trust-release"),
+                )
+                if value != default
+            )
+            print("─" * 64)
+            print("📦 Deploy the chart (KIT= keeps the kit's platform values and seed switch, and patches its keys):")
+            print(f"     make -C trust/deploy/helm deploy-trust-k8s KIT={code}{hub}{selectors}")
+            print("─" * 64)
     else:
+        # patch-kit-secrets: the last step of the deploy-trust-k8s the banner above recommends.
         print(f"ⓘ  --no-write-override: skipping override file write (existing {rel_override} preserved).")
-        print()
-
-    print("─" * 64)
-    print("📦 Deploy the chart from the kit:")
-    print(f"     make -C trust/deploy/helm deploy-trust-k8s KIT={code}{hub}")
-    print("─" * 64)
 
 
 if __name__ == "__main__":
@@ -1103,6 +1120,12 @@ if __name__ == "__main__":
         help="Only patch the Kubernetes Secret; do not overwrite the values override file",
     )
     parser.add_argument(
+        "--no-next-step",
+        dest="next_step",
+        action="store_false",
+        help="Do not print the deploy command to run next (the caller is that deploy, or an upgrade)",
+    )
+    parser.add_argument(
         "--no-vocab-load",
         dest="vocab_load",
         action="store_false",
@@ -1129,4 +1152,6 @@ if __name__ == "__main__":
         release_name=args.release_name,
         kit_file=args.kit_file,
         vocab_load=args.vocab_load,
+        kube_context=args.kube_context,
+        next_step=args.next_step,
     )

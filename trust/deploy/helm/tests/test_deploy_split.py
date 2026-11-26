@@ -12,7 +12,7 @@
 """A non-zero `make deploy` has to mean one thing (FLIP#1645).
 
 `deploy-trust-k8s` used to shrug at a failed deploy — "often a non-fatal post-install hook
-(e.g. xnat-init — see #565), but it may be a genuine Helm failure" — and re-exit the raw code.
+(e.g. xnat-init), but it may be a genuine Helm failure" — and re-exit the raw code.
 A human reads the output and decides; the auto-upgrade agent (FLIP#1640) cannot.
 
 The ambiguity is removed at the source rather than classified afterwards. `xnat-init` is the hook
@@ -127,7 +127,7 @@ def test_a_failed_rollout_exits_1_not_0():
 
 @needs_make
 def test_xnat_init_is_taken_out_of_helms_path_and_run_after():
-    """The hook inside Helm's timeout is what makes a failure ambiguous (#565)."""
+    """The hook inside Helm's timeout is what makes a failure ambiguous."""
     out = deploy_recipe()
     assert "--set xnat.initJob.enabled=false" in out, out
     assert out.index("helm upgrade --install") < out.index("xnat-init"), out

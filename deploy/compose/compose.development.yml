@@ -372,6 +372,19 @@ services:
       - NLB_SUBDOMAIN=${NLB_SUBDOMAIN:-}
       - FL_SERVER_PORT=${FL_SERVER_PORT}
       - FL_EDGE_PORT=${FL_EDGE_PORT:-}
+      # The code-default settings the env example lists as commented lines. Left commented
+      # they arrive empty, which each field's validator turns back into its default
+      # (flip_api/config.py). Development only: compose.prod.yml and the ECS task definition
+      # read none of them from the env file.
+      - MAX_MODEL_FILE_BYTES=${MAX_MODEL_FILE_BYTES:-}
+      - MAX_RESULTS_FILE_BYTES=${MAX_RESULTS_FILE_BYTES:-}
+      - PRE_SIGNED_URL_EXPIRATION_SECONDS=${PRE_SIGNED_URL_EXPIRATION_SECONDS:-}
+      - ALLOWED_MODEL_FILE_EXTENSIONS=${ALLOWED_MODEL_FILE_EXTENSIONS:-}
+      - PICKLESCAN_FILE_SUFFIXES=${PICKLESCAN_FILE_SUFFIXES:-}
+      - PICKLESCAN_TIMEOUT_SECONDS=${PICKLESCAN_TIMEOUT_SECONDS:-}
+      - BANDIT_TIMEOUT_SECONDS=${BANDIT_TIMEOUT_SECONDS:-}
+      - SCHEDULER_MALWARE_SCAN_RECONCILE_RATE=${SCHEDULER_MALWARE_SCAN_RECONCILE_RATE:-}
+      - TRUST_KEY_ROTATION_GRACE_DAYS=${TRUST_KEY_ROTATION_GRACE_DAYS:-}
     security_opt:
       - no-new-privileges:true
     cap_drop:

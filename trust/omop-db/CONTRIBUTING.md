@@ -87,9 +87,10 @@ pgdata volume. Two rotation paths:
   `DATA_ACCESS_POSTGRES_PASSWORD` in the trust kit file so data-access-api
   matches.
 - **Fresh volumes**: set the new value in the trust kit file, remove the trust's
-  OMOP data dir (`OMOP_DATA_DIR`, default `trust/omop-db/volumes/Trust_<N>/db_data`)
-  and bring the trust up again: first init reads the kit and `ensure-seeded`
-  seeds the empty database. The standalone build stack
+  OMOP data dir (`OMOP_DATA_DIR`; unset, `trust/omop-db/volumes/Trust_<N>/db_data` in
+  development and `/opt/flip/omop/db_data` on a deployed trust, or `omop/` under
+  `FLIP_DATA_ROOT`) and bring the trust up again: first init reads the kit and
+  `ensure-seeded` seeds the empty database. The standalone build stack
   (`compose.yml`) reads `.env.build` instead.
 
 ### Accession ID encryption

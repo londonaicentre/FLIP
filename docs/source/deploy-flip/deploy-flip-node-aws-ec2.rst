@@ -151,10 +151,16 @@ four ways:
 - **No** ``SSM_ENDPOINTS``. The estate's central endpoints already serve SSM and CloudWatch, and the
   VPC's gateway endpoint serves S3.
 - **The kit from the hub's bucket.** ``KIT_BUCKET`` and ``KIT_KMS_KEY_ARN`` are the hub's kit bucket and
-  its key, and ``FL_KIT_DATE`` the hub's kit date for its FL backend. The node reads its slot's kit and the
-  vocabulary itself, so ``stage-kit`` needs no ``KIT_SRC``. Every step that configures the host takes
-  ``KIT_BUCKET`` and ``FL_KIT_DATE``: without them ``stage-kit`` stops, and ``deploy`` seeds no
-  vocabulary.
+  its key. The node reads its slot's kit and the vocabulary itself, so ``stage-kit`` needs no ``KIT_SRC``.
+  Both are given once, to the first ``plan``: later plans and the steps that configure the host read them
+  back from the node's Terraform state (the ``kit_bucket_name`` and ``kit_kms_key_arn`` outputs), and take the
+  kit date from the kit file (``FLARE_KIT_DATE`` or ``FLOWER_KIT_DATE``, by its FL backend). ``KIT_BUCKET=``,
+  ``KIT_KMS_KEY_ARN=`` or ``FL_KIT_DATE=`` on the command line still overrides each; a typed ``KIT_BUCKET``
+  reads neither from the state, so pass the key with it. An empty ``KIT_BUCKET=`` to ``plan`` is how the
+  node's kit read is removed. The state also records the node's name: with more than one node in a checkout, a step run for
+  one node while the root is initialised for another stops and names the ``make init`` to run. A node applied
+  before the state recorded these stops ``plan`` and those steps until ``KIT_BUCKET`` is typed once, to a
+  ``plan`` that is then applied.
 
 The steps are those in *Build the node and join* below, with these flags:
 
@@ -162,9 +168,9 @@ The steps are those in *Build the node and join* below, with these flags:
 
    make plan      KIT=$KIT HUB=stag SUBNET_ID=<hub app subnet> PRIVATE_IP=<allowed address> \
      BOUNDARY_ARN=<estate boundary ARN> KIT_BUCKET=<hub kit bucket> KIT_KMS_KEY_ARN=<bucket key ARN>
-   make provision KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
-   make stage-kit KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
-   make deploy    KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
+   make provision KIT=$KIT HUB=stag
+   make stage-kit KIT=$KIT HUB=stag
+   make deploy    KIT=$KIT HUB=stag
 
 ****
 Cost
@@ -224,8 +230,10 @@ Build the node and join
 
 The FL kit arrives out of band with the kit file. ``KIT_SRC`` is the slot's own kit, as the Kubernetes
 chart takes it: ``local/``, ``startup/`` and ``transfer/`` for FLARE, ``certificates/`` and ``keys/`` for
-Flower. ``stage-kit`` refuses a FLARE kit that names another slot. Without a ``KIT_BUCKET`` the seed
-loads no OMOP vocabulary, so cohort queries use the vocabulary-free form.
+Flower. ``stage-kit`` refuses a FLARE kit that names another slot. On a node planned without a
+``KIT_BUCKET`` the seed loads no OMOP vocabulary, so cohort queries use the vocabulary-free form. The seed
+runs the OMOP and Orthanc images at the tags the stack will: the kit's ``OMOP_DB_TAG`` and ``ORTHANC_TAG``
+when it pins them, else ``DOCKER_TAG``.
 
 To check the node has joined:
 
@@ -235,10 +243,18 @@ To check the node has joined:
 
 Before ``deploy``:
 
-- **Host paths in the kit must be absolute or unset.** A kit scaffolded by ``make new-trust`` carries
-  relative ones (``ORTHANC_STORAGE_DIR=./orthanc/…``, ``BASE_IMAGES_DOWNLOAD_DIR``, ``XNAT_DATA_DIR``); over
-  the ssh docker context they would resolve to your checkout, so ``deploy`` refuses them. Comment them out:
-  each defaults under ``/opt/flip``.
+- **Host paths in the kit must be the ones this install fills.** A kit scaffolded by
+  ``make new-trust`` carries relative ones (``ORTHANC_STORAGE_DIR=./orthanc/…``, ``BASE_IMAGES_DOWNLOAD_DIR``,
+  ``XNAT_DATA_DIR``); over the ssh docker context they would resolve to your checkout, so ``deploy`` and
+  ``upgrade`` refuse them. Comment them out: each defaults under ``/opt/flip``. ``FL_KIT_DIR`` has no default
+  and must be set, to an absolute path: ``provision`` and ``stage-kit`` put the FL kit there. On a first
+  install the play, the seed and the vocabulary load prepare and fill fixed directories whatever the kit says,
+  so ``deploy`` refuses a kit that names another place for one of them (the stack would start on directories
+  nothing filled): ``BASE_IMAGES_DOWNLOAD_DIR`` (``/opt/flip/data/trust-<slot>``), ``ORTHANC_STORAGE_DIR``
+  (``/opt/flip/orthanc/orthanc-storage``) unless the kit sets ``TRUST_DATA_SEED=false``, and ``OMOP_DATA_DIR``
+  (``/opt/flip/omop/db_data``) unless it does and the node has no kit bucket to load the vocabulary from.
+  ``XNAT_DATA_DIR`` and ``COHORT_SNAPSHOT_STORAGE_DIR`` take any absolute path. ``upgrade`` fills nothing, so a
+  live node keeps whatever absolute paths its kit names.
 - **A trust on slot 3 or above** needs ``SOURCE_TRUST=1`` (or 2): the mock dataset has two partitions,
   and the seed defaults to the slot number.
 - **A trust with its own data** sets ``TRUST_DATA_SEED=false`` in the kit: ``deploy`` and ``seed`` then load
@@ -270,6 +286,7 @@ Not yet supported
 
 - **The node self-test before join** (``selftest_node.sh`` over SSM, as the Azure node runs it through Run
   Command) and **the running-stack check after join** (FLIP#1449) are not yet available for EC2 nodes.
-- **GPU hosts**: provisioning installs the NVIDIA driver and checks a container can see the GPU (the
-  ``flip_gpu_host`` role; it does nothing on a CPU host), but ``make deploy`` still starts the FL client
-  CPU-only. GPU instances have not been tested.
+- **GPU hosts**: provisioning installs no NVIDIA driver. On an image that ships one (a GPU AMI) it holds
+  the driver and kernel through the package upgrade, registers the NVIDIA runtime with Docker and checks a
+  container can see the GPU (the ``flip_gpu_host`` role; it does nothing on a host without ``nvidia-smi``).
+  ``make deploy`` still starts the FL client CPU-only. GPU instances have not been tested.

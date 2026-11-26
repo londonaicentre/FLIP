@@ -100,10 +100,17 @@ images that exist.
   first install can adopt it, and regenerates the FL-server egress port (and `flClient.nvflare.serverPort` or,
   for Flower, `flClient.flower.superlink`) on every run so upgrades never lose them. The port is the kit's
   `FL_EDGE_PORT_OVERRIDE`, else `FL_EDGE_PORT`, else `FL_SERVER_PORT`. `sync-kit-override` writes only
-  the override; `patch-kit-secrets` only patches the Secret and restarts the three API deployments.
+  the override; `patch-kit-secrets` only patches the Secret and restarts what reads it: the API
+  deployments the release has (trust-api, data-access-api, imaging-api) every time, and an FL client only when
+  the Secret's trust-internal service key or header name is no longer what that client was last restarted with
+  (it says which), so a routine redeploy leaves a running FL job alone. It tells by a sha256 of the two entries
+  kept in the annotation `flip/internal-service-key-sha256` on the client's Deployment, so a key that `sync-kit`
+  patched earlier still restarts the client here; a client with nothing recorded yet is restarted only if this
+  run changed the Secret. An FL client that was not ready, awaiting its kit or a free GPU, is restarted but not
+  waited on. A Secret that cannot be read stops the target before anything is restarted.
 - **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy-release` and `xnat-init` with that
   override, then `patch-kit-secrets` — even when a step failed, so trust-api never polls with a stale key
-  (#595) — and fails if either step did, naming which one. Without `KIT=` it is plain `deploy`, which is also all the repo-root
+  (#595) — and fails if any of the three did, naming which one. Without `KIT=` it is plain `deploy`, which is also all the repo-root
   `make deploy-trust-k8s` forwards to.
 - **`deploy`** is `deploy-release` then `xnat-init`. **`deploy-release`** depends on `preflight` (`scripts/preflight.sh`: tools and versions, cluster reachability,
   the chart files, the kit when `KIT=` is given, `helm lint`) and passes `--timeout $(HELM_TIMEOUT)` but
@@ -981,8 +988,8 @@ kubectl rollout status statefulset/<release>-flip-trust-xnat-db
 kubectl rollout restart deployment/<release>-flip-trust-xnat-web
 ```
 
-`make patch-kit-secrets` restarts `imaging-api`, `trust-api` and
-`data-access-api` but neither `xnat-db` nor `xnat-web`, so running it alone
+`make patch-kit-secrets` restarts `imaging-api`, `trust-api`,
+`data-access-api` (and an FL client whose trust-internal service key or header name changed) but neither `xnat-db` nor `xnat-web`, so running it alone
 during a rotation still leaves those two on the old password — restart
 `xnat-db` and `xnat-web` yourself, in that order, around it.
 
@@ -1250,7 +1257,7 @@ make -C trust/deploy/helm test
 ### What a failed `make deploy` means
 
 `helm upgrade` exiting non-zero used to be ambiguous: it was usually the `xnat-init`
-post-upgrade hook timing out (#565) on a release that had deployed perfectly well, but it
+post-upgrade hook timing out on a release that had deployed perfectly well, but it
 could equally be a genuine failure where nothing reached the cluster. Telling the two apart
 meant reading the output. Since FLIP#1645 the ambiguity is removed at the source rather than
 classified after the fact: `xnat-init` is the one hook that produces it, so `make deploy`
@@ -1267,7 +1274,7 @@ code the recipe returned, so no code can carry a distinction through make. An un
 |------|---------|------------|
 | none | The upgrade landed: applied, every core workload rolled out, every hook succeeded and `xnat-init` completed. | Nothing. |
 | `deploy-release` | Helm failed, or a core workload did not roll out within `HELM_TIMEOUT`, or a hook (`omop-vocab-load`, `trust-seed`) failed. | Read the helm error; the failing hook is named for you. If helm rejected the apply the trust is on its previous release; after a rollout timeout or a failed hook the new spec is already live, so look at which workloads or hooks are short. |
-| `xnat-init` | The release is live and every core workload rolled out, but `xnat-init` did not complete (or the chart could not be rendered for it). | The trust is on the new release; re-run `make -C trust/deploy/helm xnat-init`, raising `HELM_TIMEOUT` if the job simply needed longer. |
+| `xnat-init` | The release is live and every core workload rolled out, but `xnat-init` did not complete (or the chart could not be rendered for it). | The trust is on the new release; re-run `make -C trust/deploy/helm xnat-init` as the message prints it (no values: see [Running the XNAT init job by hand](#running-the-xnat-init-job-by-hand)), raising `HELM_TIMEOUT` if the job simply needed longer. |
 
 #### Why the rollout wait is scoped, and not `helm --wait`
 
@@ -1311,7 +1318,7 @@ The hook annotation itself is unchanged, so a plain `helm install` of the chart 
 
 XNAT's post-install init job normally runs as part of the chart. When it is
 disabled (`xnat.initJob.enabled=false`, e.g. because XNAT web was not ready in
-time — #565), run it once XNAT is up:
+time), or a deploy reported that `xnat-init` did not complete, run it once XNAT is up:
 
 ```bash
 make -C trust/deploy/helm xnat-init
@@ -1321,6 +1328,16 @@ It re-renders only the `xnat-init` job from the chart (`--set
 xnat.initJob.enabled=true`, applied with the
 `app.kubernetes.io/component=xnat-init` selector), waits up to `HELM_TIMEOUT` (default
 `30m`) for it to complete or fail, and on failure tails the job's logs before exiting non-zero.
+
+Run without `OVERRIDES_FILE` (like that, or with `KIT=<CODE> HUB=<env>`, which names no override
+file), the job is rendered from the values the release was deployed with (`helm get values`), so
+XNAT is configured for the same PACS, schedule and image tag as the deploy that preceded it.
+Anything else you pass is applied over the release's values and wins: a `VALUES_FILE`,
+`PLATFORM_VALUES` (with `KIT`, the kit's `K8S_PLATFORM_VALUES`), then `TAG`. Add `KUBE_CONTEXT`,
+`NAMESPACE` or `RELEASE_NAME` if the deploy named them; the failure messages print the command with
+them. If the release's values cannot be read, or there is no such release, the target stops rather
+than render from the chart defaults, which would point XNAT at the mocked PACS. With `OVERRIDES_FILE` (as `deploy-trust-k8s` and `upgrade-trust-k8s` call it) the
+release is not read and the job is rendered from that file and the rest of what was passed.
 
 Two things worth knowing now that `make deploy` calls this target itself:
 

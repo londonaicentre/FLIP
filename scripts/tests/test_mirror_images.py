@@ -14,7 +14,7 @@
 
 A site's proxy allowlists registries by host name, so each registry a node pulls from is a whole
 public registry opened, and the control over what runs is the image reference. The compose files,
-the XNAT stack, the Helm chart, the Ansible seed role and the trust Makefiles' throwaway containers
+the XNAT stack, the Helm chart, the Ansible roles and the trust Makefiles' throwaway containers
 (``HOST_TOOLS_IMAGE``) must therefore name only
 ``ghcr.io/londonaicentre/*``, with the mirrored images as ``mirror/<name>:<tag>@<digest>`` at the
 digest ``trust/deploy/mirror-images.manifest`` records (what ``scripts/mirror_images.sh`` copies).
@@ -25,6 +25,8 @@ Stdlib-only and executable as a plain script, like the rest of ``scripts/tests``
 from __future__ import annotations
 
 import re
+import shlex
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -33,12 +35,40 @@ MANIFEST = REPO / "trust" / "deploy" / "mirror-images.manifest"
 MIRROR = "ghcr.io/londonaicentre/mirror/"
 HELM = REPO / "trust" / "deploy" / "helm"
 
-# Everything a trust node runs, outside the chart: `image:` (compose, swarm) and `uv_image:` (Ansible).
+# Everything a trust node runs, outside the chart: `image:` (compose, swarm) and `<name>_image:` (the
+# Ansible roles' defaults, the only place a role may name an image).
+ROLES = "trust/deploy/ansible/roles"
+
+
+def role_files(pattern: str) -> list[str]:
+    """The tracked role files: a machine that has run a play also holds gitignored Galaxy roles there."""
+    listed = subprocess.run(
+        ["git", "ls-files", "--", f"{ROLES}/{pattern}"], cwd=REPO, capture_output=True, text=True, check=True
+    )
+    return listed.stdout.split()
+
+
+ROLE_DEFAULTS = role_files("*/defaults/main.yml")
+# `docker run` options that take no value; every other option is followed by one.
+RUN_FLAGS = {"-d", "--rm"}
+
+
+def run_image(run: str) -> str:
+    """What a `docker run …` command names as its image: the first word that is no option or option value.
+
+    A `{{ name }}` is returned as `name`, any other Jinja expression as `<expr>`."""
+    run = re.sub(r"\{\{ *(\w+) *\}\}", r"\1", run)
+    words = shlex.split(re.sub(r"\{\{.*?\}\}", "<expr>", run))[2:]
+    while words and words[0].startswith("-"):
+        words = words[1 if words[0] in RUN_FLAGS or "=" in words[0] else 2 :]
+    return words[0] if words else ""
+
+
 PINNED_FILES = (
     "trust/deploy/compose/compose_trust.prod.yml",
     "trust/deploy/compose/compose_trust.development.yml",
     "trust/xnat/docker-compose-stack.yml",
-    "trust/deploy/ansible/roles/flip_trust_seed/defaults/main.yml",
+    *ROLE_DEFAULTS,
 )
 MANIFEST_LINE = re.compile(r"^([a-z0-9.-]+\.[a-z]+/[a-z0-9./_-]+):([A-Za-z0-9._-]+)\s+(sha256:[0-9a-f]{64})$")
 PIN = re.compile(r"^ghcr\.io/londonaicentre/mirror/([a-z0-9./_-]+):([A-Za-z0-9._-]+)@(sha256:[0-9a-f]{64})$")
@@ -69,7 +99,7 @@ def image_refs() -> list[tuple[str, str]]:
     """(file, reference) for every image the compose, swarm and Ansible files name."""
     refs = []
     for rel in PINNED_FILES:
-        for match in re.finditer(r"^\s*(?:image|uv_image):\s*\"?([^\"\s#]+)", (REPO / rel).read_text(), re.M):
+        for match in re.finditer(r"^\s*(?:image|\w+_image):\s*\"?([^\"\s#]+)", (REPO / rel).read_text(), re.M):
             refs.append((rel, match.group(1)))
     host_tools = re.search(r"^HOST_TOOLS_IMAGE := (\S+)$", (REPO / HOST_TOOLS_DEFINITION).read_text(), re.M)
     assert host_tools, f"{HOST_TOOLS_DEFINITION} defines no HOST_TOOLS_IMAGE"
@@ -104,6 +134,33 @@ class MirrorPins(unittest.TestCase):
             for run in runs:
                 assert "$(HOST_TOOLS_IMAGE)" in run, f"{rel}: {run[:120]} runs an image other than HOST_TOOLS_IMAGE"
 
+    def test_the_ansible_roles_run_only_images_their_defaults_name(self):
+        """A literal in a task (`docker run … ubuntu:24.04`, `image: …`) is an image the pins above never see."""
+        runs = 0
+        for rel in role_files("*/tasks/*.yml"):
+            defaults = REPO / rel.split("/tasks/")[0] / "defaults" / "main.yml"
+            named = set(re.findall(r"^(\w+_image):", defaults.read_text(), re.M)) if defaults.exists() else set()
+            text = re.sub(r"^\s*#.*$", "", (REPO / rel).read_text(), flags=re.M)
+            # A run ends where its task's next key starts.
+            for run in re.findall(r"docker run\s.*?(?=\n\s*\w+:|\Z)", text, re.S):
+                runs += 1
+                image = run_image(run)
+                assert image in named, f"{rel}: `docker run` names {image!r}, which the role's defaults do not define"
+            for image in re.findall(r"^\s*image:\s*(.*)$", text, re.M):
+                assert re.fullmatch(r'"?\{\{ *(\w+) *\}\}"?', image), f"{rel}: image: {image} is not a variable"
+                assert re.sub(r"[^\w]", "", image) in named, f"{rel}: image: {image} is not in the role's defaults"
+        assert runs, f"{ROLES}: no docker run found (did the guard go stale?)"
+
+    def test_the_role_guard_reads_the_image_position(self):
+        for run, image in (
+            ("docker run --rm --gpus all {{ gpu_check_image }} nvidia-smi --format=csv", "gpu_check_image"),
+            ("docker run ubuntu:24.04 true", "ubuntu:24.04"),
+            ("docker run -d --name x -e A={{ a | quote }} ubuntu:24.04 {{ uv_image }}", "ubuntu:24.04"),
+            ('docker run --rm -e T="a @ b" -v {{ d }}:/seed {{ uv_image }} bash /seed/x.sh', "uv_image"),
+            ("docker run -d ghcr.io/x/{{ name }}:{{ tag }}", "ghcr.io/x/name:tag"),
+        ):
+            assert run_image(run) == image, run
+
     def test_mirrored_images_are_pinned_to_the_manifest(self):
         pins = manifest()
         seen = set()
@@ -136,7 +193,13 @@ class MirrorPins(unittest.TestCase):
         assert mirror.count('- "trust/deploy/mirror-images.manifest"') == 2, "mirror_images.yml: push and pull_request"
         assert mirror.count('- "scripts/mirror_images.sh"') == 2
         guard = (workflows / "test_trust_kit_scripts.yml").read_text()
-        for rel in ("trust/deploy/mirror-images.manifest", *PINNED_FILES[2:]):
+        watched = (
+            "trust/deploy/mirror-images.manifest",
+            PINNED_FILES[2],
+            f"{ROLES}/*/defaults/main.yml",
+            f"{ROLES}/*/tasks/*.yml",
+        )
+        for rel in watched:
             assert f'- "{rel}"' in guard, f"test_trust_kit_scripts.yml does not run on {rel}"
 
 

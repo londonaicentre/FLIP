@@ -573,6 +573,45 @@ def test_an_interpreter_without_tomllib_is_a_clear_refusal(tmp_path, monkeypatch
         )
 
 
+def _trust_api_env(kit: dict) -> dict:
+    return yaml.safe_load(sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2"))["trustApi"]["env"]
+
+
+def test_render_override_carries_the_kits_trust_api_header():
+    """The hub names the header it reads the trust's key from. With the chart's own literal winning,
+    a trust on a hub configured with another header was answered 401 (FLIP#2047)."""
+    env = _trust_api_env({**_FL_KIT, "TRUST_API_KEY_HEADER": "X-Trust-Api-Key"})  # pragma: allowlist secret
+    assert env["TRUST_API_KEY_HEADER"] == "X-Trust-Api-Key"  # pragma: allowlist secret
+
+
+def test_render_override_carries_the_kits_expected_trust_id():
+    """trust-api's wrong-host self-check compares the hub's answer to this; unmapped, it never ran."""
+    env = _trust_api_env({**_FL_KIT, "EXPECTED_TRUST_ID": "11111111-1111-1111-1111-111111111111"})
+    assert env["EXPECTED_TRUST_ID"] == "11111111-1111-1111-1111-111111111111"
+
+
+@pytest.mark.parametrize("key", ["TRUST_API_KEY_HEADER", "EXPECTED_TRUST_ID"])
+@pytest.mark.parametrize("value", [None, ""])
+def test_render_override_leaves_an_unset_trust_api_value_to_the_chart(key, value):
+    """A dev kit (Hub-shared block commented out) keeps the chart's values."""
+    kit = dict(_FL_KIT) if value is None else {**_FL_KIT, key: value}
+    assert key not in _trust_api_env(kit)
+
+
+def test_render_override_keeps_the_chart_header_for_a_placeholder():
+    """A scaffolded header placeholder is not a header name; the chart's `Authorization` stands."""
+    assert "TRUST_API_KEY_HEADER" not in _trust_api_env(
+        {**_FL_KIT, "TRUST_API_KEY_HEADER": "<run-make-register-trust>"}
+    )
+
+
+def test_render_override_passes_an_expected_trust_id_placeholder_on():
+    """trust-api treats the placeholder as unset and warns that the self-check is off, as on every
+    other shape; filtered here, a Helm trust would be the only one with no warning."""
+    env = _trust_api_env({**_FL_KIT, "EXPECTED_TRUST_ID": "<run-make-register-trust>"})
+    assert env["EXPECTED_TRUST_ID"] == "<run-make-register-trust>"
+
+
 @pytest.mark.parametrize("target", ["sync-kit", "sync-kit-override", "patch-kit-secrets"])
 def test_make_passes_no_vocab_load_through_to_every_sync(target):
     """NO_VOCAB_LOAD=1 is how an AKS operator keeps the vocab-load hook out (FLIP#1390); dry-run each target."""
@@ -586,6 +625,63 @@ def test_make_passes_no_vocab_load_through_to_every_sync(target):
 
     assert "--no-vocab-load" in run("NO_VOCAB_LOAD=1")
     assert "--no-vocab-load" not in run()
+
+
+@pytest.mark.parametrize(("env", "hub"), [("stag", " HUB=stag"), ("development", "")])
+def test_the_next_step_it_prints_keeps_the_kit(tmp_path, capsys, env, hub):
+    """`up OVERRIDES_FILE=…` dropped the kit: no K8S_PLATFORM_VALUES, no TRUST_DATA_SEED=false, no
+    patch-kit-secrets (FLIP#2047)."""
+    out = _next_step(tmp_path, capsys, env)
+
+    assert f"make -C trust/deploy/helm deploy-trust-k8s KIT=Trust_K8s{hub}\n" in out
+    assert "OVERRIDES_FILE=" not in out
+
+
+_SECRET = "trust-release-flip-trust-secrets"  # pragma: allowlist secret
+
+
+def _next_step(tmp_path, capsys, env="stag", namespace="flip-trust", secret_name=_SECRET, **kwargs) -> str:
+    """What `main` prints for a kit that renders, with the Secret left alone."""
+    kit_file = tmp_path / f".env.Trust_K8s.{env}"
+    keys = {"TRUST_API_KEY": "x", "TRUST_INTERNAL_SERVICE_KEY": "x", "AES_KEY_BASE64": "x"}
+    kit_file.write_text("".join(f"{k}={v}\n" for k, v in {**_FL_KIT, **keys}.items()))
+    sync_k8s_kit.main(
+        "Trust_K8s", env, namespace, secret_name, tmp_path, "eu-west-2", False, kit_file=kit_file, **kwargs
+    )
+    return capsys.readouterr().out
+
+
+def test_the_next_step_names_the_cluster_namespace_and_release_it_was_given(tmp_path, capsys):
+    out = _next_step(tmp_path, capsys, namespace="ns", secret_name="rel-flip-trust-secrets", kube_context="kind-x")
+
+    assert "deploy-trust-k8s KIT=Trust_K8s HUB=stag KUBE_CONTEXT=kind-x NAMESPACE=ns RELEASE_NAME=rel\n" in out
+
+
+def test_patch_kit_secrets_does_not_end_by_recommending_the_deploy_it_is_the_last_step_of(tmp_path, capsys):
+    assert "deploy-trust-k8s" not in _next_step(tmp_path, capsys, write_override=False)
+
+
+def test_no_next_step_prints_no_deploy_command(tmp_path, capsys):
+    assert "deploy-trust-k8s" not in _next_step(tmp_path, capsys, next_step=False)
+
+
+@pytest.mark.parametrize(
+    ("target", "printed"),
+    [("sync-kit", True), ("sync-kit-override", False), ("_upgrade-trust-k8s-apply", False)],
+)
+def test_only_a_standalone_sync_kit_prints_the_deploy_command(target, printed):
+    """deploy-trust-k8s runs sync-kit-override and upgrade-trust-k8s runs sync-kit: neither should tell
+    the operator, mid-run, to run a deploy."""
+    if shutil.which("make") is None:
+        pytest.skip("make is not installed")
+    chart = Path(__file__).resolve().parents[1]
+    out = subprocess.run(
+        ["make", "-n", "-C", str(chart), target, "KIT=Trust_K8s", "HUB=stag"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    ).stdout
+    assert ("--no-next-step" not in out) is printed, out
 
 
 def test_render_override_kit_host_path_is_under_the_data_root():

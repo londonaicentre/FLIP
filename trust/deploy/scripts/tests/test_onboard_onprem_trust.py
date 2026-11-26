@@ -656,14 +656,16 @@ def test_31_unrotated_passwords_compare_against_the_kit_template() -> None:
     defaults = mod.read_kit_vars(repo_root / "trust" / ".env.example")
     rotated = {key: "rotated-secret" for key in mod.TRUST_LOCAL_PASSWORD_KEYS}  # pragma: allowlist secret
     unrotated = {"ORTHANC_PASSWORD": defaults["ORTHANC_PASSWORD"]}
-    for kit_vars, root, kit_path, status in (
-        (unrotated, repo_root, "trust/.env.SITE.development", mod.Status.WARN),
-        (unrotated, repo_root, "trust/.env.SITE.stag", mod.Status.FAIL),  # a deployed kit: refuse
-        (unrotated, repo_root, "trust/.env.SITE.prod", mod.Status.FAIL),
-        (rotated, repo_root, "trust/.env.SITE.prod", mod.Status.PASS),
-        (rotated, Path(tempfile.mkdtemp()), "trust/.env.SITE.prod", mod.Status.WARN),  # no template: say so, never PASS
+    for kit_vars, root, hub, status in (
+        (unrotated, repo_root, "", mod.Status.WARN),
+        (unrotated, repo_root, "stag", mod.Status.FAIL),  # a deployed kit: refuse
+        (unrotated, repo_root, "prod", mod.Status.FAIL),
+        (rotated, repo_root, "prod", mod.Status.PASS),
+        (rotated, Path(tempfile.mkdtemp()), "prod", mod.Status.WARN),  # no template: say so, never PASS
     ):
-        check = mod.check_unrotated_passwords(kit_vars, True, root, "SITE", kit_path)
+        kit_path = f"trust/.env.SITE.{hub or 'development'}"
+        with mock.patch.dict(os.environ, {"HUB": hub}):
+            check = mod.check_unrotated_passwords(kit_vars, True, root, "SITE", kit_path)
         _assert(check.status == status, f"{kit_path} -> {status.name}: {check.detail}", str(check))
 
 
@@ -1098,10 +1100,11 @@ def test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list() -> None:
 
 
 def test_51_log_level_debug_fails_a_deployed_kit() -> None:
-    """FLIP-SR-050: a .prod/.stag kit left at TRUST_LOG_LEVEL=DEBUG is a blocking FAIL."""
+    """FLIP-SR-050: a prod/stag kit left at TRUST_LOG_LEVEL=DEBUG is a blocking FAIL."""
     print("\n[51] TRUST_LOG_LEVEL=DEBUG on a deployed kit -> FAIL")
     for env in ("prod", "stag"):
-        result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, f"trust/.env.SITE.{env}")
+        with mock.patch.dict(os.environ, {"HUB": env}):
+            result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, f"trust/.env.SITE.{env}")
         _assert(result.status == mod.Status.FAIL, f".{env} at DEBUG is a FAIL", result.detail)
         _assert(any("INFO" in h for h in result.hints), "hint names INFO", result.detail)
         _assert(any("rotate" in h for h in result.hints), "hint says to rotate the keys")
@@ -1110,8 +1113,44 @@ def test_51_log_level_debug_fails_a_deployed_kit() -> None:
 def test_52_log_level_debug_warns_a_development_kit() -> None:
     """DEBUG on a development kit is a non-blocking WARN (mock data, throwaway creds)."""
     print("\n[52] TRUST_LOG_LEVEL=DEBUG on a development kit -> WARN")
-    result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, "trust/.env.SITE.development")
+    with mock.patch.dict(os.environ, {"HUB": ""}):
+        result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, "trust/.env.SITE.development")
     _assert(result.status == mod.Status.WARN, "development at DEBUG is a WARN, not a blocker", result.detail)
+
+
+def test_65_a_deployed_kit_is_judged_by_hub_not_by_its_file_name() -> None:
+    """A prod kit under a pre-#1479 name, a bare name or a KIT_FILE= path is still a deployed kit (FLIP#2047)."""
+    print("\n[65] deployed kit: HUB decides, whatever the file is called")
+    debug = {"TRUST_LOG_LEVEL": "DEBUG"}
+    for name in ("trust/.env.GSTT.development", "trust/.env.GSTT", "/srv/kits/gstt.env"):
+        for hub in ("prod", "stag"):
+            with mock.patch.dict(os.environ, {"HUB": hub}):
+                _assert(mod.check_log_level(debug, True, name).status == mod.Status.FAIL, f"HUB={hub} {name}: FAIL")
+        # What `make -C trust onboard-onprem-trust` passes in development.
+        with mock.patch.dict(os.environ, {"HUB": ""}):
+            _assert(mod.check_log_level(debug, True, name).status == mod.Status.WARN, f"HUB= {name}: WARN")
+    without_hub = {k: v for k, v in os.environ.items() if k != "HUB"}
+    with mock.patch.dict(os.environ, without_hub, clear=True):  # run by hand: prod, as make defaults
+        check = mod.check_log_level(debug, True, "trust/.env.GSTT.development")
+    _assert(check.status == mod.Status.FAIL, "no HUB: deployed", check.detail)
+    _assert(any("HUB=prod" in h and "run with HUB=" in h for h in check.hints), "says how it was judged", str(check))
+
+
+def test_66_an_unset_data_dir_fails_naming_the_shared_fallback() -> None:
+    """The deployed fallback is real but one directory for every trust on the host, so the line stays required
+    and the row names the path, which must be the prod compose's (FLIP#2047)."""
+    print("\n[66] unset OMOP / Orthanc dir -> FAIL naming the compose fallback")
+    compose = (SCRIPTS_DIR.parent / "compose" / "compose_trust.prod.yml").read_text()
+    for var, label in (("OMOP_DATA_DIR", "OMOP data dir"), ("ORTHANC_STORAGE_DIR", "Orthanc storage dir")):
+        fallback = mod.PRE_ROOT_DEFAULTS[var]
+        _assert(f"${{{var}:-{fallback}}}:" in compose, f"{var}: the fallback named is the prod compose's", fallback)
+        check = mod.check_data_dir(label, var, {}, True, SCRIPTS_DIR.parents[2])
+        _assert(check.status == mod.Status.FAIL, f"{var} unset is still a FAIL", check.detail)
+        hints = "\n".join(check.hints)
+        shared = f"On a deployed trust, unset mounts {fallback}, shared by every trust"
+        _assert(shared in hints, "names the deployed fallback and that it is shared", hints)
+        _assert(f"{var}={fallback}" in hints, "tells a running site the line that keeps its data", hints)
+        _assert("trust/.env.example" in hints, "points at the template's line", hints)
 
 
 def test_53_log_level_info_passes_and_unset_warns() -> None:
@@ -1130,9 +1169,11 @@ def test_60_log_level_passes_only_a_level_quieter_than_debug() -> None:
         result = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
         _assert(result.status == mod.Status.PASS, f"{level} passes", result.detail)
     for level in ("NOTSET", "0", "5", "TRACE"):
-        deployed = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
+        with mock.patch.dict(os.environ, {"HUB": "prod"}):
+            deployed = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.prod")
         _assert(deployed.status == mod.Status.FAIL, f"{level} on a deployed kit is a FAIL", deployed.detail)
-        dev = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.development")
+        with mock.patch.dict(os.environ, {"HUB": ""}):
+            dev = mod.check_log_level({"TRUST_LOG_LEVEL": level}, True, "trust/.env.SITE.development")
         _assert(dev.status == mod.Status.WARN, f"{level} on a development kit is a WARN", dev.detail)
 
 
@@ -1433,6 +1474,8 @@ def main() -> None:
     test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list()
     test_51_log_level_debug_fails_a_deployed_kit()
     test_52_log_level_debug_warns_a_development_kit()
+    test_65_a_deployed_kit_is_judged_by_hub_not_by_its_file_name()
+    test_66_an_unset_data_dir_fails_naming_the_shared_fallback()
     test_53_log_level_info_passes_and_unset_warns()
     test_54_hub_shared_allows_the_other_backends_kit_date_empty()
     test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()

@@ -186,15 +186,6 @@ def is_filled(value: str | None) -> bool:
     return bool(value) and "<run-make-" not in value
 
 
-def is_deployed_kit(kit_path: str) -> bool:
-    """Whether a kit path names a deployed site (``.stag`` / ``.prod``) rather than a dev kit.
-
-    A deployed kit publishes real services and holds real credentials, so some checks escalate
-    from WARN to FAIL for it.
-    """
-    return kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
-
-
 # ─────────────────────────────────────────────────────────────────────
 # Environment probes (independent of kit file)
 # ─────────────────────────────────────────────────────────────────────
@@ -1039,7 +1030,7 @@ def check_unrotated_passwords(
 
     `make new-trust` mints these, but a kit scaffolded from an older template, or edited by
     hand, can still carry trust/.env.example's mock-stack values. On a development kit that
-    is a WARN (the defaults are usable for testing); on a `.stag` / `.prod` kit it is a FAIL,
+    is a WARN (the defaults are usable for testing); on a deployed kit (any non-empty HUB) it is a FAIL,
     since the stack publishes Orthanc, Grafana and the OMOP database on the host.
     """
     kit_path = kit_path or f"trust/.env.{kit}"
@@ -1057,7 +1048,8 @@ def check_unrotated_passwords(
     ]
     if not unchanged:
         return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
-    deployed = is_deployed_kit(kit_path)
+    hub = os.environ.get("HUB", "prod")
+    deployed = hub != ""
     return Check(
         "Trust-local passwords",
         Status.FAIL if deployed else Status.WARN,
@@ -1066,6 +1058,7 @@ def check_unrotated_passwords(
             f"Unchanged or empty: {', '.join(unchanged)}",
             f"Edit {kit_path} → Trust-local credentials section and replace each with a",
             "  random secret (`make new-trust` mints them for a fresh kit).",
+            f"Judged by HUB={hub}; run with HUB= for a development kit.",
         ],
     )
 
@@ -1076,8 +1069,8 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     At DEBUG the trust APIs log request headers and bodies into Loki, which runs with auth
     disabled, shares the trust network with the FL client, and keeps 30 days of history — so the
     trust's hub API key, internal key and cohort-admin proof land where researcher FL code can read
-    them. On a `.stag` / `.prod` kit that is a FAIL; on a development kit it is a WARN (mock data,
-    throwaway credentials).
+    them. On a deployed kit (any non-empty HUB) that is a FAIL; on a development kit it is a WARN
+    (mock data, throwaway credentials).
     """
     label = "Trust log level"
     if not kit_present:
@@ -1089,7 +1082,8 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     if not level:
         # Unset falls back to each service's own default; name it rather than assume.
         return Check(label, Status.WARN, "TRUST_LOG_LEVEL unset — set it to INFO explicitly")
-    deployed = is_deployed_kit(kit_path)
+    hub = os.environ.get("HUB", "prod")
+    deployed = hub != ""
     return Check(
         label,
         Status.FAIL if deployed else Status.WARN,
@@ -1099,6 +1093,7 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
         hints=[
             f"Edit {kit_path} → set TRUST_LOG_LEVEL=INFO, then recreate the trust APIs.",
             "A site that already ran at DEBUG should rotate both trust keys.",
+            f"Judged by HUB={hub}; run with HUB= for a development kit.",
         ],
     )
 
@@ -1145,7 +1140,18 @@ def check_data_dir(
         return Check(label, Status.PENDING, "pending — needs kit file")
     raw = kit_vars.get(var_name, "") or (data_dir_default(var_name, kit_vars) if data_root(kit_vars) else "")
     if not raw:
-        return Check(label, Status.FAIL, f"{var_name} unset in kit file (set it, or FLIP_DATA_ROOT)")
+        # Still required: the deployed fallback is one directory for every trust on the host.
+        shared = PRE_ROOT_DEFAULTS[var_name]
+        return Check(
+            label,
+            Status.FAIL,
+            f"{var_name} unset in kit file (set it, or FLIP_DATA_ROOT)",
+            hints=[
+                f"Set {var_name} to an absolute path of this trust's own (trust/.env.example carries the line).",
+                f"On a deployed trust, unset mounts {shared}, shared by every trust on this host;"
+                f" a site already using it keeps its data with {var_name}={shared}.",
+            ],
+        )
     # Resolve relative paths from trust/. Strip a leading "./" for a clean display.
     if raw.startswith("/"):
         resolved = Path(raw)
