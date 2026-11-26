@@ -195,6 +195,8 @@ jobs:
     outputs:
       # match, mismatch, unreadable or unset: read by the ui-cognito-ids job.
       ui_cognito_ids: ${{ steps.cognito.outputs.verdict }}
+      # The flip-api build this run pins, which the end to end check waits for (FLIP#2120).
+      hub_tag: ${{ steps.hub-tag.outputs.tag }}
 
     steps:
       - name: Checkout code
@@ -293,6 +295,12 @@ jobs:
           GHCR_WAIT_SECONDS_HUB: ${{ steps.wait.outputs.hub }}
           GHCR_WAIT_SECONDS_FL: ${{ steps.wait.outputs.fl }}
         run: deploy/aws/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
+
+      # The image's baked FLIP_RELEASE is this same name (`sha-<short7>` or `v<X.Y.Z>`),
+      # so /api/health can say whether the deployed hub is the one this run applied.
+      - name: Record the hub image tag
+        id: hub-tag
+        run: echo "tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
 
       # DOCKER_TAG / DOCKER_FL_TAG are deliberately absent from this env block:
       # they are inherited from the step above via $GITHUB_ENV. Setting them from
@@ -625,8 +633,8 @@ jobs:
 
   # The end to end check. FLIP#1596 asks for login, a cohort query and an FL round;
   # none of those can run from a GitHub runner today, so this is deliberately the
-  # smaller thing it asks for second: an unauthenticated reachability check of the
-  # deployed hub, reported on the run summary.
+  # smaller thing it asks for second: an unauthenticated check that the deployed
+  # hub answers as the build this run applied, reported on the run summary.
   #
   # What it does NOT do, and why. Login needs a Cognito user and MFA is on; a
   # cohort query needs that session; an FL round needs reachable trusts, which on
@@ -665,6 +673,7 @@ jobs:
           # otherwise it is derived from the LZA web edge domain.
           HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
           EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
+          EXPECTED: ${{ needs.apply.outputs.hub_tag }}
         run: |
           set -uo pipefail
           url="${HEALTH_URL}"
@@ -676,20 +685,26 @@ jobs:
             echo "::warning title=End to end check skipped::Neither STAGING_HEALTH_URL nor LZA_WEB_EDGE_DOMAIN is set, so there is no address to probe."
             exit 0
           fi
-          echo "Probing ${url}"
-          # The service has just been scaled from 0, so the first minute is an ECS
-          # task pulling an image and an ALB target going healthy. Retrying is the
-          # check; a single immediate curl would only ever measure that.
+          echo "Probing ${url} for ${EXPECTED}"
+          # An answer alone proves nothing: the old task keeps serving until the new
+          # one is healthy and the old one has drained, about 15 minutes on stag
+          # (FLIP#2120). So the check is the build /health names, retried for 30
+          # minutes; a rollout ECS rolled back never reaches it.
           code=000
-          for attempt in $(seq 1 30); do
+          version=""
+          for attempt in $(seq 1 90); do
             code="$(curl -sS -o "${RUNNER_TEMP}/body.txt" -w '%{http_code}' --max-time 15 "${url}" || echo 000)"
-            [[ "${code}" =~ ^(2|3)[0-9][0-9]$ ]] && break
-            echo "attempt ${attempt}: HTTP ${code}"
+            version="$(jq -r '.version // empty' "${RUNNER_TEMP}/body.txt" 2>/dev/null || true)"
+            [[ "${code}" =~ ^2[0-9][0-9]$ && -n "${EXPECTED}" && "${version}" == "${EXPECTED}" ]] && break
+            echo "attempt ${attempt}: HTTP ${code}, version ${version:-none}"
             sleep 20
           done
           echo "status=${code}" >> "$GITHUB_OUTPUT"
-          if [[ "${code}" =~ ^(2|3)[0-9][0-9]$ ]]; then
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if [[ "${code}" =~ ^2[0-9][0-9]$ && -n "${EXPECTED}" && "${version}" == "${EXPECTED}" ]]; then
             echo "verdict=passed" >> "$GITHUB_OUTPUT"
+          elif [[ "${code}" =~ ^2[0-9][0-9]$ ]]; then
+            echo "verdict=stale" >> "$GITHUB_OUTPUT"
           else
             echo "verdict=failed" >> "$GITHUB_OUTPUT"
           fi
@@ -699,10 +714,13 @@ jobs:
         env:
           VERDICT: ${{ steps.probe.outputs.verdict }}
           STATUS: ${{ steps.probe.outputs.status }}
+          VERSION: ${{ steps.probe.outputs.version }}
+          EXPECTED: ${{ needs.apply.outputs.hub_tag }}
         run: |
           set -euo pipefail
           case "${VERDICT:-failed}" in
-            passed)  icon="✅"; text="The deployed hub answered (HTTP ${STATUS})." ;;
+            passed)  icon="✅"; text="The deployed hub answered (HTTP ${STATUS}) as ${VERSION}, the build this run applied." ;;
+            stale)   icon="❌"; text="The hub answered, but as ${VERSION:-an unnamed build}, not ${EXPECTED:-the applied build}: the rollout did not land within 30 minutes." ;;
             skipped) icon="⏭️"; text="No address configured, so nothing was probed. Set STAGING_HEALTH_URL or LZA_WEB_EDGE_DOMAIN on the aws-stag environment." ;;
             *)       icon="❌"; text="The deployed hub did not answer (last status ${STATUS:-none})." ;;
           esac
@@ -724,6 +742,10 @@ jobs:
             passed) ;;
             skipped)
               echo "::error title=End to end check not run::Neither STAGING_HEALTH_URL nor LZA_WEB_EDGE_DOMAIN is set on aws-stag, so the deploy was not verified."
+              exit 1
+              ;;
+            stale)
+              echo "::error title=End to end check failed::The hub still runs ${VERSION:-an unnamed build}, not ${EXPECTED:-the applied build}."
               exit 1
               ;;
             *)
