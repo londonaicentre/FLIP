@@ -25,7 +25,7 @@ goes in first, so every imaging concept the rows reference resolves).
 
 The procedure is trust/seed_trust.sh in the repository, and the loaders it runs are the repository's
 own (trust/omop-db's omop_db_tools and trust/orthanc/seed_orthanc.py); all three are fetched at run
-time from the FLIP git ref `trustData.seed.sourceRef` (the package as a GitHub source archive — the
+time from one FLIP git ref, `trustData.seed.sourceRef` or by default the release the site runs (the package as a GitHub source archive — the
 image has no git), so the chart carries no copy of them and needs no extra image. The Job therefore
 needs egress to github.com, codeload.github.com (the archive redirects there), raw.githubusercontent.com,
 huggingface.co with *.hf.co, and PyPI, in addition to the two in-cluster services.
@@ -88,7 +88,7 @@ spec:
             - name: HF_TRUST_DATA_REPO
               value: {{ .Values.trustData.hfRepo | quote }}
             - name: FLIP_REF
-              value: {{ required "trustData.seed.sourceRef is required — the FLIP git ref the seed tools are installed from" .Values.trustData.seed.sourceRef | quote }}
+              value: {{ include "flip-trust.seedSourceRef" . | quote }}
             - name: PROJECTS
               value: {{ .Values.trustData.seed.projects | quote }}
             - name: SOURCE_TRUST

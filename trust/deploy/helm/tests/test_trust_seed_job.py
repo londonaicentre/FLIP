@@ -67,11 +67,11 @@ def test_a_succeeded_seed_job_is_removed_and_a_failed_one_kept():
 
 
 def test_seed_job_runs_the_shared_script_at_a_pinned_ref():
-    """The Job fetches trust/seed_trust.sh (the one procedure EC2 runs too) at trustData.seed.sourceRef."""
+    """The Job fetches trust/seed_trust.sh (the one procedure EC2 runs too) at the release's ref (FLIP#2118)."""
     text = SEED_JOB.read_text()
     assert "raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_REF}/trust/seed_trust.sh" in text
     assert "exec bash /work/seed_trust.sh" in text
-    assert 'required "trustData.seed.sourceRef is required' in text
+    assert '{{ include "flip-trust.seedSourceRef" . | quote }}' in text
     for env in (
         "TRUST_DATA_VERSION",
         "SOURCE_TRUST",
@@ -122,7 +122,7 @@ def test_the_shared_script_applies_the_repository_dependency_cooldown():
 
 
 def test_seed_values_defaults():
-    """Defaults: OMOP on, Orthanc off (2 GB of DICOM), the two dev projects, partition = trustNumber."""
+    """Defaults: OMOP on, Orthanc off (2 GB of DICOM), the dev projects, partition = trustNumber, release tools."""
     seed = VALUES["trustData"]["seed"]
     assert seed["enabled"] is True
     assert seed["omop"] is True
@@ -131,7 +131,7 @@ def test_seed_values_defaults():
     assert seed["sourceTrust"] == ""
     assert seed["numTrusts"] == 2
     assert seed["reseed"] is False, "an upgrade must leave a seeded trust as it is (FLIP#2111)"
-    assert seed["sourceRef"]
+    assert seed["sourceRef"] == "", "empty = the release the site runs, never a moving branch (FLIP#2118)"
     assert "initJob" not in VALUES["omopDb"]
     assert "initJob" not in VALUES["orthanc"]
 

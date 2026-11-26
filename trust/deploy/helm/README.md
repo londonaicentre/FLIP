@@ -253,7 +253,7 @@ from `dicom.log` and the container log alike. See
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
 | `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
-| `trustData.seed.sourceRef` | `develop` | FLIP git ref the seed tools are installed from at run time — match the ref your images were built from (`main` for `:prod`) |
+| `trustData.seed.sourceRef` | `""` (= the release's ref) | FLIP git ref the seed tools are installed from at run time. Empty takes it from the image tag the site runs (FLIP#2118): `vX.Y.Z` as it is, `sha-<sha>` its commit, `:prod` `main`, `:stag`/`:dev` `develop`; any other tag fails the render until this is set |
 | `trustData.seed.dicomVocabBundle` | `vocab_dicom_paulnagy_20260109` | The Apache-licensed DICOM vocabulary bundle loaded before the rows |
 | `trustData.seed.forceDicomVocab` | `false` | Recovery only: reload the DICOM vocabulary over one that reports itself present. The load skips on a single concept committed before the bulk load, so a Job killed between them leaves a half-loaded vocabulary every later upgrade skips. Set for one upgrade, then put it back |
 | `trustData.seed.image.*` | `ghcr.io/londonaicentre/mirror/astral-sh/uv@sha256:…` | The uv image the hook runs in: FLIP's mirror, pinned by digest (`trust/deploy/mirror-images.manifest`) |
@@ -329,7 +329,7 @@ listed projects' rows and its Orthanc half dedupes on `SOPInstanceUID`, so the f
 onto this chart re-loads the same data over what the snapshot held.
 
 The hook needs egress to `huggingface.co` (the dataset), `github.com` / `raw.githubusercontent.com`
-(the tools at `trustData.seed.sourceRef`) and PyPI (their dependencies), plus the in-cluster
+(the tools, at the release's own ref or `trustData.seed.sourceRef`) and PyPI (their dependencies), plus the in-cluster
 `omop-db` and `orthanc` services. It runs after the vocab-load hook (weight 6 after 5); on a
 cluster that never loads the licensed vocabulary the rows still land — the DICOM vocabulary is
 loaded first so their imaging concepts resolve.
@@ -1428,7 +1428,7 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 - A Helm `post-install,post-upgrade` hook that seeds only an empty store, deleted on success and kept on
   failure (`make reseed` runs the same Job once with `trustData.seed.reseed=true`, after a version bump):
   `kubectl logs -n <ns> job/<release>-flip-trust-trust-seed` after a failed release. It fetches the canonical tables (and, with `trustData.seed.orthanc`, the DICOM sets) from
-  Hugging Face at `trustData.version`, installs the loaders from FLIP at `trustData.seed.sourceRef`,
+  Hugging Face at `trustData.version`, installs the loaders from FLIP at the release's ref (or `trustData.seed.sourceRef`),
   and loads this trust's `source_trust` slice. No AWS credentials are involved.
 - `omop-db:5432 not reachable after 10 minutes` → the database never started; check the
   `omop-db` pod. A first start on an empty PVC runs the schema scripts and needs
