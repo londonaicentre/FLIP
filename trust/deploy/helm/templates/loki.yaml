@@ -106,7 +106,7 @@ spec:
     - metadata:
         name: storage
         labels:
-          {{- include "flip-trust.labels" . | nindent 10 }}
+          {{- include "flip-trust.claimTemplateLabels" . | nindent 10 }}
           app.kubernetes.io/component: loki
       spec:
         accessModes:

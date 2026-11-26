@@ -85,6 +85,11 @@ On a local dev stack, `GRAFANA_PORT` (and `LOKI_PORT`) are published straight to
 `trust/deploy/compose/compose_trust.development.yml`, so `http://localhost:3000` works directly with no
 tunnel needed.
 
+## No calls home
+
+Grafana runs with its usage reporting and its update checks off (`GF_ANALYTICS_*` in the compose files and
+the Helm chart), so the trust makes no calls to `grafana.com`. A trust's firewall would drop them anyway.
+
 ## Credentials
 
 Grafana's admin password is `GRAFANA_ADMIN_PASSWORD` (`GF_SECURITY_ADMIN_PASSWORD` inside the

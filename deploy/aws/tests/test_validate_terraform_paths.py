@@ -64,6 +64,9 @@ BY_HAND = {
     ),
     # test_providers_forwarding.py runs make there.
     "deploy/providers/AWS": ("deploy/providers/AWS/GNUmakefile",),
+    # test_fl_kit_upload_dry_run.py runs make in each backend's directory, by the backend's name.
+    "fl-services": ("fl-services/nvflare/Makefile", "fl-services/flower/Makefile"),
+    "fl-services/flower": ("fl-services/flower/Makefile",),
     # test_trust_makefile_hub.py parses both Makefiles, which include the deploy/*.mk fragments.
     "trust": ("trust/Makefile", "deploy/instance.mk", "deploy/portable.mk"),
     "trust/xnat": ("trust/xnat/Makefile", "trust/xnat/.env"),

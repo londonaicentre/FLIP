@@ -21,11 +21,9 @@ It cannot be used here, because `--wait` is all-or-nothing: Helm 3 offers no per
 exclusion, and ONE unschedulable pod fails the whole upgrade. Verified against a live cluster —
 a single Pending pod alongside otherwise healthy workloads gives `UPGRADE FAILED: context
 deadline exceeded`, exit 1, and leaves the release in `failed` state. Two supported trust
-configurations sit permanently in that state by design:
+configurations can sit in that state by design:
 
-* `flClient` on a scale-from-zero GPU node pool (values-aks.yaml) — Pending is its resting state
-  between FL jobs, and that is the configuration the chart recommends to avoid billing a GPU
-  that no job is using;
+* `flClient` waiting for a GPU no node has free — Pending until one is;
 * `flClient` deployed before its kit is staged — Pending until the operator stages the kit.
 
 Under `--wait` both turn every scheduled run of the auto-upgrade agent (FLIP#1640) into a failed
@@ -42,6 +40,12 @@ forgetting to exclude an optional one is a loud, correctable timeout.
 
 Excluded workloads are still REPORTED when they are not ready, so "not waited on" never means
 "not looked at". That report never changes the exit code.
+
+The fl-client is the one exception to that (FLIP#1984). Its two resting states are both "never
+came up", so an fl-client that WAS ready before the upgrade is waited on like a core workload:
+otherwise an upgrade that leaves it unable to start (a kit path that moved, a bad image) exits 0
+with the trust off the FL network. `--report-ready`, run just before `helm upgrade`, prints the
+ones that are ready, and the wait after the upgrade takes them as `--ready-before`.
 """
 
 from __future__ import annotations
@@ -56,9 +60,9 @@ import time
 # Workloads deliberately NOT waited on. Each entry needs a reason that says why being unready is a
 # legitimate steady state for a supported configuration, rather than merely inconvenient.
 OPTIONAL_COMPONENTS = {
-    # Pending is the resting state on a scale-from-zero GPU node pool, and before the kit is
+    # Pending while no node has a free GPU, and before the kit is
     # staged. Neither stops the trust serving data or imaging.
-    "fl-client": "idle or awaiting its kit / GPU node",
+    "fl-client": "awaiting its kit or a free GPU",
     # Clinician-facing annotation UI; optional, and off by default (monailabel.enabled: false).
     "monailabel": "optional annotation service",
     # Observability. The trust serves fine while its dashboards are down, and failing an upgrade
@@ -67,6 +71,11 @@ OPTIONAL_COMPONENTS = {
     "loki": "observability",
     "alloy": "observability",
 }
+
+# Optional components that are waited on after all when they were ready before the upgrade: the
+# trust is off the FL network while its fl-client is down, and both of its resting states above
+# are a client that was never ready, so "was ready, now is not" is the upgrade's doing.
+WAITED_WHEN_READY_BEFORE = {"fl-client"}
 
 WORKLOAD_KINDS = ("deployment", "statefulset", "daemonset")
 
@@ -115,11 +124,18 @@ def discover(kubectl: list[str], namespace: str, release: str, timeout: int = 12
 
 def partition(
     workloads: list[tuple[str, str, str]],
+    ready_before: frozenset[str] = frozenset(),
 ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
-    """Split into (waited, skipped). Anything not explicitly optional is waited on."""
-    waited = [w for w in workloads if w[2] not in OPTIONAL_COMPONENTS]
-    skipped = [w for w in workloads if w[2] in OPTIONAL_COMPONENTS]
-    return waited, skipped
+    """Split into (waited, skipped). Anything not explicitly optional is waited on, and so is an
+    fl-client named (as `kind/name`) in `ready_before`."""
+
+    def waits(w: tuple[str, str, str]) -> bool:
+        kind, name, component = w
+        if component in WAITED_WHEN_READY_BEFORE and f"{kind}/{name}" in ready_before:
+            return True
+        return component not in OPTIONAL_COMPONENTS
+
+    return [w for w in workloads if waits(w)], [w for w in workloads if not waits(w)]
 
 
 def rollout_status(kubectl: list[str], namespace: str, kind: str, name: str, seconds: int) -> tuple[bool, str]:
@@ -155,6 +171,25 @@ def is_ready(kubectl: list[str], namespace: str, kind: str, name: str) -> bool:
     return bool(desired == 0 or ready >= desired)
 
 
+def report_ready(kubectl: list[str], namespace: str, release: str) -> int:
+    """Print, space-separated, each fl-client workload (`kind/name`) that is ready now.
+
+    Nothing is printed on a first install, or when the cluster cannot be read: the upgrade that
+    follows fails on its own then, and no client is shown to have been serving.
+    """
+    try:
+        workloads = discover(kubectl, namespace, release)
+        ready = [
+            f"{kind}/{name}"
+            for kind, name, component in sorted(workloads)
+            if component in WAITED_WHEN_READY_BEFORE and is_ready(kubectl, namespace, kind, name)
+        ]
+    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+        ready = []
+    print(" ".join(ready))
+    return 0
+
+
 def _seconds(timeout: str) -> int:
     """Parse a Helm/kubectl duration ('30m', '600s', '1h') into seconds for the subprocess budget."""
     units = {"s": 1, "m": 60, "h": 3600}
@@ -178,9 +213,20 @@ def main() -> int:
         "--timeout", default="30m", help="one budget shared by every core workload, not a per-workload budget"
     )
     parser.add_argument("--kubectl", default="kubectl", help='kubectl command, e.g. "kubectl --context x"')
+    parser.add_argument(
+        "--report-ready",
+        action="store_true",
+        help="print the fl-client workloads that are ready now (run before the upgrade) and exit",
+    )
+    parser.add_argument(
+        "--ready-before", default="", help="what --report-ready printed before the upgrade: these are waited on too"
+    )
     args = parser.parse_args()
     # The Makefile passes $(KUBECTL), which carries `--context <ctx>` when KUBE_CONTEXT is set.
     kubectl = shlex.split(args.kubectl)
+
+    if args.report_ready:
+        return report_ready(kubectl, args.namespace, args.release)
 
     try:
         workloads = discover(kubectl, args.namespace, args.release)
@@ -194,7 +240,8 @@ def main() -> int:
         print(f"no chart-managed workloads found for release {args.release}", file=sys.stderr)
         return 1
 
-    waited, skipped = partition(workloads)
+    ready_before = frozenset(args.ready_before.split())
+    waited, skipped = partition(workloads, ready_before)
 
     # One deadline across the loop, so HELM_TIMEOUT bounds the whole wait rather than each workload.
     deadline = time.monotonic() + _seconds(args.timeout)
@@ -207,6 +254,8 @@ def main() -> int:
         if ok:
             print(f"  ✓ {kind}/{name}")
         else:
+            if f"{kind}/{name}" in ready_before:
+                detail += " (it was ready before the upgrade)"
             failed.append(f"{kind}/{name}: {detail}")
             print(f"  ✗ {kind}/{name}: {detail}")
 
@@ -221,7 +270,7 @@ def main() -> int:
 
     if failed:
         print(
-            f"\n{len(failed)} core workload(s) did not roll out within {args.timeout}.",
+            f"\n{len(failed)} workload(s) did not roll out within {args.timeout}.",
             file=sys.stderr,
         )
         return 1

@@ -170,7 +170,7 @@ def test_the_operator_is_told_why_a_project_streams(local, imaging_api, capsys):
 
     err = capsys.readouterr().err
     assert f"project {PROJECT}: its job pods stream" in err
-    assert "sync again once its imaging is pulled" in err
+    assert "its jobs mount the archive once it has" in err
 
 
 @pytest.mark.parametrize(

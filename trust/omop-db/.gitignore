@@ -11,7 +11,7 @@
 #
 
 volumes/*/db_data
-# The seed marker written beside db_data by `make seed-omop` (FLIP#1100/#1187).
+# Seed markers releases before FLIP#2111 wrote beside db_data; nothing reads them now.
 volumes/*/.seeded
 
 # Build-pipeline inputs — fetched, never tracked (the vocab bundles contain

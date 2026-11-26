@@ -135,7 +135,7 @@ upload-kits-to-s3:
 	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER)/state $(FL_CA_STATE_S3) --delete $(DRYRUN)
 
 # Standalone FL services for one net (fl-server + fl-api + 2 clients), no hub/trusts.
-# Needs `make fl-provision` first; runs on the local :$(FL_BUILD_TAG) images.
+# Needs `make provision` first; runs on the local :$(FL_BUILD_TAG) images.
 up:
 	NET_NUMBER=$(NET_NUMBER) $(DEV_COMPOSE) up --remove-orphans
 

@@ -134,7 +134,13 @@
                                         </div>
 
                                         <div class="mt-6">
-                                            <ProjectUsers :users="users" @updated-users="handleUsers" />
+                                            <!-- The creator is shown as owner but not sent: the hub adds them. -->
+                                            <ProjectUsers
+                                                :users="users"
+                                                :owner-id="authStore.user?.userId ?? ''"
+                                                :owner-email="authStore.user?.attributes?.email ?? ''"
+                                                @updated-users="handleUsers"
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -175,6 +181,7 @@ import AiTextArea from "@/components/AiTextArea/AiTextArea.vue";
 import { routeChange } from "@/router";
 import { createProject, IProjectCreate } from "@/services/project-service";
 import { IProjectUserLookup } from "@/services/user-service";
+import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
 import { projectSchema } from "@/utils/forms/validation";
 import { Snackbar } from "@/utils/snackbar";
@@ -187,6 +194,7 @@ interface ICreateProjectModalProps {
 
 defineProps<ICreateProjectModalProps>();
 
+const authStore = useAuthStore();
 const modalStore = useModalsStore();
 const schema = projectSchema;
 

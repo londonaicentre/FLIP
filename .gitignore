@@ -529,3 +529,6 @@ trust/deploy/snowflake/images.lock.json
 
 # make release-gates results and logs (FLIP#1608)
 release-gates/
+
+# flwr's home for the Flower simulator (fl-tutorials/flower/sim-tutorial.sh, FLIP#2069)
+/.flwr/

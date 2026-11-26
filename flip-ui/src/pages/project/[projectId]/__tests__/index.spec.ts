@@ -547,7 +547,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
 
     test("user-count pill pluralises: 1 'User' when no extra users, 'Users' when one or more", () => {
         const wrapper = mountProjectPage();
-        // owner counts as +1 → "1 User"
+        // the owner alone → "1 User"
         expect(wrapper.text()).toContain("1 User");
         expect(wrapper.text()).not.toContain("1 Users");
 
@@ -556,6 +556,24 @@ describe("Project page (/project/[id]/index.vue)", () => {
         const wrapper2 = mountProjectPage({ project });
         // owner + 2 = 3 Users
         expect(wrapper2.text()).toContain("3 Users");
+    });
+
+    test("user-count pill counts the owner once when the hub lists them in users", () => {
+        // GET /projects/{id} includes the owner in `users` (FLIP#2066): an owner-only
+        // project read "2 Users" while the old count added 1 on top.
+        const ownerOnly = baseProject();
+        ownerOnly.users = [{
+            id: "owner-1",
+            email: "owner@example.com",
+            isDisabled: false
+        }];
+        expect(mountProjectPage({ project: ownerOnly }).find("[data-test=user-count-pill]").attributes("title"))
+            .toBe("1 User");
+
+        const ownerAndTwo = baseProject();
+        ownerAndTwo.users = [...ownerOnly.users, ...twoUsers()];
+        expect(mountProjectPage({ project: ownerAndTwo }).find("[data-test=user-count-pill]").attributes("title"))
+            .toBe("3 Users");
     });
 
     describe("header actions align with the title and collapse to icons on narrow screens", () => {

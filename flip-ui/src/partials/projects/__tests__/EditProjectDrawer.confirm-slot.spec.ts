@@ -64,6 +64,7 @@ describe("EditProjectDrawer delete-confirmation slot", () => {
         updating: false,
         users: [],
         ownerId: "owner-1",
+        ownerEmail: "owner@example.com",
         dicomToNifti: true,
         hasImaging: true
     };
@@ -154,6 +155,7 @@ describe("EditProjectDrawer read-only creation-time fields", () => {
         updating: false,
         users: [],
         ownerId: "owner-1",
+        ownerEmail: "owner@example.com",
         dicomToNifti: true,
         hasImaging: true
     };
@@ -232,6 +234,7 @@ describe("EditProjectDrawer editing and deleting", () => {
         updating: false,
         users: [alice],
         ownerId: "owner-1",
+        ownerEmail: "owner@example.com",
         dicomToNifti: true,
         hasImaging: true
     };

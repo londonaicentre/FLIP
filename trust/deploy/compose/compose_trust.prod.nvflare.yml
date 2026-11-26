@@ -104,6 +104,9 @@ services:
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
       # Set only when the kit names a governance document; the loop points it at each kit's extract.
       - ACCESS_POLICY_FILE=${ACCESS_POLICY_FILE:+/app/local/governance.fl_privacy.toml}
+      # The FL server port this trust dials, written into the kit's startup/fed_client.json (FLIP#2051):
+      # the site's own FL_EDGE_PORT_OVERRIDE, else the hub's FL_EDGE_PORT; unset keeps the kit's port.
+      - FL_EDGE_PORT=${FL_EDGE_PORT_OVERRIDE:-${FL_EDGE_PORT:-}}
     volumes:
       # Each client's kit, which that client mounts read-only at /app/local and /app/startup.
       - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/local:/kit/net-1/local

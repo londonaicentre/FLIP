@@ -74,7 +74,7 @@ def _run(
     *,
     backend: str = "nvflare",
     failing_port: str = "",
-    write_markers: bool = True,
+    seeded: bool = True,
     fl_states: tuple[str, str] = ("true false 0", "true false 0"),
     store_ok: bool = True,
     wc_reply: str = "",
@@ -93,14 +93,10 @@ def _run(
     bin_dir, out, data = tmp / "bin", tmp / "out", tmp / "data"
     bin_dir.mkdir()
     calls = tmp / "calls.log"
-    marker_body = "projects=cxr_project\\nsource_trust=1\\nversion=x\\n"
-    markers = (
-        f'mkdir -p "{data}/omop"; printf "{marker_body}" > "{data}/omop/.seeded"; '
-        f'printf "{marker_body}" > "{data}/.orthanc-storage.seeded"'
-        if write_markers
-        else ":"
-    )
-    _stub(bin_dir, "make", f'echo "make $*" >> "{calls}"; case "$*" in *up-trust*) {markers};; esac; exit 0')
+    # up-trust (stubbed make) seeds the stores; the stubbed docker and curl then answer from that.
+    flag = tmp / "stores-seeded"
+    seed_them = f'touch "{flag}"' if seeded else ":"
+    _stub(bin_dir, "make", f'echo "make $*" >> "{calls}"; case "$*" in *up-trust*) {seed_them};; esac; exit 0')
     for tool in ("chown", "chgrp"):
         _stub(bin_dir, tool, f'echo "{tool} $*" >> "{calls}"; exit 0')
     # abort_in_sleep: the first sleep (the FL settle wait, with the stack up) kills the runner.
@@ -116,6 +112,7 @@ def _run(
         '  *"%{http_code}"*) echo 401;;\n'
         f"  *\"/instances?\"*) echo '{instances}';;\n"
         f"  *\"/modalities/XNAT/store\"*) echo '{store_reply}';;\n"
+        f'  *"/statistics"*) n=0; [ -f "{flag}" ] && n=3; echo "{{ \\"CountStudies\\" : $n }}";;\n'
         '  *) echo \'{"status":"ok"}\';;\n'
         "esac\nexit 0",
     )
@@ -138,11 +135,13 @@ def _run(
         bin_dir,
         "docker",
         f'echo "docker $*" >> "{calls}"\n'
-        f'if [ "$1" = ps ]; then {"echo trust1_xnat-web.1; " if xnat_up else ""}echo trust1-fl-client-net-1-1; fi\n'
+        f'if [ "$1" = ps ]; then {"echo trust1_xnat-web.1; " if xnat_up else ""}echo trust1-omop-db-1; '
+        "echo trust1-fl-client-net-1-1; fi\n"
         f'if [ "$1" = inspect ]; then head -1 "{states}"; '
         f'tail -n +2 "{states}" > "{states}.n"; mv "{states}.n" "{states}"; fi\n'
         'if [ "$1" = logs ]; then echo "fl-client log line"; fi\n'
         'if [ "$1" = exec ]; then case "$*" in\n'
+        f'  *psql*) [ -f "{flag}" ] && echo 1;;\n'
         f"{wc_arm}"
         '  *tail*) echo "INFO stored instance";;\n'
         "esac; fi\nexit 0",
@@ -283,7 +282,7 @@ def main() -> int:
     _assert("down-trust" not in calls.read_text(), "so there is nothing to tear down")
 
     print("sample_data_off_skips_what_needs_it")
-    result, report, calls, tmp = _run("noseed", seed="false", write_markers=False, instances="[]")
+    result, report, calls, tmp = _run("noseed", seed="false", seeded=False, instances="[]")
     _assert(result.returncode == 0 and report is not None and report["ok"] is True, "passes", result.stdout)
     _assert("TRUST_DATA_SEED=false" in (tmp / ".env.SELFTEST.prod").read_text(), "the kit turns the seed off")
     for name in ("omop seeded", "orthanc seeded", "xnat c-store"):
@@ -300,22 +299,22 @@ def main() -> int:
 
     print("sample_data_off_still_stores_an_instance_orthanc_holds")
     # Orthanc's answer decides, not the setting: a broken DICOM import must not hide behind a skip.
-    result, report, calls, _ = _run("noseed-held", seed="false", write_markers=False)
+    result, report, calls, _ = _run("noseed-held", seed="false", seeded=False)
     cstore = _check(report, "xnat c-store")
     stored = cstore.get("ok") is True and "1 instance received" in cstore.get("detail", "")
     _assert(stored, "the store runs", str(cstore))
     _assert("/modalities/XNAT/store" in calls.read_text(), "and is attempted")
-    _assert(_check(report, "omop seeded").get("detail", "").startswith("skipped:"), "the seed markers stay skipped")
+    _assert(_check(report, "omop seeded").get("detail", "").startswith("skipped:"), "the seeded checks stay skipped")
 
     print("sample_data_off_in_the_template_reads_as_make_reads_it")
-    # up-trust (make) reads both spellings as false and seeds nothing, so no seed marker is the expected state.
+    # up-trust (make) reads both spellings as false and seeds nothing, so empty stores are the expected state.
     for line in ('TRUST_DATA_SEED="false"', "TRUST_DATA_SEED=false  # real trust"):
-        result, report, _, _ = _run("spelt", write_markers=False, instances="[]", template_line=line)
-        marker = _check(report, "omop seeded").get("detail", "")
-        _assert(result.returncode == 0 and marker.startswith("skipped:"), f"{line!r}: markers skipped", marker)
+        result, report, _, _ = _run("spelt", seeded=False, instances="[]", template_line=line)
+        detail = _check(report, "omop seeded").get("detail", "")
+        _assert(result.returncode == 0 and detail.startswith("skipped:"), f"{line!r}: seeded checks skipped", detail)
 
     print("sample_data_off_still_needs_xnat_running")
-    result, report, _, _ = _run("noseed-noxnat", seed="false", write_markers=False, xnat_up=False)
+    result, report, _, _ = _run("noseed-noxnat", seed="false", seeded=False, xnat_up=False)
     _assert(result.returncode != 0 and _check(report, "xnat c-store").get("ok") is False, "no xnat-web is a failure")
 
     print("health_failure_fails_run")
@@ -324,8 +323,8 @@ def main() -> int:
     _assert(report is not None and report["ok"] is False, "report ok=false")
     _assert(_check(report, "data-access-api health").get("ok") is False, "names the failing service")
 
-    print("missing_seed_marker_fails_run")
-    result, report, _, _ = _run("seed", write_markers=False)
+    print("empty_stores_fail_run")
+    result, report, _, _ = _run("seed", seeded=False)
     _assert(result.returncode != 0 and _check(report, "omop seeded").get("ok") is False, "unseeded OMOP is a failure")
 
     print("stopped_fl_client_fails_run")

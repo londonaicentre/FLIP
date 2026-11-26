@@ -49,8 +49,8 @@ make sync-trust-kit KIT=<CODE> HUB=<env>
 # Cluster side (trust operator)
 python3 trust/deploy/helm/scripts/generate_values.py \
   --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm
-make -C trust/deploy/helm stage-kit KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
-make -C trust/deploy/helm stage-vocab VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
+make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 make -C trust/deploy/helm status && make -C trust/deploy/helm smoke-cstore
 ```
@@ -97,8 +97,9 @@ images that exist.
   (`trust-release-flip-trust-secrets`) over kubectl's TLS channel — never to disk — and writes the
   secret-free override `k8s-trust-<CODE>.yaml` (hub URL, FL backend, AWS region, `flClient.kitHostPath`
   from the kit's `FL_KIT_DIR`). It stamps a newly created Secret with Helm ownership metadata so the
-  first install can adopt it, and regenerates the FL-server egress port (and, for Flower,
-  `flClient.flower.superlink`) on every run so upgrades never lose them. `sync-kit-override` writes only
+  first install can adopt it, and regenerates the FL-server egress port (and `flClient.nvflare.serverPort` or,
+  for Flower, `flClient.flower.superlink`) on every run so upgrades never lose them. The port is the kit's
+  `FL_EDGE_PORT_OVERRIDE`, else `FL_EDGE_PORT`, else `FL_SERVER_PORT`. `sync-kit-override` writes only
   the override; `patch-kit-secrets` only patches the Secret and restarts the three API deployments.
 - **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy-release` and `xnat-init` with that
   override, then `patch-kit-secrets` — even when a step failed, so trust-api never polls with a stale key
@@ -238,9 +239,10 @@ from `dicom.log` and the container log alike. See
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `false` | Whether the chart creates the namespace (with the `podSecurity.*` labels). `make deploy` creates it with kubectl instead, without those labels |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20261019` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
+| `trustData.version` | `20261125` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
-| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
+| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc — each only while it is empty (no imaging row, no study; FLIP#2111), so an upgrade of a seeded trust loads nothing. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
+| `trustData.seed.reseed` | `false` | Seed a store that already holds data, Orthanc clearing the listed projects first. Leave it off: `make reseed KIT=<CODE>` sets it for one run of the seed Job, how a seeded trust moves to a new `trustData.version` |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
 | `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
@@ -546,10 +548,11 @@ loaded** (`helm install` prints a warning).
    export the vocabularies from [OHDSI Athena](https://athena.ohdsi.org/) (plus
    [NHS TRUD](https://isd.digital.nhs.uk/) for the UK ones) and unzip the export into a
    folder — `trust/omop-db/README.md`, "The core vocabulary bundle".
-2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
+2. **Stage it onto the node** at `omop-vocab/` under the kit's `FLIP_DATA_ROOT`, else
+   `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
 
    ```sh
-   make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
+   make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
    ```
 
    On kind it copies with `docker cp`, on any other node through a short-lived pod (as `stage-kit`).
@@ -557,9 +560,9 @@ loaded** (`helm install` prints a warning).
    guess. For the kit that is the FL client's node (imaging-api's unless `flClient.affinity` says
    otherwise). `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
    bundle behind.
-3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
+3. **Point the chart at it**: `OMOP_VOCAB_DIR=<the path stage-vocab printed>` in the kit file
    (`sync-kit` writes `omopDb.vocabLoad.hostPath` from it), or
-   `--set omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab`, then deploy as usual.
+   `--set omopDb.vocabLoad.hostPath=<that path>`, then deploy as usual.
 
 `hostPath` resolves on whichever node runs the Job: with more than one node, pin the Job to the
 node holding the folder with `omopDb.vocabLoad.nodeSelector` (e.g. `kubernetes.io/hostname: <node>`).
@@ -729,35 +732,18 @@ client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's laun
 pool. Each job runs in the fl-client image.
 
 Each FLIP project is an NVFLARE study (FLIP#1678), and NVFLARE takes a study's job image and pod template
-from the site's `local/study_runtime.yaml`, which the site's operator maintains and its launcher re-reads at
-every launch. The fl-client only reads it: the file is a ConfigMap (`<release>-fl-studies-<net>`) that the
-chart mounts and never writes, so a `helm upgrade` leaves it alone. Fill it, and refresh it, with:
+from its entry. The fl-client's launcher (`flip.nvflare.project_launcher`) builds a project's entry when the
+project's job starts: the template above, the kit's job image and, with `images: project`, a read-only mount of the
+project's own folder, or with `images: archive` of its directory of XNAT's archive once XNAT has archived one of its
+sessions (until then its jobs stream). Nothing is synced after an approval, an upgrade or a change of
+`jobPods.images`: every job gets the entry its project needs at that moment. The trust keeps its own gate: the
+entry, with its mount, is built only for a project whose XNAT project imaging-api created when this trust approved
+it. Any other project's job, and any job while imaging-api cannot answer, mounts nothing and streams, through
+download routes that serve only the approved cohort. The template itself mounts no images,
+so a job from a hub that predates studies, which lands in the default study, streams its studies.
 
-```bash
-make sync-project-studies                       # every project whose approved cohort this trust holds
-make sync-project-studies PROJECTS="<id> ..."   # or exactly these
-```
-
-It builds one entry per project from the template above and replaces the ConfigMap; the client picks the
-change up within a minute or so, with no restart. When it finds no approved project (data-access-api's snapshot
-folder empty or not mounted) it stops and replaces nothing, since an empty file would stop every project's jobs. Run it after the first deploy, after each project is
-approved at this trust, after an upgrade (the entries carry the job image and the pod template), after
-changing `jobPods.images`, and, with `images: archive`, after a project's first imaging pull (until XNAT has
-archived one of its sessions there is no directory to mount, so its entry streams; the sync prints a line for
-each project that streams, and why): the file outlives a redeploy, so until it is synced again every project keeps
-the entries of the previous mode. Until
-a project has its entry NVFLARE has no job image for its study and does not start its jobs. The template
-itself mounts no images, so a job from a hub that predates studies, which lands in the default study,
-streams its studies.
-
-**Leaving `images: archive`** (for `project` or `stream`) takes three steps, in this order, because the
-entries already synced keep mounting XNAT's archive until the next sync, and the chart checks
-`COHORT_RECONCILE_MINUTES` only while the mode is still `archive`:
-
-1. Upgrade with the new `jobPods.images`, leaving `imagingApi.env.COHORT_RECONCILE_MINUTES` as it is.
-2. Run `make sync-project-studies`. Until it has run, the fl-client logs an error at every start naming the
-   projects whose entries still mount the archive (`kubectl logs <fl-client pod> -c fl-client-init`).
-3. Only then, if you mean to, set `COHORT_RECONCILE_MINUTES` to 0 in a later upgrade.
+`make sync-project-studies` still writes the operator's study file (the ConfigMap `<release>-fl-studies-<net>`,
+which the chart mounts but never creates), but a project's job does not use it.
 
 Prerequisites and trade-offs:
 
@@ -1392,7 +1378,7 @@ page is [Trust node on Kubernetes](../../../docs/source/troubleshooting/trust-no
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Check the fl-client container requests `nvidia.com/gpu` (`flClient.gpu.allocation: devicePlugin`) and the node lists it in its allocatable, or, with `allocation: runtime`, that `NVIDIA_VISIBLE_DEVICES=0` is set and the node's default runtime is `nvidia`. `CUDA_VISIBLE_DEVICES=0` is set in both modes by `flClient.gpu.enabled: true`.
 5. **Jobs never start ("waiting for resources")**: the FL server logs `sites without the requested resources: {'<slot>': {'num_of_gpus': 1}}`. The trust offers fewer GPUs than the job asks for: `grep num_of_gpus` in the client's `local/resources.json` shows 0 while `flClient.gpu.enabled` is false. Enable the GPU, or use job pods (`flClient.nvflare.jobPods`) on a GPU pool.
-6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable endpoint and root certificates are in the kit.
 7. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic
@@ -1422,7 +1408,8 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 
 **Mock-data seed** (`trust-seed`, FLIP#1187):
 
-- A Helm `post-install,post-upgrade` hook, deleted on success and kept on failure:
+- A Helm `post-install,post-upgrade` hook that seeds only an empty store, deleted on success and kept on
+  failure (`make reseed` runs the same Job once with `trustData.seed.reseed=true`, after a version bump):
   `kubectl logs -n <ns> job/<release>-flip-trust-trust-seed` after a failed release. It fetches the canonical tables (and, with `trustData.seed.orthanc`, the DICOM sets) from
   Hugging Face at `trustData.version`, installs the loaders from FLIP at `trustData.seed.sourceRef`,
   and loads this trust's `source_trust` slice. No AWS credentials are involved.

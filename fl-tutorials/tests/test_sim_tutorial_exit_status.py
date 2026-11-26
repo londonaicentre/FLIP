@@ -315,6 +315,22 @@ def test_the_library_flag_only_works_when_sourced():
     assert "for sourcing" in result.stderr
 
 
+def test_each_checkout_keeps_its_own_flwr_home():
+    """flwr keeps the local SuperLink's database under FLWR_HOME; shared, another checkout's SuperLink on another
+    port runs this checkout's job with its own app (FLIP#2069). An FLWR_HOME already set does not leak through."""
+    result = subprocess.run(
+        ["bash", "-c", f'SIM_TUTORIAL_LIB=1; source {SIM_TUTORIAL}; printf %s "$FLWR_HOME"'],
+        env={**os.environ, "FLWR_HOME": str(Path.home() / ".flwr")},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    repo_root = FLOWER.parents[1]
+    assert Path(result.stdout).resolve() == (repo_root / ".flwr").resolve()
+    ignored = subprocess.run(["git", "-C", str(repo_root), "check-ignore", "-q", ".flwr/local-superlink/state.db"])
+    assert ignored.returncode == 0, "the checkout's flwr home must stay out of git"
+
+
 def test_every_flower_tutorial_has_a_simulator_data_mapping():
     """A tutorial the case statement does not name fails with `No data mapping`."""
     text = SIM_TUTORIAL.read_text()
