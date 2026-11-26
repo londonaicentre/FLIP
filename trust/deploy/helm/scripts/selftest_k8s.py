@@ -13,14 +13,15 @@
 
 The Kubernetes form of the node checks every trust shape runs (trust/deploy/scripts/node_checks.py, whose
 `ROWS` lists them): services ready, the FL kit, the three APIs, OMOP and Orthanc, a real C-STORE into XNAT
-(smoke-cstore.sh), a dcm2niix conversion, the FL client, the hub heartbeat, the two egress rows, and drift. A row that needs sample data the
-release does not load is skipped, saying why. Without `--hub` it needs no hub: the heartbeat row is skipped, and an
-unreachable hub or FL server is not a failure. It runs from the operator's machine through kubectl, as `status` and
-`smoke-cstore` do, and writes the report every trust check writes.
+(smoke-cstore.sh), a dcm2niix conversion, the FL client, the hub heartbeat, the two egress rows, and drift. A
+row that needs sample data the release does not load is skipped, saying why. Without `--hub` it needs no hub:
+the heartbeat row is skipped, and an unreachable hub or FL server is not a failure. It runs from the operator's
+machine through kubectl, as `status` and `smoke-cstore` do, and writes the report every trust check writes.
 
 The checks run in pods the release already has, so the self-test adds no RBAC and no NetworkPolicy exception to
-the trust. Drift alone is read from outside, with the operator's own helm and kubectl (`kubectl diff`). Unless Orthanc is empty it sends one study to XNAT, which stays in the prearchive, and the conversion
-check starts one dcm2niix Job, the same way a cohort pull does, in a throwaway XNAT project it deletes afterwards.
+the trust. Drift alone is read from outside, with the operator's own helm and kubectl (`kubectl diff`). Unless
+Orthanc is empty it sends one study to XNAT, which stays in the prearchive, and the conversion check starts one
+dcm2niix Job, the same way a cohort pull does, in a throwaway XNAT project it deletes afterwards.
 """
 
 from __future__ import annotations
