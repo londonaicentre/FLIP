@@ -205,3 +205,31 @@ def test_the_shape_check_is_scoped_to_stage_kit():
     env = {k: v for k, v in os.environ.items() if k not in ("FL_BACKEND", "KIT_UID", "KIT_SRC")}
     result = subprocess.run(["make", "-n", "help"], cwd=CHART_DIR, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def _kit_file(tmp_path, *lines):
+    kit_file = tmp_path / ".env.ABC.prod"
+    kit_file.write_text("\n".join(("FL_BACKEND=nvflare", *lines)) + "\n")
+    return kit_file
+
+
+def test_the_kit_goes_under_the_kits_data_root(nvflare_kit, tmp_path):
+    """A kit with FLIP_DATA_ROOT (FLIP#2113) stages to fl-kit/ under it, where a deploy with that KIT mounts."""
+    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod/")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
+    assert result.returncode == 0, result.stderr
+    assert '--dest "/data/flip/ABC-prod/fl-kit"' in result.stdout
+
+
+def test_kit_dest_beats_the_data_root(nvflare_kit, tmp_path):
+    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=/data/flip/ABC-prod")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}", "KIT_DEST=/srv/kit")
+    assert result.returncode == 0, result.stderr
+    assert '--dest "/srv/kit"' in result.stdout
+
+
+def test_a_relative_data_root_is_refused(nvflare_kit, tmp_path):
+    kit_file = _kit_file(tmp_path, "FLIP_DATA_ROOT=data/flip")
+    result = make_n_stage_kit(nvflare_kit, "KIT=ABC", f"KIT_FILE={kit_file}")
+    assert result.returncode != 0
+    assert "FLIP_DATA_ROOT must be an absolute path" in result.stderr

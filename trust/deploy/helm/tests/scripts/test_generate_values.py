@@ -153,3 +153,10 @@ def test_a_kit_without_the_initial_password_leaves_its_key_out():
 
     assert "xnat-admin-initial-password" not in secrets
     assert secrets["xnat-admin-password"] == "own"  # pragma: allowlist secret
+
+
+def test_kit_host_path_falls_back_under_the_data_root():
+    """Without FL_KIT_DIR, a kit with FLIP_DATA_ROOT (FLIP#2113) renders fl-kit/ under it, as KIT_DEST defaults."""
+    kit = {k: v for k, v in _KIT.items() if k != "FL_KIT_DIR"}
+    assert kit_host_path({**kit, "FLIP_DATA_ROOT": "/data/flip/ABC-prod/"}) == "/data/flip/ABC-prod/fl-kit"
+    assert kit_host_path({**_KIT, "FLIP_DATA_ROOT": "/data/flip/ABC-prod"}) == "/srv/kits/Trust_K8s"
