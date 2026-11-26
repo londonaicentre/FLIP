@@ -10,16 +10,39 @@
 # limitations under the License.
 
 NAMESPACE ?= flip-trust
+CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
+# REPO_ROOT is where trust/deploy/scripts/site_upgrade.py and the shared make fragments live.
+REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
+# Kit-file env token (ENV) from HUB, derived once for every Makefile that reads HUB.
+include $(REPO_ROOT)/deploy/env_mode.mk
+# The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or an old
+# name resolved by env_mode.mk's kit_file), handed to every script that reads it.
+ifeq ($(origin KIT_FILE),undefined)
+KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
+endif
+$(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
+# The kit's FLIP_DATA_ROOT (FLIP#2113), read here because KIT_DEST and VOCAB_DEST default under it.
+# The chart's stores are PVCs, placed by the StorageClass (on k3s, under its --data-dir); the root
+# only holds the two folders staged straight onto the node.
+# It is the kit's, never the shell's: an exported root from another trust's kit must not leak in.
+ifneq ($(origin FLIP_DATA_ROOT),command line)
+ifneq ($(and $(KIT),$(filter stage-kit stage-vocab,$(MAKECMDGOALS)),$(if $(wildcard $(KIT_FILE)),,missing)),)
+$(error ❌  KIT=$(KIT) names no kit file ($(KIT_FILE)): pass HUB=<stag|prod> for a hub kit)
+endif
+FLIP_DATA_ROOT := $(if $(KIT),$(shell sed -n 's/^FLIP_DATA_ROOT=\([^$(_HASH)]*\).*/\1/p' '$(KIT_FILE)' 2>/dev/null | tail -1))
+endif
+include $(REPO_ROOT)/deploy/data_root.mk
 
 # Where the FL participant kit lives ON THE NODE, and the uid that must own it.
 # KIT_DEST is what flClient.kitHostPath is set to, so it must match what the chart
-# mounts. `make sync-kit` renders kitHostPath from the kit file's FL_KIT_DIR, which
-# is /opt/flip/fl-kit in every shipped kit (trust/.env.example) and the path the
-# Ansible EC2/on-prem plays stage to — so that is the default here too. Overriding
-# it means also passing KIT_DEST=<same path> to the FIRST deploy, or the pod stays
-# Pending on a `hostPath type check failed` event naming the mounted path. Later
-# deploys and upgrades keep the path the release mounts (KEEP_KIT_PATH below).
-KIT_DEST ?= /opt/flip/fl-kit
+# mounts: fl-kit/ under the kit's FLIP_DATA_ROOT, else /opt/flip/fl-kit, the FL_KIT_DIR
+# of every shipped kit (trust/.env.example) and the path the Ansible EC2/on-prem plays
+# stage to. stage-kit and the deploys find the root only when they are given KIT.
+# Overriding it means also passing KIT_DEST=<same path> to the FIRST deploy, or the pod stays
+# Pending on a `hostPath type check failed` event naming the mounted path. Later deploys
+# and upgrades keep the path the release mounts (KEEP_KIT_PATH below), and stage-kit refuses
+# another, so setting a root on a deployed trust moves nothing until KIT_DEST is passed.
+KIT_DEST ?= $(call data_root_or,fl-kit,/opt/flip/fl-kit)
 # KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
 # the FLARE image as 1000. Which backend is read from the kit ITSELF — a FLARE
 # startup kit carries startup/ (with local/ and transfer/), a Flower kit carries
@@ -49,17 +72,6 @@ endif
 ifeq ($(wildcard $(KIT_SRC)/.),)
 $(error ❌  KIT_SRC $(KIT_SRC) is not a directory)
 endif
-# stage-kit empties KIT_DEST before copying (see the recipe), so refuse the two values
-# where that would reach beyond the kit directory. An empty KIT_DEST would make the wipe
-# `find  -mindepth 1 -delete`, which walks the working directory, and `/` would walk the
-# node's root filesystem. Both are only reachable by an explicit override, but the wipe is
-# the one step here that destroys rather than writes, so it gets a parse-time guard.
-ifeq ($(strip $(KIT_DEST)),)
-$(error ❌  KIT_DEST must not be empty — stage-kit clears it before copying)
-endif
-ifeq ($(strip $(KIT_DEST)),/)
-$(error ❌  KIT_DEST must not be / — stage-kit clears it before copying)
-endif
 ifneq ($(FL_BACKEND),)
 ifeq ($(filter nvflare flower,$(FL_BACKEND)),)
 $(error ❌  FL_BACKEND=$(FL_BACKEND) is not a backend — nvflare or flower)
@@ -72,9 +84,10 @@ endif
 endif
 KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
 # The OMOP core vocabulary (FLIP#923): VOCAB_DIR is a folder of Athena CSVs (CONCEPT.csv, ...) and
-# VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR).
+# VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR):
+# omop-vocab/ under the kit's FLIP_DATA_ROOT, else /opt/flip/omop-vocab.
 # stage-vocab empties VOCAB_DEST first, as stage-kit does KIT_DEST and with the same guards.
-VOCAB_DEST ?= /opt/flip/omop-vocab
+VOCAB_DEST ?= $(call data_root_or,omop-vocab,/opt/flip/omop-vocab)
 VOCAB_BUNDLE ?= vocab_aicentre_core_20240916
 ifneq ($(filter stage-vocab,$(MAKECMDGOALS)),)
 ifeq ($(strip $(VOCAB_DEST)),)
@@ -98,21 +111,9 @@ KUBECTL := kubectl$(if $(KUBE_CONTEXT), --context $(KUBE_CONTEXT))
 HELM := $(HELM_BIN)$(if $(KUBE_CONTEXT), --kube-context $(KUBE_CONTEXT))
 KUBE_CONTEXT_ARG := $(if $(KUBE_CONTEXT),--kube-context $(KUBE_CONTEXT))
 RELEASE_NAME ?= trust-release
-CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
-
-# REPO_ROOT is where trust/deploy/scripts/site_upgrade.py and the shared make fragments live.
-REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
-# Kit-file env token (ENV) from HUB, derived once for every Makefile that reads HUB.
-include $(REPO_ROOT)/deploy/env_mode.mk
 SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
-# The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or an old
-# name resolved by env_mode.mk's kit_file), handed to every script that reads it.
-ifeq ($(origin KIT_FILE),undefined)
-KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
-endif
-$(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 
 # One budget governs every wait this Makefile performs on the XNAT init job, because
 # there is only one job and two ways of waiting for it: `deploy` waits on it as a
@@ -178,6 +179,31 @@ ifeq ($(filter command environment override,$(origin KIT_DEST) $(origin FL_CLIEN
 KEEP_KIT_PATH = $$($(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
 	| python3 $(CHART_DIR)/scripts/keep_kit_path.py --default "$(FL_CLIENT_KIT_HOST_PATH)")
 endif
+# A re-stage must reach the path a live release mounts, or the FL client keeps the old credentials
+# with nothing failing (e.g. a FLIP_DATA_ROOT added to its kit). stage-kit empties its target, so it
+# never takes that path from the cluster: when the two differ it stops and the operator names one.
+ifneq ($(and $(filter stage-kit,$(MAKECMDGOALS)),$(KUBE_CONTEXT)),)
+ifeq ($(filter command environment override,$(origin KIT_DEST)),)
+RELEASE_KIT_PATH := $(shell $(HELM) get values $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
+	| python3 $(CHART_DIR)/scripts/keep_kit_path.py --path)
+ifneq ($(if $(RELEASE_KIT_PATH),$(filter-out $(KIT_DEST),$(RELEASE_KIT_PATH))),)
+$(error ❌  release $(RELEASE_NAME) mounts its kit at $(RELEASE_KIT_PATH), and KIT_DEST defaults to $(KIT_DEST): pass KIT_DEST=$(RELEASE_KIT_PATH) to re-stage it in place, or KIT_DEST=$(KIT_DEST) here and at the next deploy to move it)
+endif
+endif
+endif
+# stage-kit empties KIT_DEST before copying (see the recipe), so refuse the two values
+# where that would reach beyond the kit directory. An empty KIT_DEST would make the wipe
+# `find  -mindepth 1 -delete`, which walks the working directory, and `/` would walk the
+# node's root filesystem. Both are only reachable by an explicit override, but the wipe is
+# the one step here that destroys rather than writes, so it gets a parse-time guard.
+ifneq ($(filter stage-kit,$(MAKECMDGOALS)),)
+ifeq ($(strip $(KIT_DEST)),)
+$(error ❌  KIT_DEST must not be empty — stage-kit clears it before copying)
+endif
+ifeq ($(strip $(KIT_DEST)),/)
+$(error ❌  KIT_DEST must not be / — stage-kit clears it before copying)
+endif
+endif
 
 # The release pin (FLIP#1204): TAG=vX.Y.Z sets global.image.tag, which every FLIP-built
 # image follows (templates/_helpers.tpl flip-trust.imageTag). Last so it wins over the
@@ -228,11 +254,11 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## kit arrives out-of-band (trust/README.md). This copies an already-obtained kit
 	## from KIT_SRC onto the node at the path the chart mounts (flClient.kitHostPath).
 	##
-	##   make stage-kit KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
+	##   make stage-kit KIT=KCH HUB=stag KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
 	##
-	## KIT_DEST defaults to /opt/flip/fl-kit, which is what `make sync-kit` renders as
-	## flClient.kitHostPath (from the kit's FL_KIT_DIR) — pass it only alongside a
-	## matching --set flClient.kitHostPath at deploy time.
+	## KIT_DEST defaults to fl-kit/ under the kit's FLIP_DATA_ROOT (pass KIT=<CODE> so it is
+	## read), else /opt/flip/fl-kit — the path the first deploy with the same KIT mounts.
+	## Pass it only alongside the same KIT_DEST at that deploy.
 	## KIT_SRC contents are the slot's own kit: for FLARE local/ startup/ transfer/,
 	## for Flower certificates/ and keys/ holding THIS slot's credential only. That
 	## shape is also how the owning uid is chosen (KIT_UID above) — no FL_BACKEND

@@ -45,6 +45,7 @@ on:
       - "deploy/fl_backend.mk"
       - "deploy/instance.mk"
       - "deploy/portable.mk"
+      - "deploy/data_root.mk"
       # trust/orthanc/Makefile includes+exports the GSTT kit example at parse time, so a
       # content-only edit can fail this suite, not just an unparseable one. The KCH twin
       # exists but no Makefile reads it.
@@ -90,6 +91,7 @@ jobs:
         deploy/fl_backend.mk
         deploy/instance.mk
         deploy/portable.mk
+        deploy/data_root.mk
         trust/.env.GSTT.development.example
 
   trust-data-tools:

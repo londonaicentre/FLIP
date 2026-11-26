@@ -20,7 +20,8 @@ not mount its kit while the old one was already gone.
 Reads `helm get values <release> -o json` on stdin and prints the `--set` that keeps the release's
 path, or nothing for a first install (no release, so nothing on stdin) or a release without one.
 The Makefile runs this only when the operator passed neither KIT_DEST nor FL_CLIENT_KIT_HOST_PATH,
-so passing either is how a kit is moved.
+so passing either is how a kit is moved. stage-kit runs it with --path, to refuse a re-stage to
+anywhere else than the release mounts (a FLIP_DATA_ROOT added to a live trust's kit, FLIP#2113).
 """
 
 from __future__ import annotations
@@ -44,10 +45,14 @@ def kept_path(values_json: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--default", default="", help="the path the Makefile would set otherwise")
+    parser.add_argument("--path", action="store_true", help="print the path alone, with no note")
     args = parser.parse_args()
 
     path = kept_path(sys.stdin.read())
     if not path:
+        return 0
+    if args.path:
+        print(path)
         return 0
     if path != args.default:
         print(

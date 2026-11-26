@@ -49,8 +49,8 @@ make sync-trust-kit KIT=<CODE> HUB=<env>
 # Cluster side (trust operator)
 python3 trust/deploy/helm/scripts/generate_values.py \
   --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm
-make -C trust/deploy/helm stage-kit KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
-make -C trust/deploy/helm stage-vocab VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
+make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 make -C trust/deploy/helm status && make -C trust/deploy/helm smoke-cstore
 ```
@@ -548,10 +548,11 @@ loaded** (`helm install` prints a warning).
    export the vocabularies from [OHDSI Athena](https://athena.ohdsi.org/) (plus
    [NHS TRUD](https://isd.digital.nhs.uk/) for the UK ones) and unzip the export into a
    folder — `trust/omop-db/README.md`, "The core vocabulary bundle".
-2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
+2. **Stage it onto the node** at `omop-vocab/` under the kit's `FLIP_DATA_ROOT`, else
+   `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
 
    ```sh
-   make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
+   make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
    ```
 
    On kind it copies with `docker cp`, on any other node through a short-lived pod (as `stage-kit`).
@@ -559,9 +560,9 @@ loaded** (`helm install` prints a warning).
    guess. For the kit that is the FL client's node (imaging-api's unless `flClient.affinity` says
    otherwise). `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
    bundle behind.
-3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
+3. **Point the chart at it**: `OMOP_VOCAB_DIR=<the path stage-vocab printed>` in the kit file
    (`sync-kit` writes `omopDb.vocabLoad.hostPath` from it), or
-   `--set omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab`, then deploy as usual.
+   `--set omopDb.vocabLoad.hostPath=<that path>`, then deploy as usual.
 
 `hostPath` resolves on whichever node runs the Job: with more than one node, pin the Job to the
 node holding the folder with `omopDb.vocabLoad.nodeSelector` (e.g. `kubernetes.io/hostname: <node>`).

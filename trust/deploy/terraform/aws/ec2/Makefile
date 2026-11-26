@@ -89,6 +89,9 @@ define require_node_dirs
 	@bad="$(strip $(foreach k,$(NODE_DIR_KEYS),$(if $(filter-out /%,$(call kit_get,$(k))),$(k))))"; [ -z "$$bad" ] || { \
 		echo "❌ $(notdir $(KIT_FILE)) sets relative host paths for a remote node: $$bad."; \
 		echo "   Comment them out (each defaults under /opt/flip) or make them absolute."; exit 1; }
+	@[ -z "$(call kit_get,FLIP_DATA_ROOT)" ] || { \
+		echo "❌ $(notdir $(KIT_FILE)) sets FLIP_DATA_ROOT, which this root does not support: its plays prepare"; \
+		echo "   and fill /opt/flip. Comment it out, or set each store's own key to an absolute path."; exit 1; }
 endef
 
 # $(call confirm_target,<question>): name the account, profile and region, then stop unless the operator types yes.
