@@ -110,10 +110,13 @@ Cluster
   not the ``kubernetes`` Service. k3s and kind listen on 6443, minikube on 8443: find it with
   ``kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`` and set
   ``networkPolicies.apiServer`` (``cidrs`` and ``port``). AKS and EKS listen on 443, which the chart already allows.
-- **RBAC** to create Secrets in the namespace (required) and to create the namespace itself, or have a cluster
-  administrator create it first. The namespace is ``flip-trust`` unless you pass ``NAMESPACE=``. ``stage-kit`` and
+- **RBAC.** Cluster-admin works. The least an account needs is the built-in ``admin`` role in the trust's
+  namespace, the right to write ResourceQuotas there (``admin`` only reads them, and the chart creates one for
+  XNAT's conversion jobs), and the namespace created for it by a cluster administrator. ``make preflight`` names any
+  kind of object the account cannot create before the deploy starts. The namespace is ``flip-trust`` unless you pass
+  ``NAMESPACE=``. Reading StorageClasses is optional (the preflight's default-class check). ``stage-kit`` and
   ``stage-vocab`` outside kind also read the nodes and create and exec into a root pod with a ``hostPath``, which is
-  as good as root on that node (Step 3).
+  as good as root on that node (Step 3). The roles to grant are under :ref:`ts-k8s-namespaced-account`.
 
 .. list-table:: Default volume sizes
    :header-rows: 1

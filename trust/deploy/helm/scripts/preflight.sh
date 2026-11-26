@@ -175,9 +175,12 @@ else
     else
         pass "Active context: ${CTX}"
 
-        if ! kctl cluster-info >/dev/null 2>&1; then
+        # `kubectl version` asks the API server for /version, which every account may read.
+        # `cluster-info` lists Services in kube-system, so an account limited to the trust's
+        # namespace was told a healthy cluster is unreachable (FLIP#1986).
+        if ! kctl version >/dev/null 2>&1; then
             fail "Cluster unreachable — check your kubeconfig, VPN/network access, or cloud credentials"
-            hint "Diagnose with: kubectl cluster-info"
+            hint "Diagnose with: kubectl version"
         else
             # Detect server version (output format changed in kubectl 1.26)
             SRV_VER="$(kctl version 2>/dev/null | grep -i 'server' | extract_semver || true)"
@@ -202,34 +205,50 @@ else
 fi
 
 if [ "$CLUSTER_OK" = "true" ]; then
-    # Namespace creation permission
-    if kctl auth can-i create namespaces >/dev/null 2>&1; then
-        pass "RBAC: can create namespaces"
+    # The namespace: this account creates it, or a cluster administrator already has.
+    if kctl get namespace "$NAMESPACE" >/dev/null 2>&1; then
+        pass "Namespace '${NAMESPACE}' exists"
+    elif kctl auth can-i create namespaces >/dev/null 2>&1; then
+        pass "RBAC: can create namespace '${NAMESPACE}'"
     else
-        warn "RBAC: cannot create namespaces — namespace '${NAMESPACE}' must already exist"
-        hint "Pre-create it: kubectl create namespace ${NAMESPACE}"
+        fail "Namespace '${NAMESPACE}' does not exist and this account cannot create it"
+        hint "Have a cluster administrator run: kubectl create namespace ${NAMESPACE}"
     fi
 
-    # Workload permissions in the target namespace
-    if kctl auth can-i create deployments --namespace "$NAMESPACE" >/dev/null 2>&1; then
-        pass "RBAC: can create deployments in '${NAMESPACE}'"
+    # Every kind the chart renders for this deploy (CHART_KINDS, from the Makefile's own render),
+    # plus the Secret Helm keeps the release in. Helm applies a release kind by kind, so a missing
+    # right stops the deploy part-way: the built-in `admin` role cannot write ResourceQuotas, and
+    # the chart creates one for XNAT's conversion jobs (FLIP#1986).
+    MISSING_KINDS=""
+    for kind in $(printf '%s\n' Secret ${CHART_KINDS:-} | sort -u); do
+        resource="$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')"
+        case "$resource" in
+            *y) resource="${resource%y}ies" ;;
+            *s) resource="${resource}es" ;;
+            *)  resource="${resource}s" ;;
+        esac
+        kctl auth can-i create "$resource" --namespace "$NAMESPACE" >/dev/null 2>&1 \
+            || MISSING_KINDS="${MISSING_KINDS:+$MISSING_KINDS, }${kind}"
+    done
+    if [ -z "${CHART_KINDS:-}" ]; then
+        fail "The chart does not render with these values — run 'make template' to see why"
+    elif [ -z "$MISSING_KINDS" ]; then
+        pass "RBAC: can create every kind the chart renders in '${NAMESPACE}'"
     else
-        warn "RBAC: cannot create deployments in '${NAMESPACE}' — Helm install may fail"
-        hint "Contact your cluster administrator for a role binding in namespace '${NAMESPACE}'"
-    fi
-
-    # Secrets permission — hard requirement; Helm Secret for the release will fail without it
-    if kctl auth can-i create secrets --namespace "$NAMESPACE" >/dev/null 2>&1; then
-        pass "RBAC: can create secrets in '${NAMESPACE}'"
-    else
-        fail "RBAC: cannot create secrets in '${NAMESPACE}' — Helm chart installation will fail"
-        hint "Contact your cluster administrator"
+        fail "RBAC: cannot create ${MISSING_KINDS} in '${NAMESPACE}' — the deploy would stop part-way"
+        hint "Ask your cluster administrator for these rights in namespace '${NAMESPACE}'."
+        hint "The built-in 'admin' role lacks ResourceQuota: see 'Deploying with an account limited to"
+        hint "one namespace' in docs/source/troubleshooting/trust-node-kubernetes.rst"
     fi
 
     # Default StorageClass — PVCs for XNAT, OMOP, Orthanc need one
-    DEFAULT_SC="$(kctl get storageclass 2>/dev/null | awk '/\(default\)/{print $1}' | head -1)"
+    # StorageClasses are cluster-wide, so an account limited to the namespace cannot list them. Under
+    # `set -o pipefail` the refused `get` ended this script here, with no summary (FLIP#1986).
+    DEFAULT_SC="$( (kctl get storageclass 2>/dev/null || true) | awk '/\(default\)/{print $1}' | head -1)"
     if [ -n "$DEFAULT_SC" ]; then
         pass "Default StorageClass: ${DEFAULT_SC}"
+    elif ! kctl auth can-i list storageclasses >/dev/null 2>&1; then
+        warn "This account cannot list StorageClasses — not checked; the chart's PVCs need a default one"
     else
         warn "No default StorageClass found — chart PVCs will remain Pending without one"
         hint "List available classes: kubectl get storageclass"
