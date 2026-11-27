@@ -31,7 +31,7 @@ Two rules apply throughout:
 .. warning::
 
    **Never use the first-install commands to move a live site.** ``make up-onprem-trust``, ``make -C trust
-   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` re-seed the mock data and **wipe
+   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` **wipe
    the XNAT archive**. Use only the upgrade commands below.
 
 .. list-table:: Upgrade command per deployment shape
@@ -52,7 +52,7 @@ Two rules apply throughout:
      - ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``
    * - Central Hub
      - FLIP admin
-     - ``make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
+     - ``make -C deploy/aws deploy-centralhub HUB=prod TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
 
 .. contents::
    :local:
@@ -84,9 +84,8 @@ the release that runs each job in its project's NVFLARE study (FLIP#1678). Such 
 its project's study, and a job-pod site on an older release has no job image for that study, so the job does not
 start there. Every other site is unaffected: a site that runs jobs inside the FL client ignores the study.
 
-After the upgrade, and again whenever a project is approved at the site, such a site runs
-``make -C trust/deploy/helm sync-project-studies``. It gives each approved project its entry in NVFLARE's study
-file, which the site maintains; a project without one has no job image and its jobs do not start there.
+The site builds each project's study entry itself, when the project's job starts, so there is nothing to run after
+the upgrade or after an approval.
 
 Step 2 — Replace the Hub-shared block (refreshed kit only)
 ==========================================================
@@ -460,7 +459,7 @@ Docker context as ``make deploy`` in ``trust/deploy/terraform/aws/ec2``.
    make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
 
 It takes the same options as the on-premises upgrade and never re-seeds data. ``make deploy`` remains the
-first-install command: it re-seeds OMOP and Orthanc and resets the XNAT archive.
+first-install command: it seeds an empty OMOP and Orthanc and resets the XNAT archive.
 
 .. _upgrade-rolling-back:
 
@@ -519,7 +518,7 @@ until it is re-keyed. On the admin workstation:
 
    .. code-block:: shell
 
-      cd deploy/providers/AWS
+      cd deploy/aws
       uv run --no-project --with boto3 python scripts/reconcile_ci_env.py \
           --env prod --compare ../../../.env.prod
 
@@ -534,7 +533,7 @@ until it is re-keyed. On the admin workstation:
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
+      make -C deploy/aws package-onprem-trust-kit KIT=<CODE> HUB=prod
 
 Then mark *Refreshed kit needed: yes* in the release's Site upgrade section, with the keys that changed, so operators
 replace the block before upgrading.
@@ -553,11 +552,11 @@ Upgrading the hub
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z
+   make -C deploy/aws deploy-centralhub HUB=prod TAG=vX.Y.Z
 
 .. seealso::
 
-   :gh:`deploy/providers/AWS/README.md` and *Cutting a release* in :gh:`CONTRIBUTING.md` for the full hub procedure.
+   :gh:`deploy/aws/README.md` and *Cutting a release* in :gh:`CONTRIBUTING.md` for the full hub procedure.
 
 Approved cohorts after an upgrade
 =================================

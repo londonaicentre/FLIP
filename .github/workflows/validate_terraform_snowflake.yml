@@ -1,0 +1,131 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Terraform Validate - Snowflake trust
+
+# Split from validate_terraform.yml so a change to one tree runs only that tree's checks (FLIP#2021).
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      # The three roots (FLIP#1581, epic #1589); each root's guards read its siblings.
+      - "trust/deploy/terraform/snowflake*/**"
+      # All three Makefiles include the HUB table.
+      - "deploy/env_mode.mk"
+      - ".github/workflows/validate_terraform_snowflake.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      # The three roots (FLIP#1581, epic #1589); each root's guards read its siblings.
+      - "trust/deploy/terraform/snowflake*/**"
+      # All three Makefiles include the HUB table.
+      - "deploy/env_mode.mk"
+      - ".github/workflows/validate_terraform_snowflake.yml"
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  terraform-validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root:
+          # The Snowflake trust node's three roots (FLIP#1581, epic #1589). Validated with a
+          # backend-free init, so neither the local backend nor any Snowflake credential is
+          # needed. snowflake-identity is the roles and the deploy user; snowflake-platform is
+          # the break-glass tier (account grants, EAI, account policies, event table, resource
+          # monitor); snowflake is the least-privilege workload tier applied as
+          # FLIP_<CODE>_DEPLOY_USER.
+          - ./trust/deploy/terraform/snowflake-identity
+          - ./trust/deploy/terraform/snowflake-platform
+          - ./trust/deploy/terraform/snowflake
+    defaults:
+      run:
+        working-directory: ${{ matrix.root }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.13"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive -diff
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+  # The Snowflake trust roots' own static gates (FLIP#1581, epic #1589): tflint with the bundled
+  # terraform ruleset (there is no Snowflake plugin), checkov, and the credential-free pytest
+  # guards that pin the invariants no plan can show without an account. For the workload root:
+  # no role, user, integration, account policy, account parameter or account-level grant, no
+  # PUBLIC grant, SSE on every stage, auto-suspend on every compute pool, no secret value in
+  # Terraform. For the platform root: exactly four account privileges to the deploy role and no
+  # others, MFA on the break-glass identity, no credential as a variable, egress off by default.
+  snowflake-trust-root:
+    name: Snowflake ${{ matrix.root }} static checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root:
+          - snowflake-identity
+          - snowflake-platform
+          - snowflake
+    defaults:
+      run:
+        working-directory: trust/deploy/terraform/${{ matrix.root }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          # Keep in sync with TFLINT_VERSION in deploy/aws/scripts/tflint_lint.sh.
+          tflint_version: v0.64.0
+
+      - name: TFLint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --init --config="$PWD/.tflint.hcl"
+          tflint --config="$PWD/.tflint.hcl"
+
+      - name: Install checkov
+        # Keep in sync with CHECKOV_VERSION in deploy/aws/scripts/checkov_lint.sh.
+        run: pip install checkov==3.3.14
+
+      - name: Checkov
+        run: checkov --directory . --framework terraform --quiet --compact
+
+      - name: Static guards
+        run: pip install pytest diagrams && pytest tests/ -v

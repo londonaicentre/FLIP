@@ -58,7 +58,7 @@ The tests do not stand up XNAT, DicomEdit, or Postgres. The anonymization tests
 validate the FLIP-authored ruleset against synthetic studies. The script tests put
 stubs for the external commands they call (`docker-entrypoint.sh`, `psql`, `curl`,
 `aws`) onto `PATH`, the same mock-bin idiom as
-`deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh`. So a regression is caught
+`deploy/aws/scripts/tests/test_add_fl_kits.sh`. So a regression is caught
 in CI without a heavyweight integration environment or an image build.
 
 ## Running

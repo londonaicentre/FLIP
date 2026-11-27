@@ -29,12 +29,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 HUB_COMPOSES = (
-    "deploy/compose.development.yml",
-    "deploy/compose.prod.yml",
-    "deploy/compose.development.nvflare.yml",
-    "deploy/compose.development.flower.yml",
-    "deploy/compose.prod.nvflare.yml",
-    "deploy/compose.prod.flower.yml",
+    "deploy/compose/compose.development.yml",
+    "deploy/compose/compose.prod.yml",
+    "deploy/compose/compose.development.nvflare.yml",
+    "deploy/compose/compose.development.flower.yml",
+    "deploy/compose/compose.prod.nvflare.yml",
+    "deploy/compose/compose.prod.flower.yml",
 )
 TRUST_COMPOSES = (
     "trust/deploy/compose/compose_trust.prod.yml",
@@ -92,7 +92,7 @@ class ComposeBindAddress(unittest.TestCase):
 
     def test_parser_sees_the_ports(self) -> None:
         assert len(published_ports(REPO / "trust/deploy/compose/compose_trust.prod.yml")) >= 7
-        assert len(published_ports(REPO / "deploy/compose.development.yml")) >= 5
+        assert len(published_ports(REPO / "deploy/compose/compose.development.yml")) >= 5
 
 
 if __name__ == "__main__":

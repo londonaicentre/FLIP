@@ -68,7 +68,7 @@ MAKEFILE = XNAT_DIR / "Makefile"
 PORTABLE_MK = XNAT_DIR.parents[1] / "deploy" / "portable.mk"
 DOCKERFILE = XNAT_DIR / "xnat" / "Dockerfile"
 DCM2NIIX_DOCKERFILE = XNAT_DIR / "dcm2niix" / "Dockerfile"
-# The EC2 host play, imported by both the hub's site.yml and the standalone aws-ec2.yml.
+# The EC2 host play, imported by aws-ec2.yml.
 AWS_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "aws-ec2-host.yml"
 LOCAL_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "onprem.yml"
 # Both plays compose this role; it is the one place the XNAT bind-mount dirs are provisioned.

@@ -62,7 +62,7 @@ class Settings(BaseSettings):
 
     # Which identity provider verifies user tokens and holds the user directory
     # (FLIP#919). "cognito" is AWS Cognito; "keycloak" is the Keycloak container
-    # in deploy/compose.development.yml, which needs no AWS account. The value
+    # in deploy/compose/compose.development.yml, which needs no AWS account. The value
     # selects both halves of the auth seam — the claim rules the generic OIDC
     # verifier applies (auth/token_verifier.py) and the IdentityProvider that
     # lists, creates and disables users (auth/identity/) — so a new provider
@@ -475,7 +475,7 @@ class DevSettings(Settings):
     AUTH_BACKEND: Literal["keycloak"] = "keycloak"
 
     # Keycloak defaults that match the `keycloak` service in
-    # deploy/compose.development.yml, so a dev env file needs no KEYCLOAK_*
+    # deploy/compose/compose.development.yml, so a dev env file needs no KEYCLOAK_*
     # lines at all. The admin-client secret is a dev-only placeholder shared
     # with the realm import; it protects nothing outside a laptop and
     # ProdSettings cannot select this backend.
@@ -488,7 +488,7 @@ class DevSettings(Settings):
     KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = SecretStr("flip-dev-admin-secret")  # pragma: allowlist secret
 
     # The dev object store's published host port, matching the `object-store`
-    # service in deploy/compose.development.yml (FLIP#1291): what browser-bound
+    # service in deploy/compose/compose.development.yml (FLIP#1291): what browser-bound
     # presigned URLs are signed for.
     S3_PUBLIC_ENDPOINT_URL: str | None = "http://localhost:9000"
 

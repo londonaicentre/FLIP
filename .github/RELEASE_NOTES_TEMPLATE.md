@@ -15,64 +15,38 @@
 
 ## :sparkles: Highlights
 
-- **A trust inside a TRE** (#1732, #1724). An on-prem trust installs and runs without sudo, behind a proxy, as the operator's own uid (`FLIP_UID`/`FLIP_GID`), and pulls every image, third-party ones included, from one registry: GHCR, with Grafana, Loki, Alloy and the socket proxy mirrored there and pinned by digest. This is what the KCL CREATE TRE runs on.
-- **AWS trusts in their own account** (#1632, #1636, #1717; issues #1438, #1439). A trust deploys on AWS from its own Terraform root, as one EC2 node (an existing subnet by default, no trust-owned Elastic IP, SSM only) or on EKS through the `flip-trust` chart. The hub's Terraform no longer creates a trust.
-- **Flower 1.42 behind a Fleet-only proxy** (#1531; issue #1517). Trusts reach the hub's SuperLink only through a new proxy that passes the Fleet API alone, so Flower's unauthenticated Control and Runtime APIs are never exposed to a trust. The Flower images now install flip-utils from its lock file, hash-checked, as the NVFLARE ones do (#1802).
-- **Hardening from the security review** (#1744, #1803, #1804, #1805, #1809; tracker #1743). Kits get minted passwords instead of template ones, trust and hub ports bind to loopback by default, the hub's containers run as a non-root user on a read-only root filesystem, its AWS resources pass Security Hub's FSBP baseline, and its web listener is on TLS. Two published advisories are fixed (GHSA-ghjq, GHSA-9fx9).
-- **A real trust needs no sample data** (#1689, #1686). A new kit setting, `TRUST_DATA_SEED=false`, makes a first install fetch nothing from Hugging Face or PyPI; one outbound-traffic table now covers every node shape.
-
-## :warning: Breaking Changes
-
-- **Flower hub and Flower sites move to 1.42 together** (#1531). SuperNodes older than 1.40 cannot connect to the new proxy, so a Flower estate upgrades in one Deployment-Mode window. Trust kits are unchanged. NVFLARE estates are not affected.
-- **The hub's web listener is on TLS** (#1805). For hub operators: the edge's origin must be HTTPS before, or straight after, this applies. On a Landing Zone Accelerator estate that is the platform repo's origin change (aicentre-lza-iac #127 and #128 for staging).
-- **The hub's Terraform creates no trust** (#1717). `deploy/providers/AWS` drops `module.trust_ec2` and the `deploy-trust`, `seed-trust-data`, `stage-fl-kit`, `upgrade-trust-ec2`, `forward-trust` and `check-trust-ec2-enabled` targets; an AWS trust deploys from `trust/deploy/terraform/aws/ec2` or `…/eks`. The apply removes the hub's unused trust security group, role, profile, log group and key pair; `DEPLOY_TRUST_EC2` is no longer read.
-- **Trust deployment files moved under `trust/deploy/`** (#1629): composes in `trust/deploy/compose/`, kit and node scripts in `trust/deploy/scripts/`, Azure in `trust/deploy/terraform/azure/`. Make targets are unchanged. An existing Azure bootstrap's local state has to be moved (see the Azure README).
-- **Compose ports bind to `127.0.0.1` by default** (#1744), except the FL server's port. Anyone who reached Grafana, Orthanc or a database by the host's LAN address uses an SSH tunnel, or sets `TRUST_BIND_ADDRESS=0.0.0.0` in the kit (`HUB_BIND_ADDRESS` in the hub env file).
+- **The Ark+ chest X-ray cohorts are sample data** (#2087). The two synthetic cohorts the Ark+ tutorials and the preprint use are published as `arkplus_project` in trust-data `20261125`, which this release pins: `make -C trust seed KIT=<CODE> PROJECTS=arkplus_project` loads them like any other project. Each partition is one site, `site1` (UK cohort) and `site2` (Thai cohort), made by different generators, so unlike the other projects the two halves deliberately differ. The three Ark+ cohort queries select the training or the evaluation rows.
+- **FL on port 443 for new trusts** (#2095). Production's FL edge also listens on 443. Kits now follow the hub's FL port (`FL_EDGE_PORT`), and a trust that must keep another port sets `FL_EDGE_PORT_OVERRIDE` in its own kit file, which no kit refresh overwrites. Nothing moves until the hub changes its port; existing trusts keep 8002 until then.
+- **The EHR tutorial's data loads on any trust** (#2108). `make -C trust load-synthea-ehr KIT=<CODE>` now uses the kit's OMOP login and port and the trust's half, so it works on a site whose trust-local passwords were changed.
 
 ## :arrows_counterclockwise: Site upgrade
 
 <!-- The prompt to trust operators (FLIP#1204). Sites upgrade on their own schedule and to the
      release their hub runs; this section is how they learn what this release asks of them. -->
 
-- **Required:** recommended. The release carries the security review's hardening and dependency fixes (#1744, #1747, #1800). A Flower site must upgrade in the same window as its hub (see *Breaking Changes*).
-- **Ordering:** NVFLARE sites, any order: NVFLARE and the hub–site protocol are unchanged. Flower sites, with the hub, in one Deployment-Mode window. Upgrading after the hub reports {{TAG}} lets the upgrade verb pick it by default; before that, pass `TAG={{TAG}}`.
-- **Refreshed kit needed:** no. Before upgrading, check three kit settings:
-  - A `.prod` / `.stag` kit that still carries a template password (`ORTHANC_PASSWORD`, `OMOP_POSTGRES_PASSWORD`, `DATA_ACCESS_POSTGRES_PASSWORD`, `XNAT_ADMIN_PASSWORD`, `XNAT_SERVICE_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`) now fails the readiness checklist, which names the keys to rotate (#1744).
-  - Ports move to loopback on the upgrade: set `TRUST_BIND_ADDRESS=0.0.0.0` only on a host whose own firewall decides who gets in (#1744).
-  - Optional: `TRUST_DATA_SEED=false` on a real trust, so it never loads the sample data (#1689); `FLIP_UID` / `FLIP_GID` to run the containers as the operator (#1732).
-- **Outbound access:** every image now comes from GHCR (`ghcr.io`, `pkg-containers.githubusercontent.com`); Docker Hub is no longer needed (#1724).
+- **Required:** no, for a site on v0.16.0 or v0.16.1, unless it wants the Ark+ cohorts or the EHR data below. A site on v0.15 or older upgrades straight to {{TAG}}, following the [v0.16.0 Site upgrade](https://github.com/londonaicentre/FLIP/releases/tag/v0.16.0) section; it applies unchanged.
+- **Refreshed kit needed:** no.
+- **What the upgrade changes on the node:** NVFLARE's `fl-client-init` sets the kit's server port from `FL_EDGE_PORT` (no change while the hub keeps 8002); Grafana and XNAT's JavaMelody no longer call home (#2089).
 - **Operator command**, on the trust host, from your FLIP checkout:
   ```bash
-  git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
-  make upgrade-onprem-trust KIT=<CODE>                   # defaults to the release the hub reports
+  git fetch --tags origin && git checkout {{TAG}}
+  make upgrade-onprem-trust KIT=<CODE>
   ```
-  Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG={{TAG}}`; an EC2 node: `make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env> TAG={{TAG}}`, both from a checkout at {{TAG}}. Runbook: *docs → System administrators → Upgrading a site*.
-
-## :seedling: New Features
-
-- On-prem trusts without sudo: operator access, proxy setup, containers as the operator's uid, and every image from one GHCR registry, mirrored and pinned by digest (#1732, #1724).
-- AWS trust nodes in their own account: an EC2 root (existing subnet or its own VPC, no trust-owned Elastic IP) and an EKS root for the chart (#1632, #1636); the deployment tree split by component, with the hub's Terraform hub-only (#1629, #1717).
-- Flower 1.42, with a Fleet-only proxy in front of the SuperLink (#1531).
-- Trust keys rotate in place: `make rotate-trust-keys KIT=<CODE>` reissues a trust's API and internal service keys without changing its identity or kit slot (#1601).
-- `TRUST_DATA_SEED=false` skips the sample data on every node shape (#1689). The readiness checklist probes the hub, the FL endpoint and the image registries from the trust host (#1727).
-- Hub hardening: minted kit passwords and loopback ports (#1744), read-only root filesystems on ECS (#1803), every hub container as a non-root user (#1809), Security Hub FSBP controls (#1804), the web listener on TLS (#1805).
-- FLARE job processes start faster: the images ship their Python bytecode (#1783).
-- MONAI bundle on-ramp in flip-utils: an overlay schema and a skeleton generator (#1389).
-- A browse-only public demo at `/demo/` with five example projects (#1748, #1759). Staging stops after its end-to-end check and a hold window (#1621, #1728).
+  Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG={{TAG}}`, from a checkout at {{TAG}}.
+- **New sample data, after the upgrade (optional):**
+  - Ark+: `make -C trust seed KIT=<CODE> PROJECTS=arkplus_project` (4.3 GB download). A trust that holds these cohorts from the earlier unmerged loader first runs `make -C trust remove-stray-studies KIT=<CODE> PROJECTS=arkplus_project DRY_RUN=1`, then without `DRY_RUN`, or every study would be in OMOP twice.
+  - EHR: `make -C trust load-synthea-ehr KIT=<CODE>`, after any seed (a `CLEAN=all` seed removes its persons).
 
 ## :bug: Bug Fixes
 
-- Flower tutorials learn again: the default differential-privacy clipping of 1.0 had stopped the spleen tutorial learning (#1758).
-- The NVFLARE fl-api waits for a slow-starting FL server again: NVFLARE 2.9 reports "not up yet" as `NoConnection`, which the startup retry did not catch, so a server that took longer than 20 s left the API up but unable to reach it until restarted.
-- One outbound-traffic table for every node, and the EC2 CloudWatch agent from the regional bucket (#1686).
-- FL kit changes roll the hub's FL services before the Flower key registration, and a stale kit fails with a named fix (#1741). The Helm fl-client requests its GPU from the device plugin (#1767).
-- Security: dependency upgrades for the open Dependabot alerts (#1747, #1800); the Flower images built from flip-utils' lock (#1802).
-- `update-env` no longer writes `DB_HOST` (#1781); flip-ui typechecks in CI (#1772); the EC2 trust's ssh_config example names the right profile (#1730).
+- A CSV's all-digit `accession_id` keeps its leading zeros when the canonical tables are built and imported; read as numbers, 476 of the 4,728 Ark+ studies would never have matched their DICOM (#2087).
+- `load-synthea-ehr` with a kit no longer logs in with the dev template's credentials, loads the trust's own half instead of half 1 everywhere, and refuses a trust whose kit turns the sample data off (#2108).
+- The FL API checks a job credential's file name before it removes the earlier credentials, so a refused name leaves them in place (#2033).
+- Each checkout's Flower simulator keeps its own SuperLink state, so a SuperLink another checkout left running can no longer run its jobs (#2070).
 
-## :books: Documentation
+## :book: Documentation
 
-- "Is your trust ready for FLIP?" for non-technical readers (#1735); what to ask a trust's network team about the FL port (#1794); trust platform pages with AKS and AWS (#1786).
-- Tutorial READMEs: at-a-glance blocks, flow diagrams and six wrong commands fixed (#1693). Docs GIFs pinned by sha256 (#1776); weekly drift sweeps (#1734, #1799).
+- The trust node's outbound table is measured row by row (#2089).
 
 ## :white_check_mark: Release checks
 
@@ -82,17 +56,17 @@ Tutorial suite, on a GPU host:
 
 - [x] FLARE — `make -C fl-tutorials run-all-tutorials`
 - [x] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
-- [x] Host and date recorded: NVIDIA GeForce RTX 5090 workstation, 9 November 2026
+- [x] Host and date recorded: NVIDIA GeForce RTX 5090 workstation, 25 November 2026
 
-FLARE: all 10 tutorials passed in 24 min 38 s — arkplus_fine_tuning 1 min 42 s, xray_classification 40 s, 3d_spleen_segmentation_evaluation 1 min 2 s, arkplus_baseline_classification_evaluation 33 s, arkplus_multimodel_classification_evaluation 51 s, brain_mri_ldm_stage1_autoencoder 7 min 6 s, brain_mri_ldm_stage2_diffusion 2 min 38 s, xray_diffusion 3 min 33 s, 3d_spleen_segmentation 5 min 59 s, ehr_risk_prediction 34 s.
-Flower: all 5 tutorials passed in 4 min 27 s — xray_classification 29 s, 3d_spleen_segmentation_evaluation 51 s, 3d_prostate_segmentation 44 s, 3d_spleen_segmentation 2 min 2 s, ehr_risk_prediction 21 s.
+FLARE: all 11 tutorials passed in 25 min 50 s — arkplus_fine_tuning 2 min 3 s, xray_classification 41 s, 3d_spleen_segmentation_evaluation 1 min 2 s, arkplus_baseline_classification_evaluation 41 s, arkplus_multimodel_classification_evaluation 1 min 17 s, brain_mri_ldm_stage1_autoencoder 6 min 30 s, brain_mri_ldm_stage2_diffusion 2 min 48 s, xray_diffusion 3 min 47 s, 3d_spleen_segmentation 6 min 2 s, biomarker_causal_discovery 28 s, ehr_risk_prediction 31 s.
+Flower: all 6 tutorials passed in 5 min 4 s — xray_classification 35 s, 3d_spleen_segmentation_evaluation 52 s, 3d_prostate_segmentation 44 s, 3d_spleen_segmentation 2 min 5 s, biomarker_causal_discovery 21 s, ehr_risk_prediction 28 s.
 
 Full-platform smoke test, against a running deployment:
 
 - [x] FLARE — `make e2e_smoke`
 - [x] Flower — `make e2e_smoke FL_BACKEND=flower`
 
-Run at `c84351bd3` on an isolated instance (`rel0150`) built from that commit — every repo-built image at `:rel0150`, checked by `make release-verify` — started from empty state: FLARE reached RESULTS_UPLOADED in 10 min 19 s; Flower reached RESULTS_UPLOADED in 5 min 40 s.
+Run at `16388b97e` on an isolated instance (`rel0162`) built from that commit — every repo-built image at `:rel0162`, checked by `make release-verify` — started from empty state: FLARE reached RESULTS_UPLOADED in 10 min 17 s; Flower reached RESULTS_UPLOADED in 5 min 9 s.
 
 At the same commit: `make unit_test` passed, `make integration_test` passed.
 

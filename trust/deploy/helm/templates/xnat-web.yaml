@@ -43,7 +43,7 @@ data:
   TZ: {{ .Values.xnat.web.env.XNAT_TZ | quote }}
   XNAT_MIN_HEAP: {{ .Values.xnat.web.env.XNAT_MIN_HEAP | quote }}
   XNAT_MAX_HEAP: {{ .Values.xnat.web.env.XNAT_MAX_HEAP | quote }}
-  CATALINA_OPTS: "-Xms{{ .Values.xnat.web.env.XNAT_MIN_HEAP }} -Xmx{{ .Values.xnat.web.env.XNAT_MAX_HEAP }} -Dxnat.home=/data/xnat/home -XX:+UseG1GC -Djava.awt.headless=true"
+  CATALINA_OPTS: "-Xms{{ .Values.xnat.web.env.XNAT_MIN_HEAP }} -Xmx{{ .Values.xnat.web.env.XNAT_MAX_HEAP }} -Dxnat.home=/data/xnat/home -XX:+UseG1GC -Djava.awt.headless=true -Djavamelody.update-check-disabled=true"
 ---
 # Tomcat / web console only. Deliberately never carries the DICOM port (see xnat-web-dicom below)
 # so that exposing DICOM externally (NodePort/LoadBalancer) can never expose the web UI with it.

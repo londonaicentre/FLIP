@@ -22,7 +22,7 @@ mock-stack default, and prepending the trust's identity (``TRUST_NAME`` /
 
 The result is ready for registration to fill in the credentials, FL kit slot and
 hub-shared block: ``make register-trust KIT=<CODE>`` on the dev hub,
-``make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>`` on a deployed one. Refuses to overwrite an
+``make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>`` on a deployed one. Refuses to overwrite an
 existing kit. Driven by ``make new-trust``.
 """
 
@@ -114,7 +114,7 @@ def main() -> None:
     if args.env == "development":
         print(f"   Next: make register-trust KIT={args.code}")
     else:
-        print(f"   Next: make -C deploy/providers/AWS register-trusts KIT={args.code} HUB={args.env}")
+        print(f"   Next: make -C deploy/aws register-trusts KIT={args.code} HUB={args.env}")
 
 
 if __name__ == "__main__":

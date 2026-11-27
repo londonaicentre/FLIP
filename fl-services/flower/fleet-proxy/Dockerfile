@@ -37,7 +37,7 @@ RUN rm -f /etc/nginx/conf.d/default.conf \
     && chmod 644 /etc/nginx/nginx.conf /etc/nginx/fleet-routes.map \
     && chmod 755 /usr/local/bin/fleet-proxy-healthcheck
 
-# Must stay a VOLUME for ECS's read-only root filesystem (FLIP#1795, deploy/providers/AWS/AGENTS.md).
+# Must stay a VOLUME for ECS's read-only root filesystem (FLIP#1795, deploy/aws/AGENTS.md).
 VOLUME ["/tmp"]
 
 # The SuperLink's own uid/gid (flwr/base's `app`), so the proxy reads the server key

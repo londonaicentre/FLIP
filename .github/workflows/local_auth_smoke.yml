@@ -27,7 +27,7 @@ on:
       - "flip-api/**"
       # flip-api's image build copies the fl-apps/ tree.
       - "fl-apps/**"
-      - "deploy/compose.development.yml"
+      - "deploy/compose/compose.development.yml"
       - "deploy/keycloak/**"
       - "deploy/instance.mk"
       - "deploy/env_mode.mk"
@@ -40,6 +40,12 @@ on:
 
 permissions:
   contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   # Gate for pull requests into develop (pr_paths_changed.yml; PRs into main always
@@ -54,7 +60,7 @@ jobs:
       paths: |
         flip-api/**
         fl-apps/**
-        deploy/compose.development.yml
+        deploy/compose/compose.development.yml
         deploy/keycloak/**
         deploy/instance.mk
         deploy/env_mode.mk
@@ -69,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      COMPOSE: docker compose -p deploy -f deploy/compose.development.yml
+      COMPOSE: docker compose -p deploy --project-directory deploy -f deploy/compose/compose.development.yml
 
     steps:
       - name: Checkout

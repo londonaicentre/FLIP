@@ -18,6 +18,7 @@ hash. The job's FL server presents it on every callback, so a job can report on 
 
 import hashlib
 import hmac
+from datetime import datetime, timedelta
 from typing import cast
 from uuid import UUID
 
@@ -37,10 +38,20 @@ _job_credential_header = APIKeyHeader(name=JOB_CREDENTIAL_HEADER, scheme_name="j
 # One answer for every refusal, so a caller cannot tell a model that does not exist from one it may not report on.
 _REFUSAL = "Not authorised for this model."
 
+# How long a run may keep reporting after its job was completed with the model in ERROR (see reporting_jobs).
+# Long enough for such a run to train on to its end; a model can stay in ERROR for ever, and the credential
+# of its last job must not stay valid with it.
+_REPORTING_GRACE = timedelta(days=7)
+
 
 def hash_job_credential(credential: str) -> str:
     """SHA-256 hex digest of a job credential: a 256-bit random token, so a slow hash would add nothing."""
     return hashlib.sha256(credential.encode()).hexdigest()
+
+
+def _completed_recently(job: FLJob) -> bool:
+    """Whether the job was completed within the grace period. ``FLJob.completed`` is a naive UTC time."""
+    return job.completed is not None and datetime.utcnow() - job.completed < _REPORTING_GRACE
 
 
 def reporting_jobs(model_id: UUID, session: Session) -> list[FLJob]:
@@ -51,8 +62,8 @@ def reporting_jobs(model_id: UUID, session: Session) -> list[FLJob]:
         session (Session): The database session.
 
     Returns:
-        list[FLJob]: Every IN_PROGRESS job of the model. When there is none, the model's newest job if it is
-        COMPLETED and the model is in ERROR. Otherwise empty.
+        list[FLJob]: Every IN_PROGRESS job of the model. When there is none, the model's newest job if it was
+        COMPLETED within the grace period and the model is in ERROR. Otherwise empty.
     """
     jobs = session.exec(
         select(FLJob)
@@ -64,7 +75,7 @@ def reporting_jobs(model_id: UUID, session: Session) -> list[FLJob]:
         return in_progress
     # A run can outlive its job: Flower keeps training after one client's error has set the model to ERROR and
     # completed the job, then reports the other clients' errors, the later rounds and the uploaded results.
-    if jobs and jobs[0].status == JobStatus.COMPLETED:
+    if jobs and jobs[0].status == JobStatus.COMPLETED and _completed_recently(jobs[0]):
         model = session.get(Model, model_id)
         if model is not None and model.status == ModelStatus.ERROR:
             return [jobs[0]]

@@ -325,6 +325,11 @@ spec:
             - name: LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
             {{- include "flip-trust.flSitePrivacyEnv" . | nindent 12 }}
+            {{- with .Values.flClient.nvflare.serverPort }}
+            # The FL server port to write into the kit's fed_client.json (FLIP#2051).
+            - name: FL_EDGE_PORT
+              value: {{ . | quote }}
+            {{- end }}
             {{- if $governed }}
             # The extract governance-extract wrote (see ACCESS_POLICY_FILE on the client).
             - name: ACCESS_POLICY_FILE
@@ -428,7 +433,7 @@ spec:
                 [ -f "{{ $ws }}/local/$cfg" ] || { echo "local/$cfg is missing: fl-client-init must run first" >&2; exit 1; }
               done
               {{- if $jobPods }}
-              # A link to the site's study file, which exists once the operator has run sync-project-studies.
+              # A link to the operator's study file, which need not exist: the launcher builds projects' entries.
               [ -L "{{ $ws }}/local/study_runtime.yaml" ] || { echo "local/study_runtime.yaml is not linked: fl-client-init must run first" >&2; exit 1; }
               {{- end }}
               python -m flip.nvflare.site_policy --assert-rendered {{ $ws }}/local/privacy.json
@@ -497,8 +502,8 @@ spec:
             # Writable root for the per-job directories; the kit's folders mount inside it.
             - name: fl-workspace
               mountPath: {{ $ws }}
-            # The site's NVFLARE study file, which the operator maintains (make sync-project-studies,
-            # FLIP#1678). Mounted as a folder, so a change reaches the client without a restart.
+            # The operator's NVFLARE study file (make sync-project-studies, FLIP#1678), if any. A project's
+            # entry is built at launch, so it serves only studies that are not projects. Mounted as a folder.
             - name: fl-studies
               mountPath: /app/studies
               readOnly: true
@@ -635,7 +640,7 @@ spec:
           # `type: Directory` makes a missing path a scheduling failure that names the
           # path, rather than an empty dir the client fails against much later.
           hostPath:
-            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
+            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>` and deploy with the kit (sync-kit renders this from the kit file: fl-kit/ under its FLIP_DATA_ROOT, else its FL_KIT_DIR), or --set flClient.kitHostPath=/opt/flip/fl-kit" .Values.flClient.kitHostPath | quote }}
             type: Directory
         {{- end }}
         {{- if $governed }}
@@ -655,7 +660,7 @@ spec:
             name: {{ include "flip-trust.fullname" . }}-fl-job-pod-{{ .Values.flClient.netId }}
         - name: fl-studies
           configMap:
-            # Not the chart's: make sync-project-studies creates it, so a helm upgrade never resets it.
+            # Not the chart's, and optional: make sync-project-studies creates it; a helm upgrade never resets it.
             name: {{ include "flip-trust.fullname" . }}-fl-studies-{{ .Values.flClient.netId }}
             optional: true
         {{- end }}

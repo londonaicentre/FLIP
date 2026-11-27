@@ -23,7 +23,7 @@ build:
   os: ubuntu-22.04 # only accepts ubuntu-20.04, ubuntu-22.04
   tools:
     python: "3.13"
-  # graphviz renders the architecture diagrams (deploy/providers/AWS/architecture/, trust/deploy/terraform/*/architecture/) during the build.
+  # graphviz renders the architecture diagrams (deploy/aws/architecture/, trust/deploy/terraform/*/architecture/) during the build.
   apt_packages:
     - graphviz
 

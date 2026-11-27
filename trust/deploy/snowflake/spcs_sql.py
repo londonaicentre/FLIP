@@ -498,8 +498,8 @@ def main() -> None:
                 sys.exit(
                     f"❌ The rendered specs attach {', '.join(missing)}, which this account does not have.\n"
                     "   Apply the platform root with enable_hub_egress = true first\n"
-                    "   (trust/deploy/terraform/snowflake-platform), then re-run. Rendering with\n"
-                    "   HUB_EGRESS=false deploys the trust without egress instead."
+                    "   (trust/deploy/terraform/snowflake-platform), then re-run. HUB_EGRESS=false in\n"
+                    "   the kit deploys the trust without egress instead."
                 )
             existing, misowned = existing_services(args.snow, args.connection, manifest)
             run_up(args.dir, manifest, snow_runner(args.snow, args.connection), existing, misowned)

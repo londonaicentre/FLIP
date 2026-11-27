@@ -36,6 +36,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   build-and-push:
     # Only publish when the upstream test run passed. Dispatch, PR and release-tag runs have no
@@ -44,6 +50,8 @@ jobs:
     # The event clause builds a commit once (FLIP#2020): the suite also runs for the
     # develop→main PR, whose head branch passes the `branches` filter above, and a second
     # build would replace the immutable sha-<short7> tag with a different image.
+    # A suite run started by hand is not a push either, so it no longer republishes: dispatch
+    # this workflow instead.
     if: >-
       (github.event_name == 'workflow_dispatch' ||
       github.event_name == 'push' ||
@@ -102,7 +110,7 @@ jobs:
           [[ -n "$SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
 
           # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish.
-          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          # Length 7 must match the tag resolution in deploy/aws/Makefile.
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
 
           # The tool-version tag is the one every deploy config references

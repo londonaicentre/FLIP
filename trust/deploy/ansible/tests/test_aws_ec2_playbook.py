@@ -37,7 +37,7 @@ def test_inventory_comes_from_the_aws_ec2_roots_outputs_only():
     assert inventory["tags"] == "always", "the host must be in the inventory under any --tags filter"
     assert inventory["vars"]["aws_ec2_root"] == "{{ playbook_dir }}/../terraform/aws/ec2"
     text = PLAYBOOK.read_text()
-    for hub_only in ("TrustEc2InstanceId", "FLIP_TFSTATE_BUCKET_NAME", "deploy/providers"):
+    for hub_only in ("TrustEc2InstanceId", "FLIP_TFSTATE_BUCKET_NAME", "deploy/aws"):
         assert hub_only not in text, f"aws-ec2.yml reads {hub_only}: the node must not depend on the hub"
 
 

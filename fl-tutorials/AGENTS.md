@@ -60,7 +60,7 @@ the stream and asks the SuperLink (`flwr ls`) for the terminal status, because `
 returns 0 whatever became of the run — and it refuses to start while a local SuperLink it did not
 start still listens on `127.0.0.1:${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}` (#1249): `flwr run . local`
 reuses whatever is there, so a SuperLink another worktree left behind would run the app in *that*
-checkout's environment with nothing in the output saying so. The stale-process cleanup deliberately
+checkout's environment with nothing in the output saying so. Each checkout also keeps its own `FLWR_HOME` (`<checkout>/.flwr`, gitignored, #2069): flwr keeps the local SuperLink's database there, and shared, a SuperLink another checkout started on *another* port would pick this checkout's run up from it. The stale-process cleanup deliberately
 spares other checkouts (it matches this checkout's `flip-utils/` venv path, so the main checkout never
 matches a worktree nested under it), so the fix is to stop the named pid (or run from that checkout);
 an `ss` that cannot probe the port counts as taken, never as free. The tabular EHR tutorial maps
@@ -88,6 +88,7 @@ verified against the published export by one shared gate
 make -C fl-tutorials reproduce-spleen-omop          # fetch -> build -> verify, chained
 make -C fl-tutorials reproduce-brain-mri-omop       # same three for brain_mri_project
 make -C fl-tutorials reproduce-cxr-omop             # same three for cxr_project
+make -C fl-tutorials reproduce-arkplus-omop         # same three for arkplus_project (FLIP#2084)
 make -C fl-tutorials fetch-spleen-metadata-table    # or step by step: pinned metadata table
 make -C fl-tutorials build-spleen-omop-tables       # -> omop/<trust>/spleen_project/*.csv
 make -C fl-tutorials verify-spleen-omop-tables      # diff against the published export
@@ -109,7 +110,10 @@ seeded from the local tree (`seed-<dataset> KIT=`, both halves local, which also
 before a data version is tagged). **cxr carries only the OMOP conversion** — the synthetic chest X-rays,
 their DICOM write and their metadata extraction live in the private `londonaicentre/xraycat` repo, so
 the in-tree provenance chain starts at the published metadata table and its DICOM set is still
-re-hosted (`dicom/cxr_project.tar.gz`).
+re-hosted (`dicom/cxr_project.tar.gz`). **arkplus** (FLIP#2084) is the Ark+ tutorials' public HF dataset
+as a seedable project: its metadata table is built from the downloaded DICOMs and labels, its DICOM set
+is published with three required tags filled (`prepare-arkplus-dicom`), and `source_trust` is the
+dataset's own site (`site1` → 1, `site2` → 2), a non-IID split by design — see `datasets/arkplus/README.md`.
 
 See `fl-tutorials/datasets/README.md` ("OMOP mock-data generation") for all three chains, the shared
 contract in `datasets/utils/`, and the `download-<dataset>-msd-raw` regeneration-path first step.

@@ -194,6 +194,14 @@ sees the trust behind every node id through `Grid.get_nodes()`), skipping alread
 keys. This is the Flower analogue of claiming a participant slot. With `TRUST_NAMES` unset each key
 names its own slot, `supernode_credentials_<N>.pub` being `Trust_<N>` (the ECS hub and the prod
 compose); the dev compose stacks pass `TRUST_NAMES`, paired with the keys by position.
+Where `FL_API_ADDRESS` is set the script then posts each node id → trust name pair to the fl-api, which
+keeps them in memory for `/check_client_status`; it exits with code 3 when the fl-api does not answer
+within `FL_API_READY_ATTEMPTS` tries (default 30, two seconds apart; the SuperLink's wait is
+`SUPERLINK_READY_ATTEMPTS`, default 60) or refuses a pair (a wrong `FL_API_KEY`), naming the trusts left
+unmapped. Every key is registered by then, so `add-fl-kits` still releases the new slots and then fails,
+saying how to run the registration alone. One case stays a warning: keys the SuperLink already holds whose
+node ids cannot be matched to them by position are left as the fl-api has them, so after an fl-api restart
+in that state the one-shot exits 0 with those trusts unmapped.
 
 ### Adding SuperNode keys to a deployed hub
 
@@ -209,7 +217,7 @@ On a stag/prod hub, do not call it by hand. One command mints the next `N` key p
 claimable, with no Terraform apply and no SuperLink restart (FLIP#1942):
 
 ```bash
-make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>
+make -C deploy/aws add-fl-kits N=<n> HUB=<stag|prod>
 ```
 
 **The keys are the pool.** On a Flower hub flip-api's slot pool is every slot `Trust_<N>` whose pair
@@ -220,7 +228,7 @@ key's file name, so there is no separate slot list to keep in step (`FL_KIT_SLOT
 setting, which the dev compose stacks pass as `TRUST_NAMES`). `add-fl-kits` first checks that
 `FLOWER_KIT_DATE` is the date the hub runs, since it copies that date's public keys onto the hub.
 
-`add-fl-kits` (`deploy/providers/AWS/scripts/add_fl_kits_flower.sh`) works in this order, and the
+`add-fl-kits` (`deploy/aws/scripts/add_fl_kits_flower.sh`) works in this order, and the
 order is what keeps a slot from being claimed before its SuperNode would be admitted:
 
 1. Numbers the new keys past every key in S3 and every name already minted, and records the new
@@ -251,7 +259,8 @@ To withdraw a slot that no trust holds, delete its private key from S3: flip-api
 out at the next registration. Keep the public key: it is what keeps the number from being minted again
 (a key provisioned with the kit is only in the minted-names record once an `add-fl-kits` run has seen
 it), and flip-api then logs the slot as not claimable at every registration, which is expected. `upload-creds-to-s3` is for a **new** kit date only, since its
-`--delete` removes every key added under a live one.
+`--delete` removes every key added under a live one; like FLARE's `upload-kits-to-s3` it is a dry run unless
+given `DRYRUN=`.
 
 **Registrations do not survive the SuperLink.** It runs without `--database`, so it holds registered
 SuperNodes in memory. Terraform runs the registration one-shot again whenever it registers a new
@@ -306,7 +315,7 @@ renames or drops a Fleet route fails CI instead of breaking SuperNodes mid-round
 
 ```bash
 make -C fl-services/flower up                 # INSECURE stack (1 SuperLink + 2 SuperNodes + fl-api)
-make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode auth); needs `provision` first
+make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode auth); needs `provision` first and FL_API_KEY set
 make -C fl-services/flower submit APP=xray_classification   # submit a job to the running stack
 make -C fl-services/flower down
 ```
@@ -331,5 +340,5 @@ make -C fl-services/flower up \
 (Run from the repo root; `data/` is gitignored. `up-secure` takes the same two variables.)
 
 The central-hub multi-net Flower topology is the separate
-[`deploy/compose.development.flower.yml`](../../deploy/compose.development.flower.yml), driven by the
+[`deploy/compose/compose.development.flower.yml`](../../deploy/compose/compose.development.flower.yml), driven by the
 root `make up FL_BACKEND=flower`.

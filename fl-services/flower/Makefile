@@ -14,7 +14,7 @@
 # build-fl here by FL_BACKEND; the run/provision/
 # submit targets are invoked here directly (make -C fl-services/flower <target>), which
 # is where Flower FL deployments are tested. The central-hub multi-net topology is the
-# separate deploy/compose.development.flower.yml (driven by the root `make up`).
+# separate deploy/compose/compose.development.flower.yml (driven by the root `make up`).
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
@@ -64,7 +64,7 @@ build:
 # env file names no pool (its keys are the pool), so pass NUM_SUPERNODES for a first kit.
 # A re-run regenerates the CA and invalidates every node already holding credentials,
 # so a deployed kit grows through provision-add-supernode below instead (on a stag/prod
-# hub: `make -C deploy/providers/AWS add-fl-kits`). FL_KIT_SLOT_NAMES is a JSON
+# hub: `make -C deploy/aws add-fl-kits`). FL_KIT_SLOT_NAMES is a JSON
 # list, so count its entries by turning the separators into word breaks; a dev env
 # that names no pool falls back to generate_creds.py's own default of 2. Override
 # explicitly with NUM_SUPERNODES=<n>.
@@ -79,20 +79,22 @@ provision:
 # Mint one more SuperNode key pair, supernode_credentials_<KEY_NUMBER>{,.pub}, into
 # <OUT_DIR>/keys (FLIP#1942). A SuperNode key is not signed by the CA, so the CA, the
 # server certificate and every key already handed out are untouched: nvflare's
-# provision-add-client. deploy/providers/AWS/scripts/add_fl_kits_flower.sh drives it.
+# provision-add-client. deploy/aws/scripts/add_fl_kits_flower.sh drives it.
 provision-add-supernode:
 	@[ -n "$(KEY_NUMBER)" ] && [ -n "$(OUT_DIR)" ] || { echo "❌ KEY_NUMBER=<n> and OUT_DIR=<dir> are required"; exit 1; }
 	@mkdir -p "$(OUT_DIR)" && cd "$(OUT_DIR)" && \
 		uv run --no-project --with cryptography $(dir $(PROVISION_SCRIPT))generate_creds.py --add-supernode $(KEY_NUMBER)
 
 # Upload provisioned Flower creds for one net to S3, where the ECS EFS
-# provisioning task syncs them onto the hub's EFS (deploy/providers/AWS/
+# provisioning task syncs them onto the hub's EFS (deploy/aws/
 # ecs_efs_provision.tf; FLIP#566). Mirrors nvflare's upload-kits-to-s3.
 # For a hub deployment the server cert must carry the ECS hostnames — e.g.:
 #   FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk" \
 #     make provision NET_NUMBER=1
-#   make upload-creds-to-s3 NET_NUMBER=1 HUB=stag
+#   make upload-creds-to-s3 NET_NUMBER=1 HUB=stag DRYRUN=
+# Defaults to a dry run, as nvflare's does — pass DRYRUN= to upload for real.
 # For a NEW kit date only: `--delete` removes every key add-fl-kits put under a live one.
+DRYRUN ?= --dryrun
 upload-creds-to-s3:
 	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with HUB=stag|prod"; exit 1; }
 	@[ -n "$(FLOWER_KIT_DATE)" ] || { echo "❌ FLOWER_KIT_DATE not set — add it to the env file (e.g. 20260811)"; exit 1; }
@@ -112,8 +114,13 @@ _ensure-dev-dirs:
 up: _ensure-dev-dirs
 	$(DEV_COMPOSE) -p flwr up --remove-orphans
 
-# Standalone SECURE (TLS + SuperNode auth) stack. Needs `make provision` first.
+# Standalone SECURE (TLS + SuperNode auth) stack. Needs `make provision` first, and FL_API_KEY:
+# the SuperNodes wait on the key-registration one-shot, which an fl-api with no key answers 401.
 up-secure: _ensure-dev-dirs
+	@if [ -z "$(FL_API_KEY)" ]; then \
+		echo "❌ FL_API_KEY is not set: no SuperNode would start. Pass FL_API_KEY=<any value>, or set it in $(MAIN_ENV_FILE)."; \
+		exit 1; \
+	fi
 	@if [ ! -f "$(REPO_ROOT)/fl-services/flower/provision/creds/net-$(NET_NUMBER)/certificates/ca.crt" ]; then \
 		echo "❌ Flower TLS certs (net-$(NET_NUMBER)) not found. Run 'make provision NET_NUMBER=$(NET_NUMBER)' first."; \
 		exit 1; \

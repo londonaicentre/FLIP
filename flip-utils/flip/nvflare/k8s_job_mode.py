@@ -36,9 +36,10 @@ Three files in ``local/`` change:
   server's host aliases. It is copied into ``local/pod_specs/``, the path NVFLARE resolves it from, with the
   chart's archive patch beside it when there is one (``jobPods.images: archive``, FLIP#1857). A FLIP job
   runs in its project's study (FLIP#1678), and only a job from a hub older than that lands in the default one.
-  The site's operator maintains the projects' entries outside the kit (``flip.nvflare.project_studies``): where
-  the chart names that file (``FL_K8S_STUDIES_FILE``), ``study_runtime.yaml`` becomes a link to it and the
-  default study is kept beside it, in ``study_runtime.default.yaml``, for the operator's command to build from.
+  The launcher (``flip.nvflare.project_launcher``) builds a project's entry when its job starts. An operator can
+  still write entries outside the kit (``flip.nvflare.project_studies``), which win: where the chart names that
+  file (``FL_K8S_STUDIES_FILE``), ``study_runtime.yaml`` becomes a link to it and the default study is kept
+  beside it, in ``study_runtime.default.yaml``, for the launcher and the operator's command to build from.
 
 NVFLARE hands each job pod the parent's workspace path, and the launcher mounts the job's (empty)
 workspace at that same path. The parent's workspace therefore cannot be a directory the job image needs:
@@ -65,7 +66,8 @@ from pathlib import Path
 from typing import Any
 
 LAUNCHER_ID = "k8s_launcher"
-LAUNCHER_PATH = "nvflare.app_opt.job_launcher.k8s_launcher.ClientK8sJobLauncher"
+# NVFLARE's client K8s launcher, which also gives a FLIP project's study its entry at launch (FLIP#1678).
+LAUNCHER_PATH = "flip.nvflare.project_launcher.ProjectK8sJobLauncher"
 GPU_RESOURCE_MANAGER = "nvflare.app_common.resource_managers.gpu_resource_manager.GPUResourceManager"
 PASSTHROUGH_RESOURCE_CONSUMER = (
     "nvflare.app_common.resource_consumers.passthrough_resource_consumer.PassthroughResourceConsumer"
@@ -299,7 +301,7 @@ def apply(local_dir: Path, mode: K8sJobMode) -> None:
     if mode.studies_file is None:
         _write_json(local_dir / STUDY_RUNTIME, study_runtime(mode))
     else:
-        # The operator's file may not exist yet: NVFLARE then finds no job image and starts no job.
+        # The operator's file may not exist: the launcher then builds each project's entry from the default study.
         _write_json(local_dir / STUDY_RUNTIME_DEFAULT, study_runtime(mode))
         tmp = local_dir / f".{STUDY_RUNTIME}.tmp"
         tmp.unlink(missing_ok=True)
@@ -307,26 +309,6 @@ def apply(local_dir: Path, mode: K8sJobMode) -> None:
         os.replace(tmp, local_dir / STUDY_RUNTIME)
     _write_json(comm_path, comm_config)
     _write_json(resources_path, resources)
-
-
-def archive_entries(studies_file: Path) -> list[str]:
-    """The studies whose entry in the operator's file still mounts XNAT's archive (FLIP#1857).
-
-    Leaving ``jobPods.images: archive`` takes the patch out of the kit, but not out of the entries already synced into
-    the operator's file, which only ``make sync-project-studies`` rewrites. A file that is missing or not JSON names
-    none: NVFLARE reports it at launch.
-    """
-    try:
-        studies = _read_json(studies_file).get("studies", {})
-    except (OSError, ValueError):
-        return []
-    return sorted(
-        name
-        for name, entry in studies.items()
-        if isinstance(entry, dict)
-        and isinstance(entry.get("pod_template"), dict)
-        and any(v.get("name") == ARCHIVE_VOLUME for v in entry["pod_template"].get("spec", {}).get("volumes", []))
-    )
 
 
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) -> int:
@@ -345,15 +327,6 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
     except (OSError, ValueError) as e:
         print(f"❌ cannot switch the FL client to Kubernetes job pods: {e}", file=sys.stderr)
         return 1
-    if mode.studies_file is not None and not (parsed.local_dir / ARCHIVE_POD_PATCH).exists():
-        if stale := archive_entries(mode.studies_file):
-            # Not fatal: sync-project-studies, the fix, runs in this client.
-            print(
-                f"❌ this site no longer reads images from XNAT's archive, but the study entries of {', '.join(stale)} "
-                "still mount it, with every session XNAT holds for the project: run "
-                "make -C trust/deploy/helm sync-project-studies now",
-                file=sys.stderr,
-            )
     template = f", pod template {POD_TEMPLATE}" if mode.pod_template else ""
     print(
         f"✅ FL client runs each job in its own pod: image {mode.job_image}, namespace {mode.namespace}, "

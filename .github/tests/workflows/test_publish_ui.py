@@ -24,12 +24,19 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from image_workflows import step_block  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO / ".github" / "workflows"
-MODULE_VARIABLES = REPO / "deploy" / "providers" / "AWS" / "modules" / "terraform_ci_bootstrap" / "variables.tf"
+MODULE_VARIABLES = REPO / "deploy" / "aws" / "modules" / "terraform_ci_bootstrap" / "variables.tf"
 
 
 def code(workflow: str) -> str:
@@ -81,7 +88,7 @@ class PublishUi(unittest.TestCase):
         assert "needs: build" in publish
         assert "role-to-assume: ${{ vars.TF_UI_PUBLISH_ROLE_ARN }}" in publish
         assert "npm" not in publish
-        assert "deploy/providers/AWS/scripts/publish-ui.sh dist" in publish
+        assert "deploy/aws/scripts/publish-ui.sh dist" in publish
         assert '"${FLIP_UI_BUCKET_NAME}"' in publish
         others = [path.name for path in WORKFLOWS.glob("*.yml") if path.name != "publish_ui.yml"]
         assert not [name for name in others if "TF_UI_PUBLISH_ROLE_ARN" in code(name)]
@@ -146,10 +153,97 @@ class ApplyPublishesTheUi(unittest.TestCase):
         skipped every production publish (v0.15.0); ``always()`` lifts it, the result check holds the gate.
         """
         ui = job("terraform_apply.yml", "ui")
-        assert "needs: apply" in ui
+        assert "needs: [apply, ui-cognito-ids]" in ui
         assert "uses: ./.github/workflows/publish_ui.yml" in ui
-        assert re.search(r"^    if: always\(\) && needs\.apply\.result == 'success'$", ui, re.MULTILINE), ui
+        gate = "if: always() && needs.apply.result == 'success' && needs.ui-cognito-ids.result == 'success'"
+        assert f"    {gate}\n" in ui, ui
         assert permissions(ui) == {"contents": "read", "id-token": "write"}
+
+    @staticmethod
+    def _bash(body: str, step: str, **env: str) -> subprocess.CompletedProcess:
+        """Run the script of the step named ``step`` in a job body."""
+        script = textwrap.dedent(step_block(body, step).split("run: |", 1)[1])
+        return subprocess.run(
+            ["bash", "-c", script], env={"PATH": os.environ["PATH"], **env}, capture_output=True, text=True
+        )
+
+    def test_the_apply_job_compares_the_cognito_ids_and_cannot_fail(self) -> None:
+        """The staging restore and stop key on the apply job's result, so the step only reports a verdict."""
+        apply = job("terraform_apply.yml", "apply")
+        step = "Compare the UI's Cognito ids with Terraform"
+        assert "2>/dev/null" not in step_block(apply, step), "Terraform's error must reach the log"
+        assert "ui_cognito_ids: ${{ steps.cognito.outputs.verdict }}" in apply
+
+        new = {"TF_POOL": "eu-west-2_new", "TF_CLIENT": "newclient"}
+        ui = {"UI_POOL_ID": "eu-west-2_new", "UI_CLIENT_ID": "newclient"}
+        blank = dict.fromkeys((*new, *ui), "")
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp, "terraform")
+            stub.write_text(
+                "#!/usr/bin/env bash\n"
+                'case "$3" in CognitoUserPoolId) v="${TF_POOL}" ;; *) v="${TF_CLIENT}" ;; esac\n'
+                '[[ -n "$v" ]] || { echo "Error: Output $3 not found" >&2; exit 1; }\n'
+                'printf %s "$v"\n'
+            )
+            stub.chmod(0o755)
+            output = Path(tmp, "output")
+            path = f"{tmp}:{os.environ['PATH']}"
+            for env, verdict, says in [
+                ({**new, **ui}, "match", ""),
+                ({**new, **ui, "UI_POOL_ID": "eu-west-2_old"}, "mismatch", "AWS_COGNITO_USER_POOL_ID differs"),
+                ({**new, **ui, "UI_CLIENT_ID": "oldclient"}, "mismatch", "AWS_COGNITO_APP_CLIENT_ID differs"),
+                ({**new, "UI_POOL_ID": "eu-west-2_new"}, "mismatch", "AWS_COGNITO_APP_CLIENT_ID differs"),
+                # A first apply: nobody could have set them yet, and publish_ui.yml refuses to build without them.
+                (new, "unset", "are not set on this environment"),
+                # terraform output fails: its own verdict, and Terraform's error is not swallowed.
+                (ui, "unreadable", "could not be read"),
+                ({}, "unreadable", "could not be read"),
+            ]:
+                with self.subTest(env=env):
+                    output.write_text("")
+                    run = self._bash(apply, step, **{"PATH": path, "GITHUB_OUTPUT": str(output), **blank, **env})
+                    assert run.returncode == 0, run.stdout + run.stderr
+                    assert output.read_text() == f"verdict={verdict}\n"
+                    assert says in run.stdout, run.stdout
+                    assert ("not found" in run.stderr) is (verdict == "unreadable"), run.stderr
+                    # Names only: the ids themselves stay out of the log and the outputs.
+                    assert not [value for value in env.values() if value in run.stdout], run.stdout
+
+    def test_a_cognito_verdict_other_than_match_or_unset_holds_the_ui(self) -> None:
+        """A mismatch was a warning on a green run, and the UI published could sign nobody in (FLIP#2047)."""
+        check = job("terraform_apply.yml", "ui-cognito-ids")
+        assert "VERDICT: ${{ needs.apply.outputs.ui_cognito_ids }}" in check
+        for verdict, ok, says in [
+            ("match", True, "match Terraform"),
+            ("unset", True, "::warning title=UI Cognito ids not set"),
+            ("mismatch", False, "::error title=UI Cognito ids differ"),
+            ("unreadable", False, "::error title=Cognito ids not read"),
+            # The step never reported: unchecked ids are not a pass.
+            ("", False, "::error title=Cognito ids not read"),
+        ]:
+            with self.subTest(verdict=verdict):
+                run = self._bash(check, "Act on the apply job's verdict", VERDICT=verdict)
+                assert (run.returncode == 0) is ok, run.stdout + run.stderr
+                assert says in run.stdout, run.stdout
+        mismatch = next(line for line in check.splitlines() if "UI Cognito ids differ" in line)
+        assert "AWS_COGNITO_USER_POOL_ID" in mismatch
+        assert "AWS_COGNITO_APP_CLIENT_ID" in mismatch
+        # A re-run applies its own commit, so only the newest run cannot roll back; a fresh dispatch
+        # on main carries no release_tag and would pin sha images over a release.
+        assert "newest apply run" in mismatch
+        assert "Do not dispatch a new apply" in mismatch
+
+    def test_the_cognito_check_job_asks_for_no_environment(self) -> None:
+        """aws-prod has required reviewers: an environment here is one more approval on every production apply."""
+        check = job("terraform_apply.yml", "ui-cognito-ids")
+        assert "needs: apply\n" in check
+        assert "if: always() && needs.apply.result == 'success'\n" in check
+        assert "permissions: {}" in check
+        assert "environment:" not in check
+        assert "vars." not in check
+        assert "secrets." not in check
+        for other in ("demo", "restore-staging-services", "staging-end-to-end", "hold-then-stop-staging"):
+            assert "ui-cognito-ids" not in job("terraform_apply.yml", other), other
 
     def test_the_ui_publishes_into_the_applys_environment(self) -> None:
         apply_env = re.search(r"^    environment: (.+)$", job("terraform_apply.yml", "apply"), re.MULTILINE)

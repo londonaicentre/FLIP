@@ -54,7 +54,7 @@ can take up to an hour and a half to appear.
 .. seealso::
 
    For a FLIP admin who needs to force the retry from the hub database, the SQL is in
-   :gh:`deploy/providers/AWS/TROUBLESHOOTING.md` (section 3.3).
+   :gh:`deploy/aws/TROUBLESHOOTING.md` (section 3.3).
 
 .. _ts-queuefailed:
 

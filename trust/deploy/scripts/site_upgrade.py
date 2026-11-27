@@ -390,7 +390,7 @@ class RegistryUnavailable(Exception):
 
 
 #: What ``docker manifest inspect`` prints when the registry says the image or tag is absent —
-#: the same list deploy/providers/AWS/scripts/resolve-image-tags.sh treats as "not published".
+#: the same list deploy/aws/scripts/resolve-image-tags.sh treats as "not published".
 _ABSENT_MARKERS = (
     "manifest unknown",
     "manifest_unknown",

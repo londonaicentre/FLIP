@@ -189,7 +189,7 @@ This reuses the network's existing root CA (loaded from the preserved
 already-onboarded participant's kit byte-identical — no re-provision, no CA rotation, no
 fleet-wide redeploy. The new kit lands in `workspace-<env>/net-N/services/<CLIENT_NAME>/`.
 
-**One-command path (stag/prod).** `make -C deploy/providers/AWS add-fl-kits N=<n>
+**One-command path (stag/prod).** `make -C deploy/aws add-fl-kits N=<n>
 HUB=stag|prod` runs this whole section end to end: it discovers the deployment's nets from
 S3, restores + fingerprint-verifies each net's CA workspace, mints the next `Trust_<n>`
 names on **every** net (slot names are global across nets — see the hub section below)
@@ -264,7 +264,8 @@ aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
 > wipes `state/`, rotates the root CA, and so **forces a redeploy of every already-onboarded
 > trust** (the same fleet-wide churn called out above). Only take this route in a maintenance
 > window where redeploying the whole fleet is acceptable, then re-upload:
-> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 HUB=prod`.
+> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 HUB=prod DRYRUN=`
+> (without `DRYRUN=` the upload is a dry run).
 
 ### Activating the new slot on the hub
 

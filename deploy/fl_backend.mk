@@ -15,11 +15,13 @@
 # Any .env* file value for DOCKER_FL_API_NAME / DOCKER_FL_SERVER_NAME /
 # DOCKER_FL_CLIENT_NAME / FL_PROVISIONED_DIR is overridden here on purpose —
 # these must match FL_BACKEND. To test a one-off image or a custom workspace,
-# override on the command line (CLI args outrank Makefile assignments):
-#   make up DOCKER_FL_SERVER_NAME=ghcr.io/foo/custom:test
+# override on the command line (CLI args outrank Makefile assignments). The composes
+# build each reference as ${DOCKER_FL_REGISTRY}<name>:${DOCKER_FL_TAG}, and the registry
+# and tag apply to every FL image:
+#   make up DOCKER_FL_REGISTRY=ghcr.io/foo/ DOCKER_FL_SERVER_NAME=custom DOCKER_FL_TAG=test
 #   make up FL_PROVISIONED_DIR=/tmp/my-workspace
 #
-# FL_PROVISIONED_DIR is only read by deploy/compose.development.{flower,nvflare}.yml
+# FL_PROVISIONED_DIR is only read by deploy/compose/compose.development.{flower,nvflare}.yml
 # (volume mounts of the provisioned certs / workspace from fl-services/<backend>/provision/).
 # In stag/prod the FL services pull their kit from S3 and this path is unused —
 # the root Makefile still absolutises it for consistency but no prod compose

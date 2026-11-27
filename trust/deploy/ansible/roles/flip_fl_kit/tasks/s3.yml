@@ -11,7 +11,7 @@
 #
 ---
 # The EC2 kit stage: this host's slot out of the hub's participant-kit bucket, via the
-# instance role. deploy/providers/AWS/tests/test_trust_kit_staging.py reads the two
+# instance role. deploy/aws/tests/test_trust_kit_staging.py reads the two
 # shell blocks below by task name and pins their FLIP#965 properties (abort on first
 # failure, wipe net-1 before the fetch, assert the result, consume trust_s3_source bare).
 

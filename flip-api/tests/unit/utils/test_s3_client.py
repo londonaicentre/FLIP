@@ -41,8 +41,24 @@ from flip_api.utils.s3_client import (
     MAX_PRESIGNED_URL_TTL_SECONDS,
     PresignAudience,
     S3Client,
+    parse_s3_path,
 )
 from tests.unit._log_policy import _FAKE_SIGNED_URL, _assert_logs_have_no_presigned_url
+
+
+@pytest.mark.parametrize(
+    ("s3_path", "expected"),
+    [
+        ("s3://bucket/prefix/model-id/weights.pt", ("bucket", "prefix/model-id/weights.pt")),
+        ("s3://bucket", ("bucket", "")),
+        ("s3://bucket//doubled.pt", ("bucket", "doubled.pt")),
+        # `#` and `?` are ordinary key characters: the key is the whole path, never cut at one.
+        ("s3://bucket/model-id/weights.pt#x.txt", ("bucket", "model-id/weights.pt#x.txt")),
+        ("s3://bucket/model-id/weights.pt?x.txt", ("bucket", "model-id/weights.pt?x.txt")),
+    ],
+)
+def test_parse_s3_path_returns_the_bucket_and_the_whole_key(s3_path, expected):
+    assert parse_s3_path(s3_path) == expected
 
 
 @pytest.fixture

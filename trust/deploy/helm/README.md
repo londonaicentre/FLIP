@@ -43,14 +43,14 @@ The commands, from the repo root:
 ```bash
 # Hub side, once (FLIP admin) — produces trust/.env.<CODE>.<env>
 make new-trust TRUST_CODE=<CODE> TRUST_NAME="<Human Name>" HUB=<env>
-make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
+make -C deploy/aws register-trusts KIT=<CODE> HUB=<env>
 make sync-trust-kit KIT=<CODE> HUB=<env>
 
 # Cluster side (trust operator)
 python3 trust/deploy/helm/scripts/generate_values.py \
   --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm
-make -C trust/deploy/helm stage-kit KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
-make -C trust/deploy/helm stage-vocab VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
+make -C trust/deploy/helm stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 make -C trust/deploy/helm status && make -C trust/deploy/helm smoke-cstore
 ```
@@ -97,12 +97,20 @@ images that exist.
   (`trust-release-flip-trust-secrets`) over kubectl's TLS channel — never to disk — and writes the
   secret-free override `k8s-trust-<CODE>.yaml` (hub URL, FL backend, AWS region, `flClient.kitHostPath`
   from the kit's `FL_KIT_DIR`). It stamps a newly created Secret with Helm ownership metadata so the
-  first install can adopt it, and regenerates the FL-server egress port (and, for Flower,
-  `flClient.flower.superlink`) on every run so upgrades never lose them. `sync-kit-override` writes only
-  the override; `patch-kit-secrets` only patches the Secret and restarts the three API deployments.
+  first install can adopt it, and regenerates the FL-server egress port (and `flClient.nvflare.serverPort` or,
+  for Flower, `flClient.flower.superlink`) on every run so upgrades never lose them. The port is the kit's
+  `FL_EDGE_PORT_OVERRIDE`, else `FL_EDGE_PORT`, else `FL_SERVER_PORT`. `sync-kit-override` writes only
+  the override; `patch-kit-secrets` only patches the Secret and restarts what reads it: the API
+  deployments the release has (trust-api, data-access-api, imaging-api) every time, and an FL client only when
+  the Secret's trust-internal service key or header name is no longer what that client was last restarted with
+  (it says which), so a routine redeploy leaves a running FL job alone. It tells by a sha256 of the two entries
+  kept in the annotation `flip/internal-service-key-sha256` on the client's Deployment, so a key that `sync-kit`
+  patched earlier still restarts the client here; a client with nothing recorded yet is restarted only if this
+  run changed the Secret. An FL client that was not ready, awaiting its kit or a free GPU, is restarted but not
+  waited on. A Secret that cannot be read stops the target before anything is restarted.
 - **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy-release` and `xnat-init` with that
   override, then `patch-kit-secrets` — even when a step failed, so trust-api never polls with a stale key
-  (#595) — and fails if either step did, naming which one. Without `KIT=` it is plain `deploy`, which is also all the repo-root
+  (#595) — and fails if any of the three did, naming which one. Without `KIT=` it is plain `deploy`, which is also all the repo-root
   `make deploy-trust-k8s` forwards to.
 - **`deploy`** is `deploy-release` then `xnat-init`. **`deploy-release`** depends on `preflight` (`scripts/preflight.sh`: tools and versions, cluster reachability,
   the chart files, the kit when `KIT=` is given, `helm lint`) and passes `--timeout $(HELM_TIMEOUT)` but
@@ -125,10 +133,10 @@ images that exist.
   `deploy/env_mode.mk`'s `kit_file` and passes it to `scripts/preflight.sh` as `KIT_FILE` and to
   `sync_k8s_kit.py` as `--kit-file`, so the checklist reads the kit the site actually has.
 - **`stage-kit`** detects the backend from the kit's shape (FLARE `startup/`, Flower `certificates/` +
-  `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before the copy so a
+  `keys/`), chowns to that image's uid (1000 / 49999), empties the kit path (the kit file's `FL_KIT_DIR`) before the copy so a
   re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. On a
   kind node it copies with `docker cp`; on any other node (k3s, a VM) through a short-lived root pod pinned
-  to the node with `KIT_DEST` as a hostPath, and `kubectl cp` (`scripts/stage-to-node.sh`, FLIP#1958).
+  to the node with that path as a hostPath, and `kubectl cp` (`scripts/stage-to-node.sh`, FLIP#1958).
   That needs RBAC to read nodes and to create and exec into the pod, as good as root on the node. A cluster that
   will not run the pod (the image out of reach, an admission policy) gets the same steps printed as one command
   to run as root on the node (FLIP#1477). Under Pod Security `baseline` the chart's own hostPath mounts are refused
@@ -238,9 +246,10 @@ from `dicom.log` and the container log alike. See
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `false` | Whether the chart creates the namespace (with the `podSecurity.*` labels). `make deploy` creates it with kubectl instead, without those labels |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20261019` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
+| `trustData.version` | `20261125` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
-| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
+| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc — each only while it is empty (no imaging row, no study; FLIP#2111), so an upgrade of a seeded trust loads nothing. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
+| `trustData.seed.reseed` | `false` | Seed a store that already holds data, Orthanc clearing the listed projects first. Leave it off: `make reseed KIT=<CODE>` sets it for one run of the seed Job, how a seeded trust moves to a new `trustData.version` |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
 | `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
@@ -546,10 +555,11 @@ loaded** (`helm install` prints a warning).
    export the vocabularies from [OHDSI Athena](https://athena.ohdsi.org/) (plus
    [NHS TRUD](https://isd.digital.nhs.uk/) for the UK ones) and unzip the export into a
    folder — `trust/omop-db/README.md`, "The core vocabulary bundle".
-2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
+2. **Stage it onto the node** at `omop-vocab/` under the kit's `FLIP_DATA_ROOT`, else
+   `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
 
    ```sh
-   make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
+   make -C trust/deploy/helm stage-vocab KIT=<CODE> HUB=<env> VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
    ```
 
    On kind it copies with `docker cp`, on any other node through a short-lived pod (as `stage-kit`).
@@ -557,9 +567,9 @@ loaded** (`helm install` prints a warning).
    guess. For the kit that is the FL client's node (imaging-api's unless `flClient.affinity` says
    otherwise). `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
    bundle behind.
-3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
+3. **Point the chart at it**: `OMOP_VOCAB_DIR=<the path stage-vocab printed>` in the kit file
    (`sync-kit` writes `omopDb.vocabLoad.hostPath` from it), or
-   `--set omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab`, then deploy as usual.
+   `--set omopDb.vocabLoad.hostPath=<that path>`, then deploy as usual.
 
 `hostPath` resolves on whichever node runs the Job: with more than one node, pin the Job to the
 node holding the folder with `omopDb.vocabLoad.nodeSelector` (e.g. `kubernetes.io/hostname: <node>`).
@@ -729,35 +739,18 @@ client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's laun
 pool. Each job runs in the fl-client image.
 
 Each FLIP project is an NVFLARE study (FLIP#1678), and NVFLARE takes a study's job image and pod template
-from the site's `local/study_runtime.yaml`, which the site's operator maintains and its launcher re-reads at
-every launch. The fl-client only reads it: the file is a ConfigMap (`<release>-fl-studies-<net>`) that the
-chart mounts and never writes, so a `helm upgrade` leaves it alone. Fill it, and refresh it, with:
+from its entry. The fl-client's launcher (`flip.nvflare.project_launcher`) builds a project's entry when the
+project's job starts: the template above, the kit's job image and, with `images: project`, a read-only mount of the
+project's own folder, or with `images: archive` of its directory of XNAT's archive once XNAT has archived one of its
+sessions (until then its jobs stream). Nothing is synced after an approval, an upgrade or a change of
+`jobPods.images`: every job gets the entry its project needs at that moment. The trust keeps its own gate: the
+entry, with its mount, is built only for a project whose XNAT project imaging-api created when this trust approved
+it. Any other project's job, and any job while imaging-api cannot answer, mounts nothing and streams, through
+download routes that serve only the approved cohort. The template itself mounts no images,
+so a job from a hub that predates studies, which lands in the default study, streams its studies.
 
-```bash
-make sync-project-studies                       # every project whose approved cohort this trust holds
-make sync-project-studies PROJECTS="<id> ..."   # or exactly these
-```
-
-It builds one entry per project from the template above and replaces the ConfigMap; the client picks the
-change up within a minute or so, with no restart. When it finds no approved project (data-access-api's snapshot
-folder empty or not mounted) it stops and replaces nothing, since an empty file would stop every project's jobs. Run it after the first deploy, after each project is
-approved at this trust, after an upgrade (the entries carry the job image and the pod template), after
-changing `jobPods.images`, and, with `images: archive`, after a project's first imaging pull (until XNAT has
-archived one of its sessions there is no directory to mount, so its entry streams; the sync prints a line for
-each project that streams, and why): the file outlives a redeploy, so until it is synced again every project keeps
-the entries of the previous mode. Until
-a project has its entry NVFLARE has no job image for its study and does not start its jobs. The template
-itself mounts no images, so a job from a hub that predates studies, which lands in the default study,
-streams its studies.
-
-**Leaving `images: archive`** (for `project` or `stream`) takes three steps, in this order, because the
-entries already synced keep mounting XNAT's archive until the next sync, and the chart checks
-`COHORT_RECONCILE_MINUTES` only while the mode is still `archive`:
-
-1. Upgrade with the new `jobPods.images`, leaving `imagingApi.env.COHORT_RECONCILE_MINUTES` as it is.
-2. Run `make sync-project-studies`. Until it has run, the fl-client logs an error at every start naming the
-   projects whose entries still mount the archive (`kubectl logs <fl-client pod> -c fl-client-init`).
-3. Only then, if you mean to, set `COHORT_RECONCILE_MINUTES` to 0 in a later upgrade.
+`make sync-project-studies` still writes the operator's study file (the ConfigMap `<release>-fl-studies-<net>`,
+which the chart mounts but never creates), but a project's job does not use it.
 
 Prerequisites and trade-offs:
 
@@ -995,8 +988,8 @@ kubectl rollout status statefulset/<release>-flip-trust-xnat-db
 kubectl rollout restart deployment/<release>-flip-trust-xnat-web
 ```
 
-`make patch-kit-secrets` restarts `imaging-api`, `trust-api` and
-`data-access-api` but neither `xnat-db` nor `xnat-web`, so running it alone
+`make patch-kit-secrets` restarts `imaging-api`, `trust-api`,
+`data-access-api` (and an FL client whose trust-internal service key or header name changed) but neither `xnat-db` nor `xnat-web`, so running it alone
 during a rotation still leaves those two on the old password — restart
 `xnat-db` and `xnat-web` yourself, in that order, around it.
 
@@ -1264,7 +1257,7 @@ make -C trust/deploy/helm test
 ### What a failed `make deploy` means
 
 `helm upgrade` exiting non-zero used to be ambiguous: it was usually the `xnat-init`
-post-upgrade hook timing out (#565) on a release that had deployed perfectly well, but it
+post-upgrade hook timing out on a release that had deployed perfectly well, but it
 could equally be a genuine failure where nothing reached the cluster. Telling the two apart
 meant reading the output. Since FLIP#1645 the ambiguity is removed at the source rather than
 classified after the fact: `xnat-init` is the one hook that produces it, so `make deploy`
@@ -1281,7 +1274,7 @@ code the recipe returned, so no code can carry a distinction through make. An un
 |------|---------|------------|
 | none | The upgrade landed: applied, every core workload rolled out, every hook succeeded and `xnat-init` completed. | Nothing. |
 | `deploy-release` | Helm failed, or a core workload did not roll out within `HELM_TIMEOUT`, or a hook (`omop-vocab-load`, `trust-seed`) failed. | Read the helm error; the failing hook is named for you. If helm rejected the apply the trust is on its previous release; after a rollout timeout or a failed hook the new spec is already live, so look at which workloads or hooks are short. |
-| `xnat-init` | The release is live and every core workload rolled out, but `xnat-init` did not complete (or the chart could not be rendered for it). | The trust is on the new release; re-run `make -C trust/deploy/helm xnat-init`, raising `HELM_TIMEOUT` if the job simply needed longer. |
+| `xnat-init` | The release is live and every core workload rolled out, but `xnat-init` did not complete (or the chart could not be rendered for it). | The trust is on the new release; re-run `make -C trust/deploy/helm xnat-init` as the message prints it (no values: see [Running the XNAT init job by hand](#running-the-xnat-init-job-by-hand)), raising `HELM_TIMEOUT` if the job simply needed longer. |
 
 #### Why the rollout wait is scoped, and not `helm --wait`
 
@@ -1325,7 +1318,7 @@ The hook annotation itself is unchanged, so a plain `helm install` of the chart 
 
 XNAT's post-install init job normally runs as part of the chart. When it is
 disabled (`xnat.initJob.enabled=false`, e.g. because XNAT web was not ready in
-time — #565), run it once XNAT is up:
+time), or a deploy reported that `xnat-init` did not complete, run it once XNAT is up:
 
 ```bash
 make -C trust/deploy/helm xnat-init
@@ -1335,6 +1328,16 @@ It re-renders only the `xnat-init` job from the chart (`--set
 xnat.initJob.enabled=true`, applied with the
 `app.kubernetes.io/component=xnat-init` selector), waits up to `HELM_TIMEOUT` (default
 `30m`) for it to complete or fail, and on failure tails the job's logs before exiting non-zero.
+
+Run without `OVERRIDES_FILE` (like that, or with `KIT=<CODE> HUB=<env>`, which names no override
+file), the job is rendered from the values the release was deployed with (`helm get values`), so
+XNAT is configured for the same PACS, schedule and image tag as the deploy that preceded it.
+Anything else you pass is applied over the release's values and wins: a `VALUES_FILE`,
+`PLATFORM_VALUES` (with `KIT`, the kit's `K8S_PLATFORM_VALUES`), then `TAG`. Add `KUBE_CONTEXT`,
+`NAMESPACE` or `RELEASE_NAME` if the deploy named them; the failure messages print the command with
+them. If the release's values cannot be read, or there is no such release, the target stops rather
+than render from the chart defaults, which would point XNAT at the mocked PACS. With `OVERRIDES_FILE` (as `deploy-trust-k8s` and `upgrade-trust-k8s` call it) the
+release is not read and the job is rendered from that file and the rest of what was passed.
 
 Two things worth knowing now that `make deploy` calls this target itself:
 
@@ -1386,13 +1389,13 @@ page is [Trust node on Kubernetes](../../../docs/source/troubleshooting/trust-no
 
 ### FL client won't connect
 
-1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. The chart holds no AWS credentials and cannot fetch it.
+1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT=<CODE> HUB=<env> KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. It goes to the kit file's `FL_KIT_DIR`, the path a deploy of that kit mounts. The chart holds no AWS credentials and cannot fetch it.
    A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
 2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (FLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Check the fl-client container requests `nvidia.com/gpu` (`flClient.gpu.allocation: devicePlugin`) and the node lists it in its allocatable, or, with `allocation: runtime`, that `NVIDIA_VISIBLE_DEVICES=0` is set and the node's default runtime is `nvidia`. `CUDA_VISIBLE_DEVICES=0` is set in both modes by `flClient.gpu.enabled: true`.
 5. **Jobs never start ("waiting for resources")**: the FL server logs `sites without the requested resources: {'<slot>': {'num_of_gpus': 1}}`. The trust offers fewer GPUs than the job asks for: `grep num_of_gpus` in the client's `local/resources.json` shows 0 while `flClient.gpu.enabled` is false. Enable the GPU, or use job pods (`flClient.nvflare.jobPods`) on a GPU pool.
-6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable endpoint and root certificates are in the kit.
 7. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic
@@ -1422,7 +1425,8 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 
 **Mock-data seed** (`trust-seed`, FLIP#1187):
 
-- A Helm `post-install,post-upgrade` hook, deleted on success and kept on failure:
+- A Helm `post-install,post-upgrade` hook that seeds only an empty store, deleted on success and kept on
+  failure (`make reseed` runs the same Job once with `trustData.seed.reseed=true`, after a version bump):
   `kubectl logs -n <ns> job/<release>-flip-trust-trust-seed` after a failed release. It fetches the canonical tables (and, with `trustData.seed.orthanc`, the DICOM sets) from
   Hugging Face at `trustData.version`, installs the loaders from FLIP at `trustData.seed.sourceRef`,
   and loads this trust's `source_trust` slice. No AWS credentials are involved.

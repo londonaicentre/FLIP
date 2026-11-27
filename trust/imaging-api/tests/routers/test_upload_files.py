@@ -124,3 +124,16 @@ def test_staging_refuses_a_net_id_that_leaves_the_images_dir(tmp_path, monkeypat
         asyncio.run(upload_service.stage_uploads("../elsewhere", []))
 
     assert not (tmp_path / "elsewhere").exists()
+
+
+def test_staging_refuses_an_upload_directory_reached_through_a_link(tmp_path, monkeypatch):
+    """A link at ``<net>/upload`` would stage the files into whatever it points at, another net's folder included."""
+    monkeypatch.setattr(upload_service, "BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path / "images"))
+    (tmp_path / "images" / "net1").mkdir(parents=True)
+    (tmp_path / "images" / "net2").mkdir()
+    (tmp_path / "images" / "net2" / "upload").symlink_to(tmp_path / "images" / "net1")
+
+    with pytest.raises(ValueError, match="Path traversal"):
+        asyncio.run(upload_service.stage_uploads("net2", [UploadFile(file=io.BytesIO(b"b"), filename="seg.nii")]))
+
+    assert list((tmp_path / "images" / "net1").iterdir()) == []

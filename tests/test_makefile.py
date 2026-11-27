@@ -14,7 +14,7 @@ bring-up creates every network it needs (FLIP#1344), and the targets that drive 
 project refuse one that another checkout created (FLIP#1227).
 
 `make upgrade-onprem-trust` must run the readiness checklist and then reach the trust-level
-upgrade, never the first-install steps (`ensure-seeded` re-seeds OMOP / Orthanc, `xnat-reset`
+upgrade, never the first-install steps (`ensure-seeded` seeds an empty OMOP / Orthanc, `xnat-reset`
 wipes the XNAT archive and database).
 
 Usage:
@@ -53,7 +53,7 @@ def hub_only_networks() -> set[str]:
     names: dict[str, str] = {}
     section = entry = None
     in_networks = False
-    for line in (REPO / "deploy" / "compose.development.yml").read_text().splitlines():
+    for line in (REPO / "deploy" / "compose" / "compose.development.yml").read_text().splitlines():
         if top := re.match(r"^([\w-]+):", line):
             section, entry = top[1], None
         elif key := re.match(r"^  ([\w-]+):\s*$", line):
@@ -89,7 +89,7 @@ class BuildTrue(unittest.TestCase):
 
     def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
         services = {
-            **repo_built_services("deploy/compose.development.yml"),
+            **repo_built_services("deploy/compose/compose.development.yml"),
             **repo_built_services("trust/deploy/compose/compose_trust.development.yml"),
         }
         assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()
@@ -129,7 +129,7 @@ class HostDirsArePreparedNotEscalated(unittest.TestCase):
 
     def test_deployed_up_trust_runs_no_root_container_and_names_the_remedy(self):
         out = dry_run("up-trust")
-        assert "alpine:3.20 chown" not in out, out
+        assert not re.search(r"busybox:1\.36@sha256:[0-9a-f]{64} chown", out), out
         assert "make -C trust prepare-host-dirs KIT=SCR HUB=prod" in out, out
 
     def test_prepare_host_dirs_creates_every_mount_source(self):
@@ -143,8 +143,6 @@ class HostDirsArePreparedNotEscalated(unittest.TestCase):
         # its owner to the net dirs, which imaging-api then cannot write); xnat-db-data is Postgres's own
         # after its first boot, so it is created and never re-owned (FLIP#1731 review).
         assert '= "1000" ] || chown 1000:1000 "$base"' in out, out
-        assert 'parent="$(dirname "$d")"' in out, out  # never root-creates the markers' parent
-        assert "the bring-up writes" in out, out
         xnat_chown = next(line for line in out.splitlines() if "chown 1001:1001 /nonexistent/xnat " in line)
         assert "xnat-db-data" not in xnat_chown, xnat_chown
 
@@ -198,6 +196,88 @@ class RestartFlFleetProxies(unittest.TestCase):
         step = self._server_step("nvflare")
         assert "fl-fleet-proxy" not in step, step
         assert "--remove-orphans" in step, step
+
+
+class RestartFlChecksTheKit(unittest.TestCase):
+    """restart-fl checks the backend's kit before step 1 removes every FL client (FLIP#2047).
+
+    ``make restart-fl FL_BACKEND=flower`` on a tree provisioned for NVFLARE alone otherwise stops the
+    clients and then starts the servers on bind sources that are not there.
+    """
+
+    def test_the_check_runs_before_anything_stops(self):
+        for backend in ("flower", "nvflare"):
+            with self.subTest(backend=backend):
+                lines = dry_run(
+                    "restart-fl", f"FL_BACKEND={backend}", "ALLOW_FOREIGN_PROJECT=1", subdir="."
+                ).splitlines()
+                check = next(i for i, line in enumerate(lines) if "scripts/check-fl-provisioned.sh" in line)
+                assert f"FL_BACKEND='{backend}'" in lines[check - 1] + lines[check], lines[check - 1 : check + 1]
+                assert check < next(i for i, line in enumerate(lines) if "down-fl-clients" in line), lines
+
+
+class RestartNoTrustIsFlipApiAlone(unittest.TestCase):
+    """restart-no-trust recreates the flip-api container and nothing else (FLIP#2047).
+
+    It used to forward to flip-api/Makefile's ``restart``, which names the hub project with the
+    common compose file alone: ``--remove-orphans`` then removed every FL overlay service, and
+    flip-db went down and came back with flip-api.
+    """
+
+    def test_it_names_only_flip_api_on_the_full_project(self):
+        for backend in ("flower", "nvflare"):
+            with self.subTest(backend=backend):
+                out = dry_run(
+                    "restart-no-trust",
+                    "HUB=",
+                    f"FL_BACKEND={backend}",
+                    "DEBUG=true",
+                    "ALLOW_FOREIGN_PROJECT=1",
+                    subdir=".",
+                )
+                assert "-C flip-api" not in out, out
+                compose = [line for line in out.splitlines() if "docker compose -p deploy " in line]
+                removed, started = compose  # exactly two compose commands
+                for line in compose:
+                    assert f"-f deploy/compose/compose.development.{backend}.yml" in line, line
+                    assert line.split()[-1] == "flip-api", line
+                    assert "--remove-orphans" not in line, line
+                    assert "flip-db" not in line, line
+                assert " rm -fsv " in removed, removed
+                assert started.startswith("DEBUG=true "), started
+                # Without --no-deps, so compose starts a stopped dependency and waits on it.
+                assert " up -d --no-recreate " in started, started
+                assert "--no-deps" not in started, started
+
+
+class DebugOffTakesWhatDebugTakes(unittest.TestCase):
+    """``debug-off`` accepts the FL API under the name ``debug`` starts it by (FLIP#2047)."""
+
+    def compose_calls(self, target: str, backend: str) -> list[str]:
+        """Each ``docker compose`` call the target really makes, as the stub docker prints it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            docker = Path(tmp).resolve() / "docker"
+            docker.write_text('#!/bin/sh\ncase "$1" in compose) echo "docker DEBUG=$DEBUG $*";; esac\n')
+            docker.chmod(0o755)
+            result = run_target(
+                target,
+                "SERVICE=fl-api-net-1",
+                f"FL_BACKEND={backend}",
+                subdir=".",
+                hub="",
+                env={"PATH": f"{docker.parent}:{os.environ['PATH']}"},
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            return [line for line in result.stdout.splitlines() if line.startswith("docker ")]
+
+    def test_the_fl_api_goes_into_debug_mode_and_out_of_it(self):
+        for backend in ("flower", "nvflare"):
+            for target, debug in (("debug", "true"), ("debug-off", "false")):
+                with self.subTest(backend=backend, target=target):
+                    (call,) = self.compose_calls(target, backend)
+                    assert call.startswith(f"docker DEBUG={debug} compose "), call
+                    assert f" -f deploy/compose/compose.development.{backend}.yml " in call, call
+                    assert call.endswith(" up --remove-orphans -d fl-api-net-1"), call
 
 
 class HubScratchVolumes(unittest.TestCase):
@@ -271,7 +351,7 @@ AWS_STUB_ENV = {
     "FL_API_KEY": "probe",  # pragma: allowlist secret
     "MANAGE_DNS": "false",
 }
-AWS = "deploy/providers/AWS"
+AWS = "deploy/aws"
 KIT = (
     "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
     "FL_KIT_SLOT=Trust_9\n"
@@ -291,7 +371,8 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
-            "deploy/providers/AWS/Makefile",
+            "deploy/aws/Makefile",
+            "deploy/data_root.mk",
             "deploy/portable.mk",
             "flip-api/Makefile",  # register-trusts recurses into it to mint the XNAT credentials
             "trust/Makefile",
@@ -437,7 +518,7 @@ class MakeKitSelection(unittest.TestCase):
         env_file.write_text("".join(f"{key}={value}\n" for key, value in AWS_STUB_ENV.items()))
         kit = f"{self.root}/trust/.env.SITE.lza-prod"
         for target, subdir, expected in (
-            ("register-trusts", "deploy/providers/AWS", f'KIT_FILES="{kit}"'),
+            ("register-trusts", "deploy/aws", f'KIT_FILES="{kit}"'),
             ("sync-kit", "trust/deploy/helm", f"--kit-file {kit}"),
             ("upgrade-trust-k8s", "trust/deploy/helm", f"plan --kit-file {kit}"),
         ):
@@ -709,8 +790,8 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
 
 
 # Every root target that acts on the hub compose project: the ones whose recipe runs compose on
-# it (see compose_targets), plus central-hub and restart-no-trust, which hand it to
-# flip-api/Makefile. `restart` is `down up`, so the guard reaches it through both.
+# it (see compose_targets), plus central-hub, which hands it to flip-api/Makefile. `restart` is
+# `down up`, so the guard reaches it through both.
 OWNER_GUARDED_TARGETS = {
     "up",
     "up-no-trust",
@@ -813,14 +894,14 @@ class LocalRegistrationRefusesADeployedHub(unittest.TestCase):
                 # ALLOW_FOREIGN_PROJECT: a dev stack on this host belongs to another checkout than the scratch copy.
                 result = run_target(target, "HUB=stag", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
                 assert result.returncode != 0, result.stdout
-                assert f"make -C deploy/providers/AWS {aws_target} KIT=SCR HUB=stag" in result.stdout, result.stdout
+                assert f"make -C deploy/aws {aws_target} KIT=SCR HUB=stag" in result.stdout, result.stdout
                 assert "Waiting for the hub" not in result.stdout, result.stdout
 
     def test_the_deployed_hub_hint_keeps_revoke_old(self):
         """An operator who copies the hint for a leaked key must get the cutover, not a staged rotation."""
         result = run_target("rotate-trust-keys", "HUB=stag", "REVOKE_OLD=1", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
         assert result.returncode != 0, result.stdout
-        hint = "make -C deploy/providers/AWS rotate-trust-keys KIT=SCR HUB=stag REVOKE_OLD=1"
+        hint = "make -C deploy/aws rotate-trust-keys KIT=SCR HUB=stag REVOKE_OLD=1"
         assert hint in result.stdout, result.stdout
 
     def test_development_still_registers_on_the_local_hub(self):

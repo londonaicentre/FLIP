@@ -60,6 +60,10 @@ run "cloud_init_pins_the_ref_and_installs_flip_node" {
     error_message = "cloud-init must carry the pinned ref."
   }
   assert {
+    condition     = yamldecode(output.cloud_init).runcmd[0] == ["/usr/local/sbin/flip-node", "provision", "0123456789abcdef0123456789abcdef01234567"]
+    error_message = "First boot must name its ref: a bare provision keeps an existing checkout where it is."
+  }
+  assert {
     condition     = strcontains(output.cloud_init, "/usr/local/sbin/flip-node")
     error_message = "cloud-init must install flip-node."
   }

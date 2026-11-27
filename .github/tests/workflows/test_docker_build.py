@@ -50,6 +50,18 @@ class DockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
     def test_roster_is_not_empty(self) -> None:
         assert len(self.workflows) >= 10, [p.name for p in self.workflows]
 
+    def test_a_gated_build_runs_once_per_commit(self) -> None:
+        """The test suite also runs for the develop→main PR, with head branch develop: without the event
+        clause that run builds the commit again and replaces its immutable sha tag (FLIP#2020)."""
+        gated = [p for p in self.workflows if "\n  workflow_run:\n" in code_text(p)]
+        assert len(gated) >= 5, [p.name for p in gated]
+        for path in gated:
+            with self.subTest(workflow=path.name):
+                conditions = re.findall(r"^    if: >-\n((?:      .*\n)+)", code_text(path), re.MULTILINE)
+                assert conditions, path.name
+                for condition in conditions:
+                    assert "github.event.workflow_run.event == 'push'" in condition, condition
+
     def test_a_release_tag_run_publishes_only_the_release_tag(self) -> None:
         """The sha tags belong to the branch build of the same commit: a tag run pushing them too would
         swap the image under a sha-pinned hub, with another FLIP_RELEASE baked in."""

@@ -142,7 +142,7 @@ services:
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
       # Unset in the prod kit → fall through to the Ansible-pre-created, uid-1000-owned
-      # /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see site.yml). A relative kit value resolves to
+      # /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see trust/deploy/ansible/aws-ec2-host.yml). A relative kit value resolves to
       # the admin workstation over the ssh docker context, gets auto-created as root, and makes
       # imaging-api 500 every image download with EACCES → num_samples=0. Mirrors ORTHANC_STORAGE_DIR.
       - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}:/app/data/images
@@ -226,6 +226,9 @@ services:
       # default in trust_api/config.py — not injected (see imaging-api note above).
       TRUST_API_KEY_HEADER: ${TRUST_API_KEY_HEADER}
       TRUST_API_KEY: ${TRUST_API_KEY}
+      # The kit's wrong-host self-check: trust-api exits when the hub resolves this
+      # host as another trust. Empty leaves the check off.
+      EXPECTED_TRUST_ID: ${EXPECTED_TRUST_ID:-}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       TRUST_NAME: ${TRUST_NAME}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
@@ -288,6 +291,10 @@ services:
       - CHOWN
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      # No calls home: a trust's firewall drops them (FLIP#1784).
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
     volumes:
       - ${GRAFANA_DATA_VOLUME:-trust-local-grafana-data}:/var/lib/grafana
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/grafana/provisioning:/etc/grafana/provisioning:ro

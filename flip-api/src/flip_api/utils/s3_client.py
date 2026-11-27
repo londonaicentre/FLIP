@@ -14,7 +14,6 @@ import hashlib
 from collections import defaultdict
 from enum import StrEnum
 from typing import Any
-from urllib.parse import urlparse
 
 import boto3
 from boto3.exceptions import S3UploadFailedError
@@ -74,16 +73,17 @@ def parse_s3_path(s3_path: str) -> tuple[str, str]:
     """
     Parse an S3 path into bucket and key components.
 
+    The key is everything after the bucket. It is not parsed as a URL: ``#`` and ``?`` are
+    ordinary key characters, and a URL parser would end the key at the first one.
+
     Args:
         s3_path: Full S3 path (e.g., s3://bucket-name/key)
 
     Returns:
         Tuple containing bucket name and key, e.g. ("bucket-name", "key")
     """
-    parsed = urlparse(s3_path)
-    bucket = parsed.netloc
-    key = parsed.path.lstrip("/")
-    return bucket, key
+    bucket, _, key = s3_path.removeprefix("s3://").partition("/")
+    return bucket, key.lstrip("/")
 
 
 def hash_s3_key(key: str) -> str:

@@ -1,0 +1,107 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Terraform Validate - AWS trust node
+
+# Split from validate_terraform.yml so a change to one tree runs only that tree's checks (FLIP#2021).
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      # ec2/, eks/ and the network module they share.
+      - "trust/deploy/terraform/aws/**"
+      # Both roots' Makefiles include the HUB table.
+      - "deploy/env_mode.mk"
+      # ec2's Makefile test holds its provisioned paths to the roles, the play and the compose defaults.
+      - "trust/deploy/ansible/aws-ec2-host.yml"
+      - "trust/deploy/ansible/roles/flip_trust_seed/**"
+      - "trust/deploy/ansible/roles/flip_fl_kit/defaults/main.yml"
+      - "trust/deploy/compose/compose_trust.prod.yml"
+      - ".github/workflows/validate_terraform_aws_node.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      # ec2/, eks/ and the network module they share.
+      - "trust/deploy/terraform/aws/**"
+      # Both roots' Makefiles include the HUB table.
+      - "deploy/env_mode.mk"
+      # ec2's Makefile test holds its provisioned paths to the roles, the play and the compose defaults.
+      - "trust/deploy/ansible/aws-ec2-host.yml"
+      - "trust/deploy/ansible/roles/flip_trust_seed/**"
+      - "trust/deploy/ansible/roles/flip_fl_kit/defaults/main.yml"
+      - "trust/deploy/compose/compose_trust.prod.yml"
+      - ".github/workflows/validate_terraform_aws_node.yml"
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # AWS EC2 trust node (FLIP#1528): fmt, validate and `terraform test` with a mocked aws provider in
+  # the root and its network module, the Makefile and ssh-config pytest, tflint with the aws
+  # ruleset, and checkov with in-code, reasoned skips. Credential-free: nothing here talks to AWS.
+  aws-ec2:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - root: aws/ec2
+            name: AWS EC2 node checks
+          - root: aws/eks
+            name: AWS EKS node checks
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.13"
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        run: pip install uv
+
+      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
+      - name: Install graphviz
+        uses: ./.github/actions/install-graphviz
+
+      - name: Terraform tests and Makefile checks
+        working-directory: trust/deploy/terraform/${{ matrix.root }}
+        run: make test
+
+      - name: Lint
+        working-directory: trust/deploy/terraform/${{ matrix.root }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: make lint
+
+      - name: Checkov
+        run: |
+          pip install checkov==3.3.14
+          checkov -d trust/deploy/terraform/${{ matrix.root }} --framework terraform --skip-download --compact --quiet

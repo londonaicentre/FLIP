@@ -70,11 +70,12 @@ export DOCKER_GID := $(shell id -g)
 UID ?= $(shell id -u)
 export UID
 
-COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
-FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
+COMMON_COMPOSE_FILE := deploy/compose/compose.$(__DCKR_SUFFIX).yml
+FL_BACKEND_COMPOSE_FILE := deploy/compose/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
-# Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (from .env, or overridden at the CLI) to
-# absolute paths against the repo root — see abs_or_relative_to in deploy/fl_backend.mk.
+# Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (assigned in deploy/fl_backend.mk, which overrides
+# any .env value; only the command line outranks it) to absolute paths against the repo
+# root — see abs_or_relative_to in deploy/fl_backend.mk.
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR))
 override FL_JOBS_DIR := $(call abs_or_relative_to,$(FL_JOBS_DIR),$(MAKEFILE_DIR))
@@ -100,13 +101,15 @@ endif
 export OBJECT_STORE_DIR
 
 export COMPOSE_BAKE=true
-DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+# --project-directory deploy: the compose files' relative paths, their .env lookup and the working_dir label
+# _check-compose-project-owner compares all stay at deploy/, where the files lived before deploy/compose/ (FLIP#1438).
+DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) --project-directory deploy -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 # FL_API_KEY is exported at parse time, before `up`'s generator can rewrite it,
 # so `up`/`up-no-trust` re-read it from KEY_ENV_FILE when compose runs (FLIP#1501).
 KEY_ENV_FILE = $(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE)))
 read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
 FRESH_FL_API_KEY = FL_API_KEY="$(call read_key_env,FL_API_KEY)"
-DEBUG_OVERRIDE_COMPOSE_COMMAND=$(DOCKER_COMMAND) -f deploy/compose.development.debug.override.yml
+DEBUG_OVERRIDE_COMPOSE_COMMAND=$(DOCKER_COMMAND) -f deploy/compose/compose.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
 #
@@ -198,10 +201,10 @@ _ensure-fl-jobs-dir:
 		done; \
 	fi
 
-# Fail fast (FLARE) when the per-net startup kits are missing — delegated to
-# scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
-# come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir); the check is a no-op
-# for non-FLARE backends. In development it also checks that the FLARE FL API can read its
+# Fail fast when the selected backend's per-net credentials are missing (FLARE startup kits,
+# Flower TLS certs) — delegated to scripts/check-fl-provisioned.sh (see that script for the
+# why/how). Net IDs come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir).
+# In development it also checks that the FLARE FL API can read its
 # admin key through the host group (FL_API_KEY_GID, FLIP#1384).
 _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
@@ -280,7 +283,7 @@ up-onprem-trust:
 # ALLOW_CHECKOUT_DRIFT=1 overrides for a deliberate mismatch (testing a branch).
 upgrade-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
-	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS="--gate"
 	$(MAKE) -C trust upgrade-trust KIT=$(KIT) HUB=$(or $(HUB),prod) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
@@ -376,6 +379,8 @@ restart: down up
 #       services depend on object-store, so compose recreates it from this tree; without
 #       ./object-store the bind mount is refused and make stops after step 1 has removed every
 #       FL client, leaving the stack with none. As a prerequisite it fails before anything stops.
+# NOTE: _check-fl-provisioned for the same reason: on a tree provisioned for the other backend
+#       alone, the servers would start on bind sources that are not there.
 # NOTE: On Flower the trusts dial `fl-server-net-<N>` on fl-net-<N>, which is the fleet proxy's
 #       alias there (FLIP#1517), so the proxies restart with the servers. Step 3's
 #       --remove-orphans drops the other backend's leftovers, as `up` and `down` do: on a switch
@@ -388,7 +393,7 @@ restart: down up
 #       other backend's /tmp. `rm -v` takes those anonymous volumes with the container.
 FL_SERVER_SERVICES := fl-server-net-1 fl-server-net-2 \
 	$(if $(filter flower,$(FL_BACKEND)),fl-fleet-proxy-net-1 fl-fleet-proxy-net-2)
-restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir
+restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
@@ -407,43 +412,46 @@ restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-stor
 	$(MAKE) -C trust up-fl-clients
 	@echo "✅ FL services restarted successfully!"
 
-# Stop and start all services except the trust services related services
-restart-no-trust: _check-compose-project-owner
-	@echo "Debug mode: '${DEBUG}'"
-	@echo "Passing DEBUG=${DEBUG} to the downstream $(MAKE) commands..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
+# Recreate flip-api alone. Not `make -C flip-api restart`: it names this project with the
+# common compose file only, so its --remove-orphans removes every FL overlay service, and it
+# takes flip-db down too. --no-recreate leaves running dependencies as they are and starts a
+# stopped one, waiting on its depends_on condition; a pulled dependency image is not applied.
+restart-no-trust: _check-compose-project-owner _ensure-object-store-dir
+	@echo "🔄 Recreating flip-api (DEBUG='$(DEBUG)')..."
+	${DOCKER_COMMAND} rm -fsv flip-api
+	DEBUG=$(DEBUG) ${DOCKER_COMMAND} up -d --no-recreate $(UP_PULL_FLAGS) flip-api
 ci:
 	act --env-file .env.development
-# Runs the script directly; `make -C deploy/providers/AWS lint` runs it too, with
+# Runs the script directly; `make -C deploy/aws lint` runs it too, with
 # terraform fmt and tflint. Both are credential-free and need no deploy env file.
 checkov-lint:
-	bash deploy/providers/AWS/scripts/checkov_lint.sh
-# Static tflint lint over deploy/providers/AWS: unused declarations, missing provider
+	bash deploy/aws/scripts/checkov_lint.sh
+# Static tflint lint over deploy/aws: unused declarations, missing provider
 # version constraints, AWS argument values the API would reject. Credential-free;
 # needs tflint at the version pinned in the script, and downloads the pinned AWS
 # ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
-	bash deploy/providers/AWS/scripts/tflint_lint.sh
+	bash deploy/aws/scripts/tflint_lint.sh
 # Copy the third-party images a trust node runs (trust/deploy/mirror-images.manifest) into
 # ghcr.io/londonaicentre/mirror/ by digest (FLIP#1721). CI does this on develop/main
 # (.github/workflows/mirror_images.yml); locally it needs a GHCR login with write:packages.
 # CHECK=1 pushes nothing and fails on a missing or drifted mirror.
 mirror-images:
 	bash scripts/mirror_images.sh $(if $(CHECK),--check)
-# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
-# (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
+# Re-render the two committed Central Hub AWS diagrams under deploy/aws/docs/
+# (central-hub-aws-lza-{network,data}.png) from deploy/aws/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
 # so it otherwise runs the identical render in a throwaway python:3.13-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across
 # runs), and a host `dot` of another graphviz version produces a different file for an unchanged
 # diagram, so don't commit a re-render that only differs by graphviz. Runs the script directly
-# rather than via deploy/providers/AWS/Makefile, whose env guards need the gitignored deploy env
+# rather than via deploy/aws/Makefile, whose env guards need the gitignored deploy env
 # file for any goal but its static lint ones.
 aws-diagram:
 ifneq ($(shell command -v dot 2>/dev/null),)
-	cd deploy/providers/AWS && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
+	cd deploy/aws && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
 else
-	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/providers/AWS python:3.13-slim sh -c \
+	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/aws python:3.13-slim sh -c \
 	  "apt-get update -qq >/dev/null && apt-get install -y -qq graphviz >/dev/null && \
 	   pip -q install --root-user-action=ignore diagrams >/dev/null && \
 	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
@@ -454,7 +462,7 @@ ifeq ($(IS_DEPLOYED),)
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
 else
 	@echo "ℹ️  flip-ui is served from S3 + CloudFront when HUB=$(HUB); no container to start."
-	@echo "    CI publishes it after each apply; to publish by hand, run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\`."
+	@echo "    CI publishes it after each apply; to publish by hand, run \`make -C deploy/aws deploy-ui HUB=$(HUB)\`."
 endif
 ui-off: _check-compose-project-owner
 ifeq ($(IS_DEPLOYED),)
@@ -526,9 +534,7 @@ debug-off: _check-compose-project-owner
 	@case "$(SERVICE)" in \
 		data-access-api|imaging-api|trust-api) \
 			DEBUG=false $(MAKE) -C trust debug-$(SERVICE)-off ;; \
-		flip-api) \
-			DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
-		fl-api) \
+		flip-api|fl-api-net-1) \
 			DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
 		*) \
 			echo "❌ Unknown service: $(SERVICE)"; exit 1 ;; \
@@ -582,7 +588,7 @@ release-main-check: _release-tag
 	@python3 scripts/release/main_check.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(OWED),--owed "$(OWED)")
 
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
-UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
+UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask deploy/aws flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
 
 # Regenerate every uv.lock so it matches its pyproject.toml. Run after changing
 # dependencies in any service, or to refresh all lockfiles in one pass.
@@ -670,7 +676,7 @@ _wait-for-hub:
 # A deployed hub runs on ECS, out of reach of the local flip-api these targets exec into: they
 # would mint keys in the local database and write them into the real kit (FLIP#938).
 _refuse-deployed-hub:
-	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/providers/AWS $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)$(if $(filter 1,$(REVOKE_OLD)), REVOKE_OLD=1)'"; exit 1; }
+	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/aws $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)$(if $(filter 1,$(REVOKE_OLD)), REVOKE_OLD=1)'"; exit 1; }
 
 # REVOKE_OLD is the leaked-key switch (FLIP#1714). Anything other than empty, 0 or 1 (`true`, `yes`)
 # is refused rather than read as "stage", which would leave a leaked key valid.
@@ -760,7 +766,7 @@ new-trust:
 # $(MAIN_ENV_FILE) values. Preserves credentials. Safe to run repeatedly. Use
 # after rotating AES_KEY_BASE64 or bumping image tags on the hub side — does NOT
 # redistribute the updated kit file to remote operators (still out-of-band).
-# A deployed hub's `make -C deploy/providers/AWS register-trusts` runs this same refresh
+# A deployed hub's `make -C deploy/aws register-trusts` runs this same refresh
 # itself (FLIP#1476): its flip-api task env carries only some of the hub-shared vars.
 #
 # Works identically for dev/stag/prod: the Hub-shared values live in
@@ -815,7 +821,7 @@ check-aws-access:
 	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
 		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
 		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. Only the"; \
-		echo "    AWS-backed targets need it — deploy/providers/AWS, FL kit uploads, the optional OMOP vocabulary load.)"; \
+		echo "    AWS-backed targets need it — deploy/aws, FL kit uploads, the optional OMOP vocabulary load.)"; \
 		exit 1; \
 	fi
 	@echo "✅ AWS access confirmed."

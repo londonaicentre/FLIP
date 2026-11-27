@@ -80,7 +80,7 @@ status: ## First-boot and provisioning state of the node
 	$(require_subscription)
 	@$(call run_on_node,flip-node status)
 
-reprovision: ## Re-run the play on the node (REF=<sha|vX.Y.Z> to move the code)
+reprovision: ## Re-run the play on the node (REF=<sha|vX.Y.Z> to move the code; without it the node stays at its ref)
 	@$(if $(REF),$(call check_arg,REF,$(REF),$(REF_PATTERN)),true)
 	$(require_subscription)
 	@$(call run_on_node,flip-node reprovision $(REF))

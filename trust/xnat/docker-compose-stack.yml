@@ -39,7 +39,8 @@ services:
     cap_add:
       - CHOWN
     environment:
-      - CATALINA_OPTS=-Xms${XNAT_MIN_HEAP} -Xmx${XNAT_MAX_HEAP} -Dxnat.home=${XNAT_HOME} -XX:+UseG1GC -Djava.awt.headless=true -XX:+ParallelRefProcEnabled -XX:ParallelGCThreads=6 -XX:+UseStringDeduplication
+      # javamelody.update-check-disabled: no usage report to javamelody.org (FLIP#1784).
+      - CATALINA_OPTS=-Xms${XNAT_MIN_HEAP} -Xmx${XNAT_MAX_HEAP} -Dxnat.home=${XNAT_HOME} -XX:+UseG1GC -Djava.awt.headless=true -Djavamelody.update-check-disabled=true -XX:+ParallelRefProcEnabled -XX:ParallelGCThreads=6 -XX:+UseStringDeduplication
       - XNAT_HOME=${XNAT_HOME}
       - XNAT_ROOT=${XNAT_ROOT}
       - XNAT_EMAIL=${XNAT_EMAIL}

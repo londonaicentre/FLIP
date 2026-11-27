@@ -39,6 +39,8 @@ on:
       - ".github/workflows/test_helm_chart.yml"
       # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
+      # The Makefile defaults the kit path / VOCAB_DEST under the kit's FLIP_DATA_ROOT through it.
+      - "deploy/data_root.mk"
       # sync_k8s_kit.py reads the kit's TRUST_DATA_SEED through it.
       - "trust/deploy/scripts/trust_kit_lib.py"
       # xnat-db-migrate-dump reads the PostgreSQL major from .env and pipes these scripts in
@@ -63,12 +65,20 @@ on:
       - ".github/workflows/test_helm_chart.yml"
       # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
+      # The Makefile defaults the kit path / VOCAB_DEST under the kit's FLIP_DATA_ROOT through it.
+      - "deploy/data_root.mk"
       # sync_k8s_kit.py reads the kit's TRUST_DATA_SEED through it.
       - "trust/deploy/scripts/trust_kit_lib.py"
       - "trust/xnat/.env"
       - "trust/xnat/scripts/xnat_db_*.sh"
       - "fl-services/nvflare/fl-client/fl-client/init.sh"
   workflow_dispatch:
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   python-tests:

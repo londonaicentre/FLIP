@@ -69,10 +69,8 @@ make -C fl-tutorials seed-spleen KIT=GSTT                                 # sple
 
 The studies that land are therefore exactly the ones the trust's OMOP rows point at. If any accession in the OMOP slice has no directory in the archive, it uploads nothing. Orthanc dedupes on `SOPInstanceUID` and never overwrites, so a re-run is a no-op (`AlreadyStored`); to replace instances, use `CLEAR=1`.
 
-A seed writes a marker beside the storage dir (`<parent>/.<storage dir>.seeded`, the
-dir itself being owned by Orthanc's uid) recording projects, partition and data
-version; `make -C trust ensure-seeded` compares it to decide whether to re-seed,
-and on a `.data_version` bump re-runs the seed with `CLEAR=1` for the listed projects.
+`make -C trust ensure-seeded` runs this only while Orthanc holds no study, and keeps no record of
+it (FLIP#2111): after a `.data_version` bump, re-run it with `CLEAR=1` for the listed projects.
 
 ### Publishing a project's DICOM set
 
@@ -125,8 +123,7 @@ together; `make seed-orthanc … DICOM_SOURCE= TABLES_DIR=`) reads a regenerated
 in any layout — instances are grouped by their `AccessionNumber` tag, as
 `publish_dicom.py` reads them — and selects this trust's slice from the local
 `image_occurrence.csv` by the same `source_trust` column, with the same
-zero-mismatch guard. The `.seeded` marker then records `source=<dir>` instead of a
-data version. `make -C fl-tutorials seed-spleen KIT=<CODE>` and `seed-brain-mri`
+zero-mismatch guard. `make -C fl-tutorials seed-spleen KIT=<CODE>` and `seed-brain-mri`
 wrap this together with the OMOP half (`seed-omop … CANONICAL_DIR=`), so a project
 can be proven on a running trust before its data version is tagged.
 

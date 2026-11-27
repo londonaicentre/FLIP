@@ -81,12 +81,28 @@ check_ref() {
     fi
 }
 
+# Without a REF the node stays where its last checkout left it (a detached HEAD): FLIP_REF is first
+# boot's ref, and returning to it would undo every `reprovision REF=` under a running trust. A clone
+# still on its branch (symbolic-ref exits 0) was never pinned, so it takes FLIP_REF. Detached is
+# symbolic-ref's exit 1 on a HEAD that resolves; any other answer (a damaged repo, one git refuses to
+# open) stops here rather than provision from what is on disk.
 checkout() {
-    local ref="${1:-${FLIP_REF}}"
-    check_ref "${ref}"
     if [ ! -d "${REPO_DIR}/.git" ]; then
         git clone --quiet "${FLIP_REPO_URL}" "${REPO_DIR}"
     fi
+    if [ -z "${1:-}" ]; then
+        local on_branch=0
+        git -C "${REPO_DIR}" symbolic-ref --quiet HEAD >/dev/null || on_branch=$?
+        if [ "${on_branch}" -ne 0 ]; then
+            if [ "${on_branch}" -ne 1 ] || ! git -C "${REPO_DIR}" rev-parse --verify --quiet HEAD >/dev/null; then
+                echo "ERROR: cannot read ${REPO_DIR}'s HEAD; not provisioning from it." >&2
+                exit 1
+            fi
+            return 0
+        fi
+    fi
+    local ref="${1:-${FLIP_REF}}"
+    check_ref "${ref}"
     git -C "${REPO_DIR}" fetch --quiet --tags origin
     git -C "${REPO_DIR}" checkout --quiet --detach "${ref}"
 }
@@ -207,11 +223,16 @@ stage_fl_kit() {
     local backend="$1" src="$2"
     rm -rf "${FL_KIT_DIR}/net-1"
     mkdir -p "${FL_KIT_DIR}"
-    cp -R "${src}/net-1" "${FL_KIT_DIR}/net-1"
     if [ "${backend}" = nvflare ]; then
+        cp -R "${src}/net-1" "${FL_KIT_DIR}/net-1"
         chown -R 1000:1000 "${FL_KIT_DIR}/net-1"
     else
-        chmod 0644 "${FL_KIT_DIR}"/net-1/certificates/*
+        # The CA certificate and the node's credential, by name: a kit packed before the packager
+        # named its files also carries the SuperLink's TLS key in certificates/.
+        mkdir -p "${FL_KIT_DIR}/net-1/certificates"
+        cp "${src}/net-1/certificates/ca.crt" "${FL_KIT_DIR}/net-1/certificates/ca.crt"
+        chmod 0644 "${FL_KIT_DIR}/net-1/certificates/ca.crt"
+        cp -R "${src}/net-1/keys" "${FL_KIT_DIR}/net-1/keys"
         local key
         for key in "${FL_KIT_DIR}"/net-1/keys/*; do
             chgrp 49999 "${key}"

@@ -51,7 +51,8 @@ def _assert_cohort_admin_header(call_args) -> None:
     assert AES_KEY_BASE64 not in headers.values()
 
 
-IMAGING_STATUS_PAYLOAD = {"imaging_project_id": "img-123", "encoded_query": "base64query"}
+IMAGING_PROJECT_ID = str(uuid4())
+IMAGING_STATUS_PAYLOAD = {"imaging_project_id": IMAGING_PROJECT_ID, "encoded_query": "base64query"}
 
 
 @pytest.fixture
@@ -237,7 +238,7 @@ async def test_handle_get_imaging_status_success(mock_make_request):
 
     result = await handle_get_imaging_status(
         {
-            "imaging_project_id": "img-123",
+            "imaging_project_id": IMAGING_PROJECT_ID,
             "encoded_query": "base64query",
         }
     )
@@ -259,7 +260,7 @@ async def test_handle_reimport_studies_success(mock_make_request):
 
     result = await handle_reimport_studies(
         {
-            "imaging_project_id": "img-123",
+            "imaging_project_id": IMAGING_PROJECT_ID,
             "encoded_query": "base64query",
         }
     )
@@ -269,6 +270,17 @@ async def test_handle_reimport_studies_success(mock_make_request):
     assert call_args.kwargs["method"] == "PUT"
     assert "reimport" in call_args.kwargs["url"]
     _assert_trust_internal_auth_header(call_args)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler", [handle_get_imaging_status, handle_reimport_studies])
+async def test_imaging_status_and_reimport_reject_non_uuid_id(handler, mock_make_request):
+    """Should refuse an id that is not a UUID instead of interpolating it into the URL path."""
+    result = await handler({"imaging_project_id": "../other-resource", "encoded_query": "base64query"})
+
+    assert result["success"] is False
+    assert "imaging_project_id" in result["error"]
+    mock_make_request.assert_not_called()
 
 
 # ---- Update user profile handler ----
@@ -342,7 +354,7 @@ async def test_handle_get_imaging_status_omits_status_code_for_non_http_errors(m
 
     result = await handle_get_imaging_status(
         {
-            "imaging_project_id": "img-123",
+            "imaging_project_id": IMAGING_PROJECT_ID,
             "encoded_query": "base64query",
         }
     )

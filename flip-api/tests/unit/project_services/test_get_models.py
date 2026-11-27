@@ -24,7 +24,7 @@ from flip_api.domain.interfaces.project import (
     ModelStatus,
 )
 from flip_api.project_services.get_models import router as get_models_router
-from flip_api.utils.paging_utils import IPagedResponse
+from flip_api.utils.paging_utils import IPagedResponse, paging_params
 
 
 @pytest.fixture
@@ -66,21 +66,9 @@ expected_response_list = [
     expected_model_2_response.model_dump(mode="json"),
 ]
 mock_db_models_list = [expected_model_1_response, expected_model_2_response]
-mock_get_models_service_response: tuple[IPagedResponse, MagicMock] = (
-    IPagedResponse(
-        data=mock_db_models_list,
-        total_rows=1,
-    ),
-    MagicMock(page_size=10),
-)
+mock_get_models_service_response = IPagedResponse(data=mock_db_models_list, total_rows=1)
 
-mock_get_models_service_empty_response: tuple[IPagedResponse, MagicMock] = (
-    IPagedResponse(
-        data=[],
-        total_rows=0,
-    ),
-    MagicMock(page_size=10),
-)
+mock_get_models_service_empty_response: IPagedResponse = IPagedResponse(data=[], total_rows=0)
 
 
 @pytest.mark.parametrize(
@@ -91,7 +79,7 @@ mock_get_models_service_empty_response: tuple[IPagedResponse, MagicMock] = (
     ],
 )
 def test_get_models_returns_service_page(
-    client: TestClient, app_fixture: FastAPI, service_response: tuple[IPagedResponse, MagicMock], expected_data: list
+    client: TestClient, app_fixture: FastAPI, service_response: IPagedResponse, expected_data: list
 ):
     mock_db_session = MagicMock()
     mock_project_instance = MagicMock(id=MOCK_PROJECT_ID)
@@ -116,7 +104,7 @@ def test_get_models_returns_service_page(
 
     mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, mock_db_session)
     mock_get_project.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
-    mock_get_project_models.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session, {})
+    mock_get_project_models.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session, paging_params())
 
     app_fixture.dependency_overrides.clear()
 
