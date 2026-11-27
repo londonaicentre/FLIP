@@ -681,6 +681,48 @@ class Plan(_PlanHarness):
         self.missing_images.assert_not_called()
 
 
+class MintMissingPasswords(_PlanHarness):
+    """An upgrade delivers a trust-local password a release added (FLIP#2011): no separate kit step."""
+
+    def test_an_upgrade_mints_the_data_password_into_an_older_kit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.5.0", fl_tag="v0.5.0")
+            assert "XNAT_DATA_PASSWORD" not in kit.read_text()
+            code, out = self._run(kit, "--tag", "v0.6.0", "--yes")
+            assert code == 0, out
+            value = su.read_kit(kit)["XNAT_DATA_PASSWORD"]
+            assert len(value) >= 24
+            assert "minted XNAT_DATA_PASSWORD" in out
+            assert value not in out
+            assert stat.S_IMODE(kit.stat().st_mode) == 0o600
+
+    def test_a_kit_that_has_one_keeps_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.5.0", fl_tag="v0.5.0")
+            kit.write_text(kit.read_text() + "XNAT_DATA_PASSWORD=already-set\n")
+            code, out = self._run(kit, "--tag", "v0.6.0", "--yes")
+            assert code == 0, out
+            assert su.read_kit(kit)["XNAT_DATA_PASSWORD"] == "already-set"  # pragma: allowlist secret
+            assert "minted" not in out
+
+    def test_a_dry_run_or_a_refused_upgrade_mints_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.6.0", fl_tag="v0.6.0")
+            code, _ = self._run(kit, "--tag", "v0.6.0", "--dry-run")
+            assert code == 0
+            code, _ = self._run(kit, "--tag", "v0.5.0", "--yes")
+            assert code == su.EXIT_DOWNGRADE
+            assert "XNAT_DATA_PASSWORD" not in kit.read_text()
+
+    def test_a_same_tag_redeploy_mints_it_too(self):
+        """Re-applying the release the site already runs is how an operator redeploys; it must deliver it too."""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp), tag="v0.6.0", fl_tag="v0.6.0")
+            code, out = self._run(kit, "--tag", "v0.6.0", "--yes")
+            assert code == 0, out
+            assert su.read_kit(kit)["XNAT_DATA_PASSWORD"]
+
+
 class PlanNewerRelease(_PlanHarness):
     """A newer release than the target: offered when the hub runs it, a warning when it does not.
 

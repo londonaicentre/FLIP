@@ -95,6 +95,55 @@ async def test_create_project_event_subscription_active_matches_dicom_to_nifti(
     mock_event_sub.assert_called_once_with(TEST_XNAT_PROJECT_ID, get_settings().DCM2NIIX_IMAGE, dicom_to_nifti, headers)
 
 
+@patch("imaging_api.routers.projects.retrieve_images_for_project")
+@patch("imaging_api.routers.projects.add_central_hub_users_to_project", return_value=([], []))
+@patch("imaging_api.routers.projects.create_project_event_subscription")
+@patch("imaging_api.routers.projects.set_project_prearchive_settings")
+@patch("imaging_api.routers.projects.create_project")
+def test_a_project_from_the_hub_gets_the_xnat_data_account(
+    mock_create, mock_prearchive, mock_event_sub, mock_add_users, mock_retrieve, mock_project, no_data_account_grant
+):
+    """FLIP#2011: the data account is made a Member of the new project, on the provisioning session."""
+    mock_create.return_value = mock_project
+    central_hub_project = CentralHubProject(
+        project_id=uuid4(), trust_id=uuid4(), project_name="Test Project", query="SELECT 1", users=[]
+    )
+
+    from imaging_api.routers.projects import create_project_from_central_hub_project
+
+    headers = {"Cookie": "JSESSIONID=admin"}
+    create_project_from_central_hub_project(central_hub_project, headers, MagicMock())
+
+    no_data_account_grant.assert_called_once_with(TEST_XNAT_PROJECT_ID, headers)
+
+
+@patch("imaging_api.routers.projects.retrieve_images_for_project")
+@patch("imaging_api.routers.projects.add_central_hub_users_to_project", return_value=([], []))
+@patch("imaging_api.routers.projects.create_project_event_subscription")
+@patch("imaging_api.routers.projects.set_project_prearchive_settings")
+@patch("imaging_api.routers.projects.create_project")
+def test_a_missing_data_account_does_not_stop_the_project(
+    mock_create, mock_prearchive, mock_event_sub, mock_add_users, mock_retrieve, mock_project, no_data_account_grant
+):
+    """The project, its users and the PACS pull go ahead; the startup backfill adds the account once it exists."""
+    from imaging_api.services.data_account import DataAccountMissingError
+
+    mock_create.return_value = mock_project
+    no_data_account_grant.side_effect = DataAccountMissingError("XNAT has no user 'flip_data'")
+    central_hub_project = CentralHubProject(
+        project_id=uuid4(), trust_id=uuid4(), project_name="Test Project", query="SELECT 1", users=[]
+    )
+
+    from imaging_api.routers.projects import create_project_from_central_hub_project
+
+    background_tasks = MagicMock()
+    created = create_project_from_central_hub_project(central_hub_project, {}, background_tasks)
+
+    assert str(created.ID) == TEST_XNAT_PROJECT_ID
+    mock_add_users.assert_called_once()
+    background_tasks.add_task.assert_called_once()
+
+
 @patch("imaging_api.routers.projects.add_central_hub_users_to_project", return_value=([], []))
 @patch("imaging_api.routers.projects.create_project_event_subscription")
 @patch("imaging_api.routers.projects.set_project_prearchive_settings")

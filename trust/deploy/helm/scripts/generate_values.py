@@ -116,6 +116,8 @@ CHART_KEY_SLOTS = (
     ("XNAT_ADMIN_PASSWORD", "xnat-admin-password"),  # pragma: allowlist secret
     ("XNAT_SERVICE_USER", "xnat-service-user"),
     ("XNAT_SERVICE_PASSWORD", "xnat-service-password"),  # pragma: allowlist secret
+    ("XNAT_DATA_USER", "xnat-data-user"),
+    ("XNAT_DATA_PASSWORD", "xnat-data-password"),  # pragma: allowlist secret
     ("XNAT_DATASOURCE_PASSWORD", "xnat-datasource-password"),  # pragma: allowlist secret
     ("XNAT_DATASOURCE_ADMIN_PASSWORD", "xnat-datasource-admin-password"),  # pragma: allowlist secret
     ("GRAFANA_ADMIN_PASSWORD", "grafana-admin-password"),  # pragma: allowlist secret

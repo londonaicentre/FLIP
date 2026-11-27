@@ -30,6 +30,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/xnat-lib.sh"
 # bug (FLIP#822 / FLIP#862).
 : "${XNAT_ADMIN_USER:?}" "${XNAT_ADMIN_INITIAL_PASSWORD:?}" "${XNAT_ADMIN_PASSWORD:?}"
 : "${XNAT_SERVICE_USER:?}" "${XNAT_SERVICE_PASSWORD:?}" "${XNAT_PORT:?}"
+# The data account (FLIP#2011) is optional here: a kit from before it carries no password, and that must not stop
+# XNAT from being configured. The account is then skipped with a warning, and imaging-api reports it as not
+# configured until the kit is refreshed (an upgrade verb mints the password) and this runs again.
+XNAT_DATA_USER="${XNAT_DATA_USER:-flip_data}"
+XNAT_DATA_PASSWORD="${XNAT_DATA_PASSWORD:-}"
 
 # ${VAR-default} rather than ${VAR:-default} throughout: an *unset* variable takes the default,
 # but one set to the empty string stays empty and trips the guard below. An operator who writes
@@ -353,6 +358,75 @@ xnat_curl -X PUT "$XNAT_URL/xapi/users/${XNAT_SERVICE_USER}/roles/" \
     "Dqr",
     "non_expiring"
   ]'
+
+# The data account (FLIP#2011): what imaging-api's download and upload routes run as, so a flaw on a route the
+# fl-client reaches is bounded by what a project member can do. It holds no site role and no all-data group;
+# imaging-api makes it a Member of each FLIP project (on creation, and at startup for projects that predate it).
+#
+# Converged on every run, so a redeploy is the fix for each way it can be wrong:
+#   - created if missing (409 = it exists);
+#   - its password set to the kit's, so a re-minted XNAT_DATA_PASSWORD takes effect;
+#   - its roles set to SiteUser (every account's) and non_expiring (else XNAT expires the password and every
+#     download stops), nothing else;
+#   - any ALL_DATA_* group removed. Only those: its other groups are its project memberships (<project>_member),
+#     which a blanket reset would strip.
+if [[ -z "${XNAT_DATA_PASSWORD}" ]]; then
+  echo " "
+  echo "WARNING: XNAT_DATA_PASSWORD is empty, so the data account '${XNAT_DATA_USER}' is not configured. imaging-api" \
+    "refuses downloads and uploads (503) until it is. Refresh the trust kit (an upgrade verb mints it, or" \
+    "make generate-xnat-credentials KIT=<CODE>) and run this again." >&2
+else
+  if [[ "${XNAT_DATA_USER}" == "${XNAT_SERVICE_USER}" || "${XNAT_DATA_USER}" == "${XNAT_ADMIN_USER}" ]]; then
+    echo "ERROR: XNAT_DATA_USER '${XNAT_DATA_USER}' is the service or admin account; it must be its own account" >&2
+    exit 1
+  fi
+  echo " "
+  echo "Creating data account '${XNAT_DATA_USER}'..."
+  data_user_json=$(jq -n --arg u "${XNAT_DATA_USER}" --arg p "${XNAT_DATA_PASSWORD}" \
+    '{username: $u, password: $p, firstName: "flip Data Account", lastName: "flip Data Account",
+      email: "xnat-data@example.com", enabled: true, verified: true}')
+  xnat_request 10 120 -X POST "$XNAT_URL/xapi/users" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+    -H "Content-Type: application/json" \
+    -d "${data_user_json}"
+  case "$xnat_status" in
+    2*) echo "Data account created." ;;
+    409)
+      echo "Data account exists (HTTP 409); setting its password to the kit's."
+      xnat_curl -X PUT "$XNAT_URL/xapi/users/${XNAT_DATA_USER}" \
+        -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n --arg p "${XNAT_DATA_PASSWORD}" '{password: $p, enabled: true, verified: true}')" >/dev/null ;;
+    *)
+      echo "ERROR: creating the data account failed (HTTP $xnat_status)" >&2
+      printf '%s\n' "$xnat_body" >&2
+      exit 1 ;;
+  esac
+  # PUT on roles/ adds; it does not replace (XNAT 1.10.2.1), so any other role is deleted one by one.
+  xnat_curl -X PUT "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/roles/" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+    -H "Content-Type: application/json" \
+    -d '["SiteUser", "non_expiring"]' >/dev/null
+  for role in $(xnat_curl "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/roles" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" | jq -r '.[] | select(. != "SiteUser" and . != "non_expiring")'); do
+    echo "Removing site role ${role} from the data account"
+    xnat_curl -X DELETE "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/roles/${role}" \
+      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" >/dev/null
+  done
+  for group in $(xnat_curl "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/groups" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" | jq -r '.[] | select(startswith("ALL_DATA_"))'); do
+    echo "Removing the data account from site-wide group ${group}"
+    xnat_curl -X DELETE "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/groups/${group}" \
+      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" >/dev/null
+  done
+  # What it ends up holding, checked rather than assumed: a role XNAT kept from before is a site role.
+  data_roles=$(xnat_curl "$XNAT_URL/xapi/users/${XNAT_DATA_USER}/roles" -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}")
+  if jq -e 'map(select(. != "SiteUser" and . != "non_expiring")) | length > 0' >/dev/null <<<"${data_roles}"; then
+    echo "ERROR: the data account still holds a site role: ${data_roles}" >&2
+    exit 1
+  fi
+  echo "Data account '${XNAT_DATA_USER}' holds no site role and no all-data group."
+fi
 
 # Disable guest account
 echo " "

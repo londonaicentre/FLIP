@@ -129,6 +129,10 @@ services:
       XNAT_AETITLE: ${XNAT_AETITLE:-FLIP_XNAT}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
+      # The data account (FLIP#2011): the download and upload routes' XNAT identity. An empty password (a kit
+      # from before it) leaves imaging-api up, refusing those routes with a 503 that names the account.
+      XNAT_DATA_USER: ${XNAT_DATA_USER:-flip_data}
+      XNAT_DATA_PASSWORD: ${XNAT_DATA_PASSWORD:-}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       DEBUG_PORT: ${IMAGING_DEBUG_PORT}
       DEBUG: ${DEBUG}

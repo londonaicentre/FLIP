@@ -23,6 +23,7 @@ from imaging_api.routers.schemas import (
     Project,
     Subject,
 )
+from imaging_api.services.data_account import grant_data_access, remedy
 from imaging_api.services.projects import (
     add_central_hub_users_to_project,
     create_project,
@@ -159,6 +160,13 @@ def create_project_from_central_hub_project(
         create_project_event_subscription(
             project.ID, get_settings().DCM2NIIX_IMAGE, central_hub_project.dicom_to_nifti, headers
         )
+
+    # The data account reads and uploads this project's studies for the fl-client (FLIP#2011). A missing account
+    # does not stop the project: the startup backfill adds it once it exists, and downloads say why until then.
+    try:
+        grant_data_access(project.ID, headers)
+    except Exception as e:
+        logger.error(f"Could not add the XNAT data account to project {project.ID} ({e}). {remedy()}")
 
     # Add central hub users to imaging project
     # Will create XNAT users if they do not exist, and add them to the XNAT project

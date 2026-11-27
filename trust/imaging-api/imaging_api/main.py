@@ -29,16 +29,18 @@ from imaging_api.routers.upload import router as upload_router
 from imaging_api.routers.users import router as users_router
 from imaging_api.services.approved_cohort import run_reconcile
 from imaging_api.services.cache_retention import run_sweeper
+from imaging_api.services.data_account import run_backfill
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Runs the background tasks for the app's lifetime, each turned off by a setting of 0 or less.
 
-    The image-cache sweeper (FLIP#1050) and the approved-cohort reconcile (FLIP#1860).
+    The image-cache sweeper (FLIP#1050) and the approved-cohort reconcile (FLIP#1860), plus the XNAT data account's
+    one-off backfill into the projects that predate it (FLIP#2011), which ends after its first successful pass.
     """
     settings = get_settings()
-    tasks = []
+    tasks = [asyncio.create_task(run_backfill())]
     if settings.IMAGE_CACHE_RETENTION_HOURS > 0:
         tasks.append(asyncio.create_task(run_sweeper()))
     if settings.COHORT_RECONCILE_MINUTES > 0:

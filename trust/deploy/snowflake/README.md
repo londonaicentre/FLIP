@@ -105,16 +105,22 @@ One SPCS service per container. All endpoints `public: false`.
 |---|---|---|---|
 | `trust-api` | none | TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, AES_KEY_BASE64 | HTTP 8000 |
 | `data-access-api` | stages COHORT_SNAPSHOTS, GOVERNANCE (read-only) | TRUST_INTERNAL_SERVICE_KEY, AES_KEY_BASE64 | HTTP 8000 |
-| `imaging-api` | stage IMAGES (all nets) | TRUST_INTERNAL_SERVICE_KEY, AES_KEY_BASE64, XNAT_SERVICE_PASSWORD | HTTP 8000 |
+| `imaging-api` | stage IMAGES (all nets) | TRUST_INTERNAL_SERVICE_KEY, AES_KEY_BASE64, XNAT_SERVICE_PASSWORD, XNAT_DATA_PASSWORD¹ | HTTP 8000 |
 | `fl-client-net-<N>` | stage IMAGES `net-<N>/` only, stage FL_KIT `net-<N>/` read-only | TRUST_INTERNAL_SERVICE_KEY only | none |
 | `xnat-web` | stages XNAT_ARCHIVE, CONVERTER_IO | XNAT_ADMIN_PASSWORD, XNAT_SERVICE_PASSWORD, XNAT_DB_PASSWORD | HTTP 8080, **TCP `XNAT_PORT`** |
 | `xnat-db` | block volume | XNAT_DB_ADMIN_PASSWORD, XNAT_DB_PASSWORD | TCP 5432 |
 | `orthanc` | block volume | ORTHANC_REGISTERED_USERS (composed by sync-kit) | HTTP 8042, **TCP 4242** |
 | `dcm2niix` (job) | stages XNAT_ARCHIVE, CONVERTER_IO | none | none |
-| `xnat-configure` (job) | none | XNAT_ADMIN_PASSWORD, XNAT_SERVICE_PASSWORD | none |
+| `xnat-configure` (job) | none | XNAT_ADMIN_PASSWORD, XNAT_SERVICE_PASSWORD, XNAT_DATA_PASSWORD¹ | none |
 | `seed-orthanc` (job) | stage SEED (read-only) | ORTHANC_PASSWORD | none |
 | `smoke-cstore` (job) | stage XNAT_ARCHIVE (read-only) | ORTHANC_PASSWORD, XNAT_SERVICE_PASSWORD | none |
 | `reconvert` (job) | stages CONVERTER_IO, XNAT_ARCHIVE (read-only) | TRUST_INTERNAL_SERVICE_KEY, AES_KEY_BASE64, XNAT_SERVICE_PASSWORD | none |
+
+¹ The XNAT data account (FLIP#2011): imaging-api's download and upload routes run as `XNAT_DATA_USER` (default
+`flip_data`), a Member of FLIP projects with no site role. Mapped only when the kit has `XNAT_DATA_PASSWORD`, because
+a spec that names a secret `sync-kit` never created fails `CREATE SERVICE`. A kit from before it renders with a warning:
+imaging-api starts and answers downloads and uploads with a 503 naming the account. To add it to an existing node:
+`make generate-xnat-credentials KIT=<CODE>` (root Makefile), then `sync-kit`, `render`, `up` and the `xnat-configure` job.
 
 `xnat-nginx` is not deployed on SPCS: its configuration proxies to the Compose host names
 `xnat-web` and `orthanc`, it binds port 80 as a non-root user (SPCS grants no low-port

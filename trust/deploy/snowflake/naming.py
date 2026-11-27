@@ -56,6 +56,7 @@ SECRETS = (
     "AES_KEY_BASE64",  # pragma: allowlist secret
     "XNAT_ADMIN_PASSWORD",  # pragma: allowlist secret
     "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
+    "XNAT_DATA_PASSWORD",  # pragma: allowlist secret
     "XNAT_DB_PASSWORD",  # pragma: allowlist secret
     "XNAT_DB_ADMIN_PASSWORD",  # pragma: allowlist secret
     "ORTHANC_PASSWORD",  # pragma: allowlist secret
@@ -70,6 +71,9 @@ SECRET_KIT_VAR = {
     "AES_KEY_BASE64": "AES_KEY_BASE64",  # pragma: allowlist secret
     "XNAT_ADMIN_PASSWORD": "XNAT_ADMIN_PASSWORD",  # pragma: allowlist secret
     "XNAT_SERVICE_PASSWORD": "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
+    # The download/upload routes' XNAT account (FLIP#2011). Absent from a kit that predates it, in which case
+    # sync-kit skips the object and the specs leave the mapping out (spec_templates.OPTIONAL_SECRETS).
+    "XNAT_DATA_PASSWORD": "XNAT_DATA_PASSWORD",  # pragma: allowlist secret
     "XNAT_DB_PASSWORD": "XNAT_DATASOURCE_PASSWORD",  # pragma: allowlist secret
     "XNAT_DB_ADMIN_PASSWORD": "XNAT_DATASOURCE_ADMIN_PASSWORD",  # pragma: allowlist secret
     "ORTHANC_PASSWORD": "ORTHANC_PASSWORD",  # pragma: allowlist secret

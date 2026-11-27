@@ -43,7 +43,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import yaml_min  # noqa: E402
-from kitfile import kit_path, read_env_vars, resolve_env  # noqa: E402
+from kitfile import is_placeholder, kit_path, read_env_vars, resolve_env  # noqa: E402
 from mirror_images import source_tag  # noqa: E402
 from naming import FL_CLIENT_IMAGES, Names, NamingError, fl_client_image  # noqa: E402
 from spec_templates import build_all  # noqa: E402
@@ -158,6 +158,15 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
         "services": services,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    if is_placeholder(kit.get("XNAT_DATA_PASSWORD", "")):
+        # Not an error (FLIP#2011): imaging-api starts and the rest of the trust works. It is the one thing
+        # a deploy from this kit leaves broken, so say so at the step the operator is looking at.
+        print(
+            "⚠️  The kit has no XNAT_DATA_PASSWORD, so the XNAT data account is left out: imaging-api will refuse "
+            "downloads and uploads (503) until it is set. Run make generate-xnat-credentials KIT=<CODE>, then "
+            "sync-kit, render, up and the xnat-configure job.",
+            file=sys.stderr,
+        )
     return manifest
 
 

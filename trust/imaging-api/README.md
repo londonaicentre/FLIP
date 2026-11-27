@@ -350,8 +350,10 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `XNAT_URL` | URL of the XNAT instance (default `http://xnat-web:8080` — a compose-topology constant, not a kit field) |
 | `XNAT_PORT` | **Required.** XNAT's DICOM SCP receiver port. Paired with `XNAT_AETITLE` as the C-MOVE destination handed to the PACS, so it must be the receiver port, not the web-UI `XNAT_WEB_PORT` |
 | `XNAT_AETITLE` | XNAT's own AE title (default `FLIP_XNAT`). Must match `XNAT_AETITLE` in `configure-xnat.sh`: DQR matches the C-MOVE destination against a registered SCP receiver by exact AE title **and** port |
-| `XNAT_SERVICE_USER` | XNAT service account username |
+| `XNAT_SERVICE_USER` | XNAT service account username: the provisioning identity, a site administrator. Every route except download and upload |
 | `XNAT_SERVICE_PASSWORD` | XNAT service account password |
+| `XNAT_DATA_USER` | The XNAT data account (default `flip_data`): the download and upload routes' identity, a Member of FLIP projects only (see "Two XNAT identities") |
+| `XNAT_DATA_PASSWORD` | Its password. Empty: imaging-api starts, the data routes answer 503 naming the account, and `/health` reports `xnat_data_account: not configured` |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api (default `http://data-access-api:8000`) |
 | `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion. The default is `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` at the tag `ARG DCM2NIIX_VERSION` in `trust/xnat/dcm2niix/Dockerfile` names — the one source of truth, which `trust/xnat/dcm2niix/check_image_pin_sync.sh` (pre-commit + CI, FLIP#980) checks `imaging_api/config.py` against. The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` registers — pinned by version tag, never `latest` |
 | `BASE_IMAGES_DOWNLOAD_DIR` | **Required.** Root of the downloaded-images tree as seen **inside the container** — the composes and the Helm chart inject the literal `/app/data/images`. The kit file's same-named `BASE_IMAGES_DOWNLOAD_DIR` is a different value: the *host* directory the composes bind-mount onto that path (the same host-vs-container dual meaning the trust-api README notes for the kit's `OMOP_DB_PORT`). imaging-api mounts the whole tree; each fl-client mounts only its own `net-N` slice |
@@ -367,6 +369,40 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |
+
+## Two XNAT identities
+
+imaging-api talks to XNAT as two accounts (FLIP#2011), chosen per router:
+
+| Account | Who it is | Used by |
+| --- | --- | --- |
+| Provisioning (`XNAT_SERVICE_USER`) | Site administrator: `Administrator`, `DataManager`, `ContainerManager`, `Dqr`, all-data group | Every route except the two below, and imaging-api's own background work (cohort reconcile, the Snowflake converter) |
+| Data (`XNAT_DATA_USER`, default `flip_data`) | No site role, no all-data group; a **Member** of each FLIP project | `/download/*` and `/upload/*`, which the fl-client calls, so run researcher code's requests |
+
+The data routes are the part of imaging-api the least trusted code on the node can reach. On the data account, a flaw
+on one of them is bounded by what a project Member can do: read and upload within the project, never delete a session
+or the project, see another project, create users or query the PACS. A Member can add files to, and overwrite files on,
+sessions of its own project, because the upload route needs that.
+
+How the membership stays true:
+
+- `configure-xnat.sh` creates the account on every deploy, sets its password to the kit's, and keeps it free of site
+  roles and all-data groups (`SiteUser` and `non_expiring` only; without `non_expiring` XNAT would expire the password).
+- A project created from the hub gets the account as a Member.
+- At startup a backfill adds it to every FLIP project (XNAT id is a UUID) that predates it, then checks the account logs
+  in. It retries every minute until one pass succeeds. Projects an administrator made by hand are left alone.
+
+While the account is missing, imaging-api stays up. The data routes answer 503 with a message naming the account and
+the fix, `/health` reports `xnat_data_account` (`ready`, `pending`, `not configured` or `refused by XNAT`), and trust-api
+reports imaging-api as degraded to the hub. `tests/routers/test_xnat_identity.py` checks each route's dependency graph,
+so a route cannot change identity without a test failing.
+
+On a live XNAT, `trust/xnat/scripts/check_xnat_data_account.py` (stdlib only) drives XNAT as the data account through
+what the two routes need and through what they must not reach (delete a session, scan or project, read or write another
+project, create a user, give itself a role, call DQR), and exits non-zero if any of it holds. It creates two throwaway
+projects and removes them afterwards. XNAT 1.10.2.1 answers some refusals with a success status (201 to a non-admin
+creating a user, 200 to adding a user it does not have to a project), so the script, like imaging-api, judges by the
+state afterwards rather than by the status.
 
 ## Authentication
 

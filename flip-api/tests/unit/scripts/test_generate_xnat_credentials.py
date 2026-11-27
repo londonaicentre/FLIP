@@ -120,6 +120,37 @@ class TestGenerateXnatCredentials:
         assert "WARNING" in out
         assert "ALTER ROLE" in out
 
+    def test_an_older_kit_gets_the_xnat_data_password_and_keeps_the_rest(self, tmp_path, capsys):
+        """FLIP#2011: a kit from before the data account is backfilled; its existing XNAT passwords are kept."""
+        existing = "EkdK8x_strongRandomPassword_already_present_xyz123"
+        env_file = tmp_path / ".env.test"
+        env_file.write_text(ENV_TEMPLATE + f"XNAT_DATASOURCE_PASSWORD={existing}\n")
+
+        with patch("sys.argv", ["generate_xnat_credentials", "--env-file", str(env_file)]):
+            main()
+
+        text = env_file.read_text()
+        assert f"XNAT_DATASOURCE_PASSWORD={existing}" in text
+        assert "XNAT_DATA_PASSWORD: generated" in capsys.readouterr().out
+        assert len([line for line in text.splitlines() if line.startswith("XNAT_DATA_PASSWORD=")][0]) > 40
+
+    def test_rotating_only_the_data_password_does_not_warn_about_the_database(self, tmp_path, capsys):
+        """configure-xnat.sh applies XNAT_DATA_PASSWORD on every run; only the initdb passwords need ALTER ROLE."""
+        env_file = tmp_path / ".env.test"
+        env_file.write_text(
+            ENV_TEMPLATE
+            + "XNAT_DATASOURCE_PASSWORD=<run-make-generate-xnat-credentials>\n"
+            + "XNAT_DATASOURCE_ADMIN_PASSWORD=<run-make-generate-xnat-credentials>\n"
+            + "XNAT_DATA_PASSWORD=EkdK8x_strongRandomPassword_already_present_xyz123\n"  # pragma: allowlist secret
+        )
+
+        with patch("sys.argv", ["generate_xnat_credentials", "--env-file", str(env_file), "--force"]):
+            main()
+
+        out = capsys.readouterr().out
+        assert "XNAT_DATA_PASSWORD: rotated" in out
+        assert "ALTER ROLE" not in out
+
     def test_fresh_generation_does_not_warn(self, tmp_path, capsys):
         """Filling placeholders (even with --force) is not a rotation — no warning expected."""
         env_file = tmp_path / ".env.test"

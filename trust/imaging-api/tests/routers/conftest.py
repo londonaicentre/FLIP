@@ -10,11 +10,13 @@
 # limitations under the License.
 #
 
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 
 from imaging_api.main import app
-from imaging_api.utils.auth import get_xnat_auth_headers
+from imaging_api.utils.auth import get_xnat_auth_headers, get_xnat_data_auth_headers
 from imaging_api.utils.internal_auth import authenticate_internal_service
 
 
@@ -29,6 +31,16 @@ def override_auth_headers():
     # router behaviour is the unit under test here, not the auth layer (see
     # tests/utils/test_internal_auth.py for direct coverage of the auth dependency).
     app.dependency_overrides[get_xnat_auth_headers] = lambda: {"Cookie": "JSESSIONID=fake"}
+    # The data account's session (FLIP#2011) has its own cookie, so a test can tell which identity a route used.
+    app.dependency_overrides[get_xnat_data_auth_headers] = lambda: {"Cookie": "JSESSIONID=data"}
     app.dependency_overrides[authenticate_internal_service] = lambda: None
     yield
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_data_account_grant():
+    """Project creation adds the XNAT data account (FLIP#2011); a router test is not about that call, and without
+    this it would go to a real XNAT. tests/routers/test_projects.py checks the call itself."""
+    with patch("imaging_api.routers.projects.grant_data_access") as grant:
+        yield grant

@@ -97,4 +97,26 @@ async def test_health_still_answers_when_the_version_cannot_be_read(client, unre
     response = client.get("/health/")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": None}
+    assert response.json() == {"status": "ok", "version": None, "xnat_data_account": "pending"}
+
+
+@pytest.mark.parametrize(
+    ("password", "state", "reported"),
+    [
+        ("", "ready", "not configured"),  # a kit that predates the account: no password, whatever the backfill did
+        ("pw", "pending", "pending"),
+        ("pw", "ready", "ready"),
+        ("pw", "refused by XNAT", "refused by XNAT"),
+    ],
+)
+def test_health_reports_the_xnat_data_account_and_stays_a_200(client, monkeypatch, password, state, reported):
+    """FLIP#2011: a missing data account must not fail the liveness probe (provisioning still works); trust-api
+    reads the field and reports imaging-api as degraded."""
+    from imaging_api.config import get_settings
+    from imaging_api.services import data_account
+
+    monkeypatch.setattr(get_settings(), "XNAT_DATA_PASSWORD", password)
+    monkeypatch.setattr(data_account, "_state", data_account.DataAccountState(state))
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["xnat_data_account"] == reported

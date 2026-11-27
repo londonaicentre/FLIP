@@ -153,7 +153,13 @@ def _version_from_body(response: httpx.Response) -> str | None:
     return version if isinstance(version, str) else None
 
 
-async def _probe_health_endpoint(client: httpx.AsyncClient, url: str, *, alive_statuses: tuple[int, ...] = ()) -> dict:
+async def _probe_health_endpoint(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    alive_statuses: tuple[int, ...] = (),
+    degraded_by: Callable[[httpx.Response], bool] | None = None,
+) -> dict:
     """Probe an endpoint whose 2xx proves liveness and whose JSON body may carry a ``version``.
 
     Args:
@@ -161,6 +167,8 @@ async def _probe_health_endpoint(client: httpx.AsyncClient, url: str, *, alive_s
         url (str): Absolute URL to GET (a sibling FastAPI service's unauthenticated ``/health``).
         alive_statuses (tuple[int, ...]): Non-2xx statuses that still prove the service is up;
             they map to a version-less healthy/degraded entry. Default: none.
+        degraded_by (Callable[[httpx.Response], bool] | None): For a 2xx, whether the body says the
+            service is up but cannot do part of its work; such an entry is ``degraded``. Default: none.
 
     Returns:
         dict: Wire-shaped entry; ``down`` on transport error or any other non-2xx.
@@ -173,11 +181,36 @@ async def _probe_health_endpoint(client: httpx.AsyncClient, url: str, *, alive_s
         return _entry("down")
     elapsed_ms = int((time.monotonic() - start) * 1000)
     if response.is_success:
-        return _entry(_status_from_latency(elapsed_ms), _version_from_body(response), elapsed_ms)
+        status = _status_from_latency(elapsed_ms)
+        if degraded_by is not None and degraded_by(response):
+            status = "degraded"
+        return _entry(status, _version_from_body(response), elapsed_ms)
     if response.status_code in alive_statuses:
         return _entry(_status_from_latency(elapsed_ms), None, elapsed_ms)
     logger.warning(f"Health probe {url} answered HTTP {response.status_code}")
     return _entry("down")
+
+
+# imaging-api's XNAT data account (FLIP#2011) in a state where downloads and uploads are refused. ``pending`` is the
+# few seconds after a start, before its first check, and is not reported.
+_DATA_ACCOUNT_UNUSABLE = {"not configured", "refused by XNAT"}
+
+
+def _imaging_data_account_unusable(response: httpx.Response) -> bool:
+    """Whether imaging-api's /health says the XNAT data account cannot serve the data routes.
+
+    Args:
+        response (httpx.Response): imaging-api's successful /health answer.
+
+    Returns:
+        bool: True for ``not configured`` or ``refused by XNAT``; False for anything else, including an
+        imaging-api too old to report the field.
+    """
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    return isinstance(body, dict) and body.get("xnat_data_account") in _DATA_ACCOUNT_UNUSABLE
 
 
 async def _probe_omop(client: httpx.AsyncClient) -> dict:
@@ -363,7 +396,9 @@ async def collect_once(client: httpx.AsyncClient) -> dict:
         dict: ``{"services": {<key>: entry, ...}, "collected_at": <iso-utc>}``.
     """
     probes = {
-        "imaging-api": _probe_health_endpoint(client, f"{IMAGING_API_URL}/health"),
+        "imaging-api": _probe_health_endpoint(
+            client, f"{IMAGING_API_URL}/health", degraded_by=_imaging_data_account_unusable
+        ),
         "data-access-api": _probe_health_endpoint(client, f"{DATA_ACCESS_API_URL}/health"),
         "xnat": _probe_xnat(client),
         "dicom": _pacs_ping.run(lambda: _probe_dicom(client)),

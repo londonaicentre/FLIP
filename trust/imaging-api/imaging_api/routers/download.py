@@ -26,7 +26,7 @@ from imaging_api.routers.schemas import (
 from imaging_api.services.approved_cohort import is_served
 from imaging_api.services.archive_layout import study_layout
 from imaging_api.services.download import download_and_unzip_images, tar_study
-from imaging_api.utils.auth import get_xnat_auth_headers
+from imaging_api.utils.auth import get_xnat_data_auth_headers
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, NotInProjectArchiveError
 from imaging_api.utils.internal_auth import authenticate_internal_service
@@ -34,7 +34,8 @@ from imaging_api.utils.logger import logger
 
 router = APIRouter(prefix="/download", tags=["Download"], dependencies=[Depends(authenticate_internal_service)])
 
-XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
+# The data account's session (FLIP#2011): a Member of FLIP projects, never the site administrator.
+XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_data_auth_headers)]
 
 
 async def require_served(central_hub_project_id: str, accession_id: str) -> None:
